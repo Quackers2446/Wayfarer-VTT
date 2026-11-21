@@ -3,6 +3,7 @@ import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import shutil
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
@@ -29,11 +30,42 @@ class CampaignHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def local_request(self):
+        host = self.headers.get("Host", "").split(":", 1)[0].lower()
+        return host in {"localhost", "127.0.0.1"} and self.headers.get("Sec-Fetch-Site") != "cross-site"
+
+    def send_archive(self, include_body):
+        if not self.local_request():
+            self.send_error(403)
+            return
+        archive = next(iter(sorted(PROJECT.parent.glob("5etools*.zip"))), None)
+        if archive is None or archive.resolve().parent != PROJECT.parent.resolve():
+            self.send_error(404)
+            return
+        with archive.open("rb") as handle:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(archive.stat().st_size))
+            self.send_header("X-Archive-Name", archive.name)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.end_headers()
+            if include_body:
+                shutil.copyfileobj(handle, self.wfile)
+
+    def do_HEAD(self):
+        if urlsplit(self.path).path == "/local-archive":
+            self.send_archive(False)
+        else:
+            super().do_HEAD()
+
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == "/local-archive":
+            self.send_archive(True)
+            return
         if path == "/local-sheets" or path.startswith("/local-sheets/"):
-            host = self.headers.get("Host", "").split(":", 1)[0].lower()
-            if host not in {"localhost", "127.0.0.1"} or self.headers.get("Sec-Fetch-Site") == "cross-site":
+            if not self.local_request():
                 self.send_error(403)
                 return
         if path == "/local-sheets":

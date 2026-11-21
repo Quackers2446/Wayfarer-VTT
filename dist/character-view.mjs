@@ -1,5 +1,6 @@
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
+import {matchSpell, spellKey} from "./rules-library.mjs";
 
 export function sheetPath(character, section = "overview") {
   return "#characters/" + encodeURIComponent(character.id) + (section === "overview" ? "" : "/" + section);
@@ -158,6 +159,8 @@ function spellContent(character) {
         ${character.spellAttack != null ? `<span>Spell attack <strong>${signed(character.spellAttack)}</strong></span>` : ""}
       </div>
     </header>
+    ${Object.keys(character.spellSlots ?? {}).length ? `<dl class="sheet-slot-summary">${Object.entries(character.spellSlots).map(([level,{current,maximum}]) =>
+      `<div><dt>Level ${level} slots</dt><dd>${text(current)} / ${text(maximum)}</dd></div>`).join("")}</dl>` : ""}
     <div class="sheet-filters">${searchField("Search spells")}
       ${canFilterPrepared ? `<label class="prepared-filter"><input id="prepared-only" type="checkbox"> Prepared only</label>` : ""}
     </div>
@@ -189,7 +192,11 @@ export function fillSheetResults(character, section) {
       <h3>${level === 0 ? "Cantrips" : "Level " + level}</h3>
       <ul>${spells.filter((spell) => spell.level === level).map((spell) => {
         const description = describe(spell.name);
-        return `<li><div>${text(description.name)}${notes(description)}</div>
+        const reference = matchSpell(spell.name);
+        const spellName = reference ? `<button type="button" class="spell-link" data-action="spell" data-id="${escape(spellKey(reference))}"
+            aria-label="View 5e spell ${escape(reference.name)}">${text(description.name)}</button>` : text(description.name);
+        return `<li><div>${spellName}${reference ? `<small class="spell-source">${escape(reference.source)}${spell.level !== reference.level ? " · Reference level " + reference.level : ""}</small>` : ""}
+          ${notes(description)}</div>
           ${spell.prepared ? '<span class="tag">Prepared</span>' : ""}
         </li>`;
       }).join("")}</ul>

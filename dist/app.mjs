@@ -1,3 +1,5 @@
+import {showPlay} from "./play.mjs";
+import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
 import {escape, plural, text} from "./format.mjs";
 import {readCharacters} from "./characters.mjs";
@@ -11,6 +13,7 @@ const navItems = [
   ["overview", "Overview", "home"],
   ["characters", "Character sheets", "users"],
   ["library", "Adventure library", "book"],
+  ["play", "Play", "dice"],
 ];
 const featured = [
   {id:"LMoP", image:"forest", detail:"Follow the trail from Phandalin into the wilds of the Sword Coast."},
@@ -43,6 +46,8 @@ try {
 let catalog = {adventures: [], books: [], version: null};
 let catalogStatus = "loading";
 let localSamples = [];
+let localArchive = "";
+let spellRequest = 0;
 let catalogKind = "adventures";
 let search = "";
 let sort = "featured";
@@ -132,6 +137,7 @@ function activeAdventure() {
       <h3>${escape(entry.name)}</h3>
       <p>${[levels(entry), plural(entry.chapters.length, "chapter")].filter(Boolean).map(escape).join(" · ")}</p>
       ${button("View adventure", "adventure", "book", "outline small", entry.id)}
+      <a class="text-link" href="#play">Open encounter grid</a>
     </div>`;
   }
   return `<div class="active-content">
@@ -266,12 +272,15 @@ function render() {
     <div class="work-area">
       <div class="topbar${character ? " topbar-sheet" : ""}">
         <span class="crumb"><span>Workspace</span> ${icon("chevron", 13)} <strong>${pageLabel}</strong></span>
-        ${character ? '<a class="button outline" href="#characters">Back to party</a>' : button("Import character", "upload", "plus")}
+        ${character ? '<a class="button outline" href="#characters">Back to party</a>' :
+          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : button("Import character", "upload", "plus")}
       </div>
-      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : libraryPage()}</main>
+      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : '<div id="play-mount"></div>'}</main>
     </div>
   </div>`;
   if (page === "library") renderResults();
+  if (page === "play") showPlay({characters:state.characters, adventures:catalog.adventures,
+    activeAdventure:state.active, localArchive});
   if (character) fillSheetResults(character, section);
 }
 
@@ -310,6 +319,27 @@ function table(headers, rows) {
     headers.map((label) => '<th scope="col">' + escape(label) + '</th>').join("") +
     '</tr></thead><tbody>' + rows.map((row) => '<tr>' + row.map((cell) => '<td>' + cell + '</td>').join("") + '</tr>').join("") +
     '</tbody></table></div>';
+}
+
+async function spellDialog(key) {
+  const record = spellByKey(key);
+  if (!record) return;
+  openDialog(record.name, record.source + " · " + record.edition + " rules", '<p>Loading spell…</p>', "book", true);
+  const request = ++spellRequest;
+  let spell;
+  try {spell = await fullSpell(record);} catch {spell = record;}
+  if (request !== spellRequest || !dialog.open || dialog.querySelector("#dialog-title")?.textContent !== record.name) return;
+  const facts = spellFacts(spell);
+  const material = typeof spell.components?.m === "string" ? spell.components.m : spell.components?.m?.text;
+  const content = spell.entries
+    ? formatEntries(spell.entries) + formatEntries(spell.entriesHigherLevel)
+    : '<p>Attach your 5etools archive to read this spell’s full entry. <a href="#play" data-action="close">Open archive controls</a></p>';
+  openDialog(spell.name, spell.source + " · " + spell.edition + " rules" + (spell.page ? " · p. " + spell.page : ""), `
+    <dl class="spell-reference-facts">${facts.map(([label,value]) => `<div><dt>${label}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>
+    ${material ? '<p class="spell-material"><strong>Materials</strong> ' + escape(material) + '</p>' : ""}
+    <div class="spell-reference-text">${content}</div>
+    <footer class="dialog-footer"><span>${archiveName() ? escape(archiveName()) : '5etools spell index'}</span>
+      <a class="text-link" href="assets/srd-attribution.txt">SRD attribution</a></footer>`, "book", true);
 }
 
 function adventureDialog(entry) {
@@ -485,6 +515,7 @@ document.addEventListener("click", (event) => {
     }
     case "source": sourceDialog(); break;
     case "adventure": adventureDialog(byId(id)); break;
+    case "spell": spellDialog(id); break;
     case "select": {
       state.active = id;
       const saved = save();
@@ -576,11 +607,14 @@ render();
 const requests = [fetch("catalog.json").then((response) => {
   if (!response.ok) throw new Error("Catalog unavailable");
   return response.json();
-})];
-if (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) {
+}), loadRules()];
+const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+if (local) {
   requests.push(fetch("local-sheets").then((response) => response.ok ? response.json() : []));
+  requests.push(fetch("local-archive", {method:"HEAD"}).then((response) => response.ok ? response.headers.get("X-Archive-Name") : ""));
 }
-Promise.allSettled(requests).then(([index, samples]) => {
+restoreArchive();
+Promise.allSettled(requests).then(([index, , samples, archive]) => {
   if (index.status === "fulfilled") {
     catalog = index.value;
     catalogStatus = "ready";
@@ -588,6 +622,7 @@ Promise.allSettled(requests).then(([index, samples]) => {
     catalogStatus = "failed";
   }
   if (samples?.status === "fulfilled" && Array.isArray(samples.value)) localSamples = samples.value;
+  if (archive?.status === "fulfilled" && archive.value) localArchive = archive.value;
   const searchHasFocus = document.activeElement?.id === "catalog-search";
   render();
   if (searchHasFocus) document.querySelector("#catalog-search")?.focus();

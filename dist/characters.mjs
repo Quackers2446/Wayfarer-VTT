@@ -60,6 +60,20 @@ function readSpells(cell, rightColumn) {
   });
 }
 
+function readSlots(cell, wide) {
+  const origin = rowRange(1, 190).find((row) => /^cantrips$/i.test(asText(cell("F" + row))));
+  if (!origin) return {};
+  const slots = {};
+  [4,10,16,22,27,32,37,41,45].forEach((offset, index) => {
+    const row = origin + offset;
+    const right = index % 2 === 0;
+    const current = numeric(cell((right ? (wide ? "AH" : "AG") : "I") + row));
+    const maximum = numeric(cell((right ? (wide ? "AL" : "AK") : "E") + row));
+    if (current !== null || maximum !== null) slots[index + 1] = {current, maximum};
+  });
+  return slots;
+}
+
 function uniqueSpells(spells) {
   const known = new Map();
   for (const spell of spells) {
@@ -115,6 +129,8 @@ function templateCharacter(cell, sheetName, additional) {
     attacks,
     items: readInventory(cell, layout),
     spells: uniqueSpells(spells),
+    spellSlots: readSlots(cell, wide),
+    spellcastingAbility: spellLabels ? cell("U" + (spellLabels - 2)) : null,
     spellDC: spellLabels ? numeric(cell(layout.spellDC + (spellLabels - 2))) : null,
     spellAttack: spellLabels ? numeric(cell(layout.spellAttack + (spellLabels - 2))) : null,
   };
