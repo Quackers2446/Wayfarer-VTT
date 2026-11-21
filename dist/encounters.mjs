@@ -1,3 +1,4 @@
+import {cellAt, cellCenter, gridGeometry, legacyGeometry, sourceGrid, validGeometry} from "./map-grid.mjs";
 import {diceTerms, makeActor, modifier} from "./combat.mjs";
 import {matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey, spellKey} from "./rules-library.mjs";
 
@@ -27,11 +28,10 @@ export async function moduleMaps(id) {
     for (const image of images) {
       if (image.grid?.type !== "square" || !image.grid.size || !image.width || !image.height) continue;
       const {width, height, grid} = image;
-      const size = grid.size / (grid.scale || 1);
-      const x = (grid.offsetX || 0) % size;
-      const y = (grid.offsetY || 0) % size;
-      const offsetX = x > 0 ? x - size : x;
-      const offsetY = y > 0 ? y - size : y;
+      if (grid.units && !["ft","feet","foot"].includes(grid.units.toLowerCase())) continue;
+      const source = sourceGrid(grid);
+      const geometry = gridGeometry({width,height,sourceGrid:source});
+      if (!validGeometry(geometry)) continue;
       const parent = image.mapParent?.autoScale ? images.find((entry) => entry.id === image.mapParent.id) : null;
       const baseRegions = image.mapRegions ?? parent?.mapRegions ?? [];
       const instances = new Map();
@@ -50,14 +50,14 @@ export async function moduleMaps(id) {
       if (!key || seen.has(key)) continue;
       seen.add(key);
       maps.push({
-        key, module:id, id:image.id ?? parent?.id, width, height, size, offsetX, offsetY,
-        cols:Math.ceil((width-offsetX)/size), rows:Math.ceil((height-offsetY)/size), regions,
+        key, module:id, id:image.id ?? parent?.id, width, height, regions,
+        sourceGrid:source, legacyGrid:legacyGeometry(grid,width,height), ...geometry,
         title:image.title === "Player Version" && parent?.title ? parent.title + " (Player)" : image.title ?? key,
         caption:chapter.name ?? "", asset:image.href?.path, artist:image.credit,
       });
     }
   }
-  return maps.filter((map) => map.cols * map.rows <= 90000);
+  return maps;
 }
 
 const pilotRooms = {
@@ -115,9 +115,7 @@ export function pointInPolygon(x, y, points) {
   return inside;
 }
 
-export function cellCenter(map, cell) {
-  return [map.offsetX + (cell.x + 0.5) * map.size, map.offsetY + (cell.y + 0.5) * map.size];
-}
+export {cellCenter};
 
 export function regionAt(map, x, y) {
   return map.regions.find((region) => pointInPolygon(x,y,region.points));
@@ -126,11 +124,11 @@ export function regionAt(map, x, y) {
 export function regionCells(map, region) {
   const xs = region.points.map(([x]) => x);
   const ys = region.points.map(([,y]) => y);
-  const toColumn = (x) => Math.floor((x - map.offsetX) / map.size);
-  const toRow = (y) => Math.floor((y - map.offsetY) / map.size);
+  const first = cellAt(map,Math.min(...xs),Math.min(...ys));
+  const last = cellAt(map,Math.max(...xs),Math.max(...ys));
   const cells = [];
-  for (let y = Math.max(0,toRow(Math.min(...ys))); y <= Math.min(map.rows-1,toRow(Math.max(...ys))); y++) {
-    for (let x = Math.max(0,toColumn(Math.min(...xs))); x <= Math.min(map.cols-1,toColumn(Math.max(...xs))); x++) {
+  for (let y = Math.max(0,first.y); y <= Math.min(map.rows-1,last.y); y++) {
+    for (let x = Math.max(0,first.x); x <= Math.min(map.cols-1,last.x); x++) {
       if (pointInPolygon(...cellCenter(map,{x,y}),region.points)) cells.push({x,y});
     }
   }

@@ -88,3 +88,6 @@
 .scene-markers li{display:flex;gap:4px;min-width:0}
 .board-key .map-marker-key{background:#926739;border-radius:2px;transform:rotate(45deg)}
 .token-panel .play-tokens{max-height:min(42vh,410px);overflow:auto;scrollbar-width:thin}
+.grid-settings-body{padding:0 10px 10px}
+.grid-settings-body .play-form{margin-top:8px}
+#grid-align-feedback:empty{display:none}

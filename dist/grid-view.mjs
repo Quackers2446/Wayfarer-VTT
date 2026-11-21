@@ -1,5 +1,6 @@
 import {keyAt, occupies} from "./combat.mjs";
-import {cellCenter, regionAt} from "./encounters.mjs";
+import {regionAt} from "./encounters.mjs";
+import {cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
 
 function polygon(context, points) {
   context.beginPath();
@@ -7,7 +8,7 @@ function polygon(context, points) {
   context.closePath();
 }
 
-export function drawGrid(canvas, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true, markers = [], tokenImages}) {
+export function drawGrid(canvas, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
   if (!canvas) return;
   const c = canvas.getContext("2d");
   const scale = Math.min(1, 1600 / Math.max(map.width,map.height));
@@ -27,16 +28,22 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
     c.stroke();
   }
 
-  const grid = new Path2D();
-  for (let x = map.offsetX; x <= map.width; x += map.size) {
-    grid.moveTo(x,0); grid.lineTo(x,map.height);
+  const layer = overlay === "artwork" ? (art ? null : "tactical") : overlay;
+  if (layer) {
+    const spacing = layer === "printed" && map.printedGrid ? map.printedGrid : {
+      x:map.offsetX,y:map.offsetY,width:map.cellWidth ?? map.size,height:map.cellHeight ?? map.size,
+    };
+    const grid = new Path2D();
+    for (let x=firstLine(spacing.x,spacing.width);x<=map.width;x+=spacing.width) {
+      grid.moveTo(x,0); grid.lineTo(x,map.height);
+    }
+    for (let y=firstLine(spacing.y,spacing.height);y<=map.height;y+=spacing.height) {
+      grid.moveTo(0,y); grid.lineTo(map.width,y);
+    }
+    c.lineWidth = Math.max(1,map.size*(layer==="printed" ? .028 : .019));
+    c.strokeStyle = art ? (layer==="printed" ? "#ffbe63c4" : "#62d7d691") : "#ced9c34a";
+    c.stroke(grid);
   }
-  for (let y = map.offsetY; y <= map.height; y += map.size) {
-    grid.moveTo(0,y); grid.lineTo(map.width,y);
-  }
-  c.lineWidth = Math.max(1,map.size *.019);
-  c.strokeStyle = art ? "#15191577" : "#ced9c329";
-  c.stroke(grid);
 
   for (const {entry, points} of showRegions ? map.regions : []) {
     const label = /^([A-Za-z]?\d+[A-Za-z]?)\./.exec(entry?.name ?? "")?.[1];
@@ -54,14 +61,14 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
   for (const [pair, value] of Object.entries(battle.terrain)) {
     const [x,y] = pair.split(":").map(Number);
     c.fillStyle = value === "wall" ? "#111713dd" : "#be874a8d";
-    c.fillRect(map.offsetX+x*map.size,map.offsetY+y*map.size,map.size,map.size);
+    c.fillRect(...cellBounds(map,{x,y}));
   }
 
   if (footprint?.size) {
     c.fillStyle = "#d68143a0";
     for (const key of footprint) {
       const [x,y] = key.split(":").map(Number);
-      c.fillRect(map.offsetX+x*map.size,map.offsetY+y*map.size,map.size,map.size);
+      c.fillRect(...cellBounds(map,{x,y}));
     }
   }
 
@@ -129,8 +136,8 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
   if (cursor) {
     c.strokeStyle = "#ffedaa";
     c.lineWidth = map.size * .055;
-    c.strokeRect(map.offsetX+cursor.x*map.size+.04*map.size,map.offsetY+cursor.y*map.size+.04*map.size,
-      .92*map.size,.92*map.size);
+    const [x,y,width,height]=cellBounds(map,cursor);
+    c.strokeRect(x+.04*width,y+.04*height,.92*width,.92*height);
   }
 }
 
@@ -139,7 +146,7 @@ export function gridPosition(map, canvas, event) {
   const px = (event.clientX - bounds.left) * map.width / bounds.width;
   const py = (event.clientY - bounds.top) * map.height / bounds.height;
   return {
-    x:Math.floor((px-map.offsetX)/map.size),y:Math.floor((py-map.offsetY)/map.size),
+    ...cellAt(map,px,py),
     region:regionAt(map,px,py),
   };
 }

@@ -1,3 +1,4 @@
+import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
 import {enemyInSight, engageEnemy, inSight, noticesEnemy} from "./exploration.mjs";
@@ -54,6 +55,10 @@ let centerBoard = false;
 const sceneJobs = new WeakMap();
 const tokenImages = new Map();
 const tokenRequests = new Map();
+let detectedGrid;
+let gridDraft;
+const gridFields = ["width","height","x","y"];
+const gridModes = {artwork:"Artwork only",printed:"Artwork guides",tactical:"5-foot cells"};
 const activeMapKey = "wayfarer-active-map-v1";
 let preferredGame;
 try {preferredGame = JSON.parse(localStorage.getItem(activeMapKey));} catch {}
@@ -149,11 +154,44 @@ function paintBoard() {
     new Set([keyAt(spellSquare.x,spellSquare.y)]) : null;
   const visible = visibleTokens();
   loadTokenImages(visible);
-  drawGrid(canvas,map,battle,{
+  const alignmentOpen = root().querySelector("#grid-settings")?.open;
+  const drawingMap = alignmentOpen && gridDraft ? {...map,...gridGeometry(map,gridDraft)} : map;
+  drawGrid(canvas,drawingMap,battle,{
     room:context.game && tool !== "room" ? null : room,selected:actor?.id,target:targetId,cursor,art,
     path:pathPreview,visible,footprint,showRegions:!context.game || !art || tool==="room",
-    markers:visibleMarkers(),tokenImages,
+    markers:visibleMarkers(),tokenImages,overlay:alignmentOpen && gridDraft ? "printed" : battle.gridOverlay ?? "artwork",
   });
+}
+
+function setAlignment(alignment) {
+  if (!map.sourceGrid) return false;
+  const geometry = gridGeometry(map,alignment);
+  if (!fitsCurrentGrid(geometry,battle)) return false;
+  Object.assign(map,geometry);
+  return true;
+}
+
+function alignmentDescription() {
+  return battle.gridManual ? "Saved alignment" : detectedGrid ? "Fitted to artwork" : "Adventure alignment";
+}
+
+function updateAlignmentFields() {
+  const description = root()?.querySelector("#grid-align-source");
+  if (description) description.textContent = alignmentDescription();
+  for (const field of gridFields) {
+    const element = root()?.querySelector("#grid-align-"+field);
+    if (element) element.value = formatPixels(map.printedGrid[field]);
+  }
+}
+
+function alignImage(image) {
+  if (!map.sourceGrid) return;
+  detectedGrid = null;
+  try {detectedGrid = alignArtwork(image,map);} catch {}
+  if (!battle.gridManual && !gridDraft) {
+    if (!setAlignment(detectedGrid ?? map.sourceGrid)) detectedGrid = null;
+    updateAlignmentFields();
+  }
 }
 
 function updateArtwork() {
@@ -194,6 +232,7 @@ async function loadArtwork(entry, file) {
     if (!current()) return;
     if (image) {
       art = image;
+      alignImage(image);
       artworkNote = file ? "Using your map image." : entry.artist ? "Map artwork by " + entry.artist + "." : "Map artwork loaded from 5etools.";
     } else {
       artworkNote = "Map artwork is unavailable. Showing the schematic.";
@@ -213,8 +252,16 @@ function useMap(entry) {
   artworkRequest?.abort();
   artworkRequest = null;
   artworkNote = "";
+  detectedGrid = null; gridDraft = null;
   map = entry;
-  battle = battles[map.key] ?? newBattle();
+  const saved = battles[map.key];
+  battle = saved ?? newBattle();
+  const migrated = map.sourceGrid && saved && !saved.alignedGrid;
+  if (map.sourceGrid) {
+    Object.assign(map,gridGeometry(map));
+    migrateGridState(map,battle);
+    if (battle.gridManual) setAlignment(battle.gridManual);
+  }
   if (map.module === "training" && !battles[map.key]) battle.actors = trainingActors();
   art = null; selectedId = ""; targetId = ""; combatChoice = ""; cursor = null;
   const initialRoom = map.module === "LMoP" && map.id === "1ab" ? "01b" : map.regions[0]?.id;
@@ -222,6 +269,7 @@ function useMap(entry) {
   selectedCreature = 0; tool = context?.game ? "move" : "room"; status = ""; zoom = "100";
   pathPreview = null; previewMessage = ""; spellSquare = null; pendingSquare = null; centerBoard = true;
   battles[map.key] = battle;
+  if (migrated) saveBattle();
   if (map.module !== "training") {
     loadArtwork(entry);
     ensureScene(entry,battle);
@@ -465,6 +513,42 @@ function archivePanel() {
   </details>`;
 }
 
+function formatPixels(value) {
+  return String(Math.round(value*100)/100);
+}
+
+function gridSettings() {
+  if (!map.sourceGrid) return "";
+  const alignment = gridDraft ?? map.printedGrid;
+  const fields = [
+    ["Square width","width",'min="1"'],["Square height","height",'min="1"'],
+    ["Horizontal offset","x",""],["Vertical offset","y",""],
+  ];
+  return `<details id="grid-settings" class="grid-settings">
+    <summary>Grid alignment</summary>
+    <div class="grid-settings-body">
+      ${field("Grid display","grid-overlay",Object.entries(gridModes).map(([mode,label]) =>
+        option(mode,label,(battle.gridOverlay ?? "artwork")===mode)))}
+      <p class="play-hint"><strong id="grid-align-source">${alignmentDescription()}</strong> · Adjust the guides in image pixels. Movement uses 5-foot cells.</p>
+      <form id="grid-align-form" class="play-form">
+        <div class="play-field-row">${fields.map(([label,key,limit]) =>
+          input(label+" (px)","grid-align-"+key,formatPixels(alignment[key]),"number",limit+' step="any" required')).join("")}</div>
+        <p id="grid-align-feedback" role="status" class="play-hint"></p>
+        <div class="play-action-row">
+          <button type="submit" class="button primary small">Save alignment</button>
+          ${actionButton("Reset to automatic","reset-grid")}
+        </div>
+      </form>
+    </div>
+  </details>`;
+}
+
+function readAlignment() {
+  const form = root().querySelector("#grid-align-form");
+  const alignment = Object.fromEntries(gridFields.map((field) => [field,form.querySelector("#grid-align-"+field).valueAsNumber]));
+  return gridFields.every((field) => Number.isFinite(alignment[field])) && alignment.width>0 && alignment.height>0 ? alignment : null;
+}
+
 function playPage() {
   const isTraining = map.module === "training";
   const moduleOptions = [option("training","Wayfarer practice yard",isTraining)];
@@ -497,6 +581,7 @@ function playPage() {
             <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span><span><i class="map-marker-key"></i> Room marker</span></div>
           </div>
           ${!isTraining ? `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` : ""}
+          ${gridSettings()}
           <p class="play-status" role="status">${escape(status)}</p>
         </section>
         <section class="play-panel">
@@ -522,6 +607,7 @@ function redraw() {
   const board = element.querySelector(".board-frame");
   const scrollX = board?.scrollLeft ?? 0, scrollY = board?.scrollTop ?? 0;
   const archiveOpen = element.querySelector(".play-archive")?.open;
+  const gridOpen = element.querySelector("#grid-settings")?.open;
   element.innerHTML = context.game ? gameScreen({
     map,battle,selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
     category,actions:playOptions(selectedActor()), tacticalTools:tableTools(), room,status,artworkNote,
@@ -529,6 +615,7 @@ function redraw() {
     adventureName:context.adventures.find(({id}) => id === map.module)?.name,
   }) : playPage();
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
+  if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open","");
   paintBoard();
   const frame = element.querySelector(".board-frame");
   if (context.game && centerBoard) {
@@ -548,7 +635,7 @@ function tableTools() {
   return '<h2>Table tools</h2>' + field("Grid tool","grid-tool",[["move","Move token"],["room","Inspect room"],
     ["difficult","Difficult terrain"],["wall","Block square"],["clear","Clear terrain"]].map(([value,label]) => option(value,label,tool===value))) +
     (battle.round ? actionButton("End initiative","end-initiative",{disabled:Boolean(battle.movement)}) : "") +
-    manualHP() + (tool==="room" ? roomPanel() : "");
+    gridSettings() + manualHP() + (tool==="room" ? roomPanel() : "");
 }
 
 function resetActionSelection() {
@@ -694,6 +781,10 @@ function add(actor, area = room) {
 }
 
 function checkCell(x,y,region) {
+  if (root()?.querySelector("#grid-settings")?.open && gridDraft) {
+    status = "Save the grid alignment to use the adjusted squares.";
+    return;
+  }
   if (x < 0 || x >= map.cols || y < 0 || y >= map.rows) return;
   cursor = {x,y};
   if (tool === "room") {
@@ -816,6 +907,14 @@ document.addEventListener("click", (event) => {
   }
   interact(async () => {
     switch (play) {
+      case "reset-grid":
+        gridDraft = null;
+        if (!setAlignment(detectedGrid ?? map.sourceGrid) && !setAlignment(map.sourceGrid)) {
+          throw new Error("The automatic grid would leave saved pieces outside the map.");
+        }
+        delete battle.gridManual;
+        status = "Automatic grid restored.";
+        break;
       case "reveal-marker": {
         const marker = battle.markers?.find((entry) => entry.id === id);
         if (marker) { marker.revealed = true; status = marker.name + " revealed."; }
@@ -846,7 +945,7 @@ document.addEventListener("click", (event) => {
         break;
       }
       case "game-log": logOpen = !logOpen; toolsOpen = false; break;
-      case "game-tools": toolsOpen = !toolsOpen; logOpen = false; if (!toolsOpen) tool="move"; break;
+      case "game-tools": toolsOpen = !toolsOpen; logOpen = false; if (!toolsOpen) {tool="move"; gridDraft=null;} break;
       case "zoom-in": zoom = String(Math.min(300,Number(zoom)+50)); centerBoard = true; break;
       case "zoom-out": zoom = String(Math.max(75,Number(zoom)-50)); centerBoard = true; break;
       case "archive-local": {
@@ -929,11 +1028,31 @@ function movePreview(x,y) {
 }
 
 document.addEventListener("pointermove", (event) => {
-  if (!context?.game || event.target.id !== "play-grid" || tool !== "move" || category !== "move") return;
+  if (!context?.game || (gridDraft && root()?.querySelector("#grid-settings")?.open) || event.target.id !== "play-grid" || tool !== "move" || category !== "move") return;
   const {x,y} = gridPosition(map,event.target,event);
   if (cursor?.x !== x || cursor?.y !== y) movePreview(x,y);
 });
 window.addEventListener("resize", () => {if (context?.game && root()) paintBoard();});
+
+document.addEventListener("input", (event) => {
+  if (!root()?.contains(event.target) || !event.target.id.startsWith("grid-align-")) return;
+  const alignment = readAlignment();
+  const feedback = root().querySelector("#grid-align-feedback");
+  if (alignment && fitsCurrentGrid(gridGeometry(map,alignment),battle)) {
+    gridDraft = alignment;
+    feedback.textContent = "Previewing the adjusted guides.";
+  } else {
+    feedback.textContent = "Enter positive spacing and keep saved pieces inside the grid.";
+  }
+  paintBoard();
+});
+
+document.addEventListener("toggle", (event) => {
+  if (event.target.id !== "grid-settings" || !root()?.contains(event.target) || event.target.open || !gridDraft) return;
+  gridDraft = null;
+  updateAlignmentFields();
+  paintBoard();
+}, true);
 
 document.addEventListener("change", (event) => {
   if (!root()?.contains(event.target)) return;
@@ -948,6 +1067,7 @@ document.addEventListener("change", (event) => {
     case "play-map": {const entry = maps.find(({key}) => key===value); if (entry) useMap(entry); break;}
     case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
     case "grid-tool": tool = value; break;
+    case "grid-overlay": battle.gridOverlay = value; saveBattle(); break;
     case "grid-zoom": zoom = value; break;
     case "room-creature": selectedCreature = Number(value); break;
     case "play-party": selectedParty = value; break;
@@ -976,6 +1096,14 @@ document.addEventListener("submit", (event) => {
   const value = (id) => event.target.querySelector("#"+id)?.value;
   interact(async () => {
     switch (event.target.id) {
+      case "grid-align-form": {
+        const alignment = readAlignment();
+        if (!alignment || !setAlignment(alignment)) throw new Error("Enter valid spacing and keep saved pieces inside the grid.");
+        battle.gridManual = alignment;
+        gridDraft = null;
+        status = "Grid alignment saved.";
+        break;
+      }
       case "dice-form": {
         diceFormula = value("dice-expression");
         const roll = rollDice(diceFormula);
