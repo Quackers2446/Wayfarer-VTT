@@ -48,6 +48,12 @@ export function writeSession(id, revision, state) {
   return request(`${api}/${id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision,state})});
 }
 
+export const readChat = (id, after) => request(`${api}/${id}/chat${after == null ? "" : "?after=" + after}`);
+
+export function sendChat(id, message) {
+  return request(`${api}/${id}/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(message)});
+}
+
 export function joinPanel() {
   const recent = recentSession();
   return `<section class="play-panel session-join" aria-label="Multiplayer">

@@ -1,5 +1,8 @@
 const api = "/api/sessions";
-const sessionPath = /^\/api\/sessions\/([\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12})(\/artwork|\/tokens\/([\da-f]{64}))?$/;
+const sessionId = "[\\da-f]{8}-(?:[\\da-f]{4}-){3}[\\da-f]{12}";
+const sessionPath = new RegExp(`^/api/sessions/(${sessionId})(/artwork|/chat|/tokens/([\\da-f]{64}))?$`);
+const chatId = new RegExp(`^${sessionId}$`);
+const chatHistory = 200;
 const tokenIdPattern = /^[\da-f]{64}$/;
 const maxMapBytes = 512 * 1024;
 const maxStateBytes = 768 * 1024;
@@ -180,6 +183,47 @@ async function update(request, env, id) {
   return reply({state:JSON.parse(current.state),revision:current.revision},409);
 }
 
+async function sessionChat(request, env, id, after) {
+  if (request.method === "GET") {
+    if (after !== null && (!/^\d+$/.test(after) || !Number.isSafeInteger(Number(after)))) {
+      return fail(400,"The chat position was invalid.");
+    }
+    const {results} = await env.DB.prepare(`
+      SELECT sequence AS id, author, body, sent_at AS time FROM session_chat
+      WHERE session_id=? AND sequence>? ORDER BY sequence DESC LIMIT ?
+    `).bind(id,Number(after),chatHistory).all();
+    if (!results.length && after !== null) return new Response(null,{status:204,headers});
+    if (!results.length && !await env.DB.prepare("SELECT id FROM game_sessions WHERE id=?").bind(id).first()) {
+      return fail(404,"This session could not be found.");
+    }
+    return reply({messages:results.reverse()});
+  }
+  if (request.method !== "POST") return fail(405,"This action is unavailable.");
+  const raw = await boundedBody(request,8192);
+  if (!raw) return fail(413,"The chat message is too large.");
+  let input;
+  try {input = JSON.parse(await raw.text());} catch {return fail(400,"The chat message could not be read.");}
+  const message = typeof input?.body === "string" ? input.body.trim() : "";
+  const alias = typeof input?.alias === "string" ? input.alias.trim() : "";
+  if (!message || message.length > 500 || typeof input.messageId !== "string" || !chatId.test(input.messageId) ||
+      typeof input.sender !== "string" || !chatId.test(input.sender) || alias.length > 40) {
+    return fail(400,"Enter a chat message up to 500 characters.");
+  }
+  const row = await env.DB.prepare("SELECT state FROM game_sessions WHERE id=?").bind(id).first();
+  if (!row) return fail(404,"This session could not be found.");
+  const {battle} = JSON.parse(row.state);
+  const character = battle.actors.find((actor) => actor.side === "party" && battle.controllers?.[actor.id] === input.sender);
+  const author = character?.name.slice(0,80) || alias || "Guest " + input.sender.slice(0,4).toUpperCase();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO session_chat (session_id,message_id,author,body,sent_at)
+      VALUES (?,?,?,?,?) ON CONFLICT (session_id,message_id) DO NOTHING`).bind(id,input.messageId,author,message,Date.now()),
+    env.DB.prepare(`DELETE FROM session_chat WHERE session_id=? AND sequence <= (
+      SELECT sequence FROM session_chat WHERE session_id=? ORDER BY sequence DESC LIMIT 1 OFFSET ?
+    )`).bind(id,id,chatHistory),
+  ]);
+  return new Response(null,{status:204,headers});
+}
+
 export async function sessionRequest(request, env) {
   const url = new URL(request.url);
   const match = sessionPath.exec(url.pathname);
@@ -192,6 +236,7 @@ export async function sessionRequest(request, env) {
     }
     // The unlisted, randomly generated session ID is the guest's invitation and access credential.
     if (match?.[3]) return await sessionToken(request,env,match[1],match[3]);
+    if (match?.[2] === "/chat") return await sessionChat(request,env,match[1],url.searchParams.get("after"));
     if (match?.[2] && request.method === "GET") {
       const id = match[1];
       const row = await env.DB.prepare("SELECT artwork_type FROM game_sessions WHERE id=?").bind(id).first();

@@ -85,6 +85,7 @@ export function gameScreen({
         ${toolsOpen ? `<aside class="game-flyout tools-flyout play-panel" aria-label="Table tools">${tacticalTools}</aside>` : ""}
         ${tableOpen ? `<aside class="game-flyout tools-flyout play-panel session-panel" aria-label="Multiplayer">${tableContent}</aside>` : ""}
       </div>
+      ${shared ? '<div class="game-chat-slot"></div>' : ""}
     </div>
     <footer class="game-hud">
       <div class="game-hud-top">

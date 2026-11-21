@@ -4,6 +4,7 @@ import {enrichCharacter} from "./character-rules.mjs";
 import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
+import {createGameChat} from "./game-chat.mjs";
 import {canRescue, discoverStory, rescueSildar, storyPanel, storyVersion} from "./adventure-story.mjs";
 import {enemyTurnPending, runEnemyTurns} from "./enemy-turn.mjs";
 import {enemyInSight, engageEnemy, noticesEnemy, partyVision, rememberVision} from "./exploration.mjs";
@@ -732,6 +733,11 @@ function redraw() {
     tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage,needsHostSignIn) : "",shared:Boolean(table),
     adventureName:context.adventures.find(({id}) => id === map.module)?.name,
   }) : playPage();
+  const chatSlot = element.querySelector(".game-chat-slot");
+  if (chatSlot && table?.chat) {
+    const character = battle.actors.find((actor) => actor.side === "party" && battle.controllers?.[actor.id] === controller);
+    table.chat.mount(chatSlot,character);
+  }
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
   if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open","");
   const frame = element.querySelector(".board-frame");
@@ -1126,6 +1132,7 @@ async function connectTable(connection) {
     selectedId = ""; tool = "move"; category = "move"; status = ""; room = null; cursor = null;
     resetActionSelection();
     applyTableState(connection,snapshot);
+    connection.chat ??= createGameChat(connection.id,controller);
     recentSession(connection.id);
     tableOpen = showInvitation === connection.id;
     showInvitation = null;
@@ -1142,6 +1149,7 @@ async function connectTable(connection) {
 function leaveTable() {
   if (!table) return;
   clearTimeout(table.timer);
+  table.chat?.destroy();
   artworkRequest?.abort();
   ({map,battle,art,artworkNote,customArtwork,detectedGrid,room,selectedId,tool} = table.solo);
   table = null;
@@ -1190,7 +1198,10 @@ document.addEventListener("wayfarer:archive", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && table?.state) pollTable(table);
+  if (!document.hidden && table?.state) {
+    pollTable(table);
+    table.chat?.refresh();
+  }
 });
 
 async function interact(run, {cosmetic = false} = {}) {
