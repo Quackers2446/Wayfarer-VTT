@@ -1,6 +1,6 @@
 import {cellAt, cellCenter, gridGeometry, legacyGeometry, sourceGrid, validGeometry} from "./map-grid.mjs";
 import {diceTerms, makeActor, modifier} from "./combat.mjs";
-import {matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey, spellKey} from "./rules-library.mjs";
+import {bestiaryTokenPath, matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey, spellKey} from "./rules-library.mjs";
 
 const types = {S:"slashing", P:"piercing", B:"bludgeoning"};
 const damageTypes = "acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|poison|psychic|radiant|slashing|thunder";
@@ -232,10 +232,8 @@ export async function creatureActor({name, source, nickname, hp, side, currentHp
   const baseAC = data.ac[0];
   const maxHp = hp ?? data.hp.average;
   const speed = data.speed?.walk;
-  const token = data.token ?? data;
-  const tokenName = token.name.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[‘’]/g,"'").replace(/"/g,"");
   const tokenArt = data.tokenHref?.type === "internal" ? data.tokenHref.path :
-    data.hasToken || data.token ? "bestiary/tokens/" + token.source + "/" + tokenName + ".webp" : null;
+    data.hasToken || data.token ? bestiaryTokenPath(data.token ?? data) : null;
   return makeActor({
     name:nickname || data.name, ac:typeof baseAC === "number" ? baseAC : baseAC.ac,
     hp:currentHp ?? maxHp, maxHp,
@@ -268,6 +266,7 @@ export function trainingActors() {
     makeActor({name:"Rowan", side:"party", resolveDeath:true, hp:21, maxHp:21, ac:16, initiative:2, dex:14, x:3,y:4,
       attacks:[{name:"Longsword", bonus:4, damage:"1d8+2", type:"slashing", reach:5}]}),
     makeActor({name:"Practice guard", hp:11, maxHp:11, ac:13, initiative:1, dex:12, x:8,y:4,
+      statName:"Guard",source:"MM",tokenArt:bestiaryTokenPath({name:"Guard",source:"MM"}),
       attacks:[{name:"Spear", bonus:3, damage:"1d6+1", type:"piercing", reach:5,
         thrown:{normalRange:20,longRange:60}}]}),
   ];

@@ -58,7 +58,10 @@ export function gameScreen({
         ${active ? `<div class="game-initiative" aria-label="Initiative order">${battle.order.map((id) => {
           const actor = battle.actors.find((entry) => entry.id === id);
           return actor ? `<span class="game-turn ${actor.id === selected?.id ? "game-turn-current" : ""} ${actor.side === "hostile" ? "game-turn-hostile" : ""}"
-            title="${escape(actor.name)}"> ${escape(actor.marker ?? actor.name.charAt(0))} <small>${actor.initiativeRoll}</small></span>` : "";
+            title="${escape(actor.name)}"><span class="game-turn-portrait" aria-hidden="true">
+              <span data-token-initial>${escape(actor.marker ?? actor.name.charAt(0))}</span>
+              <canvas data-creature-portrait="${escape(actor.id)}" hidden></canvas>
+            </span><small>${actor.initiativeRoll}</small></span>` : "";
         }).join("")}</div>` : ""}
         <div class="board-frame game-board">
           <canvas style="width:${zoom}%" id="play-grid" tabindex="0" role="application"

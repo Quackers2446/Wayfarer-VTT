@@ -1,3 +1,4 @@
+import {drawMonsterArtwork, monsterArtwork} from "./monster-art.mjs";
 import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
@@ -53,8 +54,7 @@ const extraTargets = new Map();
 let pendingSquare;
 let centerBoard = false;
 const sceneJobs = new WeakMap();
-const tokenImages = new Map();
-const tokenRequests = new Map();
+let repaintScheduled = false;
 let detectedGrid;
 let gridDraft;
 const gridFields = ["width","height","x","y"];
@@ -103,22 +103,37 @@ function visibleMarkers() {
     heroes.some((hero) => inSight(battle,map,hero,marker)));
 }
 
-function loadTokenImages(visible) {
+function repaintCreatureArt() {
+  if (repaintScheduled) return;
+  repaintScheduled = true;
+  requestAnimationFrame(() => {
+    repaintScheduled=false;
+    paintBoard();
+  });
+}
+
+function collectArtwork(visible) {
+  const result = new Map();
   for (const actor of battle.actors) {
-    const path = actor.tokenArt;
-    if (!path || actor.dead || (visible && !visible.has(actor.id)) || tokenImages.has(path) || tokenRequests.has(path)) continue;
-    const request = (async () => {
-      const blob = await mapImage(path).catch(() => null) ??
-        await hostedMapImage(path,AbortSignal.timeout(9000));
-      return blob ? decodeMapImage(blob) : null;
-    })();
-    tokenRequests.set(path,request);
-    request.catch(() => null).then((image) => {
-      if (tokenImages.size >= 128) tokenImages.delete(tokenImages.keys().next().value);
-      tokenImages.set(path,image);
-      tokenRequests.delete(path);
-      if (image && root()) paintBoard();
-    });
+    if (visible && !visible.has(actor.id)) continue;
+    const art = monsterArtwork(actor,map,repaintCreatureArt);
+    if (art) result.set(actor.id,art);
+  }
+  return result;
+}
+
+function paintTokenPreviews(images) {
+  for (const canvas of root().querySelectorAll("canvas[data-creature-portrait]")) {
+    const portrait=images.get(canvas.dataset.creaturePortrait);
+    const initials=canvas.parentElement.querySelector("[data-token-initial]");
+    canvas.hidden = !portrait;
+    if (initials) initials.hidden=Boolean(portrait);
+    if (!portrait || canvas.dataset.artPath===portrait.path) continue;
+    canvas.width=96; canvas.height=96;
+    const ctx=canvas.getContext("2d");
+    drawMonsterArtwork(ctx,portrait,48,48,96);
+    canvas.dataset.artPath=portrait.path;
+    canvas.dataset.artKind=portrait.type;
   }
 }
 
@@ -153,7 +168,8 @@ function paintBoard() {
   const footprint = spellSquare ? effect?.area ? areaCells(battle,spellSquare,effect.area,map) :
     new Set([keyAt(spellSquare.x,spellSquare.y)]) : null;
   const visible = visibleTokens();
-  loadTokenImages(visible);
+  const tokenImages = collectArtwork(visible);
+  paintTokenPreviews(tokenImages);
   const alignmentOpen = root().querySelector("#grid-settings")?.open;
   const drawingMap = alignmentOpen && gridDraft ? {...map,...gridGeometry(map,gridDraft)} : map;
   drawGrid(canvas,drawingMap,battle,{
@@ -462,7 +478,10 @@ function tokenPanel() {
     ${ordered.length ? `<div class="play-tokens">${ordered.map((entry, index) =>
       `<button type="button" class="play-token${entry.id === actor?.id ? " active-token" : ""}${entry.dead ? " defeated" : ""}"
         data-play="token" data-id="${escape(entry.id)}" aria-pressed="${entry.id === (battle.round ? targetId : selectedId)}">
-        <span class="token-marker token-${entry.side}">${escape(entry.marker ?? entry.name.charAt(0).toUpperCase())}</span>
+        <span class="token-marker token-${entry.side}" aria-hidden="true">
+          <span data-token-initial>${escape(entry.marker ?? entry.name.charAt(0).toUpperCase())}</span>
+          <canvas data-creature-portrait="${escape(entry.id)}" hidden></canvas>
+        </span>
         <span><strong>${escape(entry.name)}</strong><small>${entry.hp} / ${entry.maxHp} HP · AC ${entry.ac}
           ${entry.side === "neutral" ? " · Neutral" : ""}${entry.tempHp ? " · +" + entry.tempHp + " temp" : ""}${entry.prone ? " · Prone" : ""}${entry.dead ? " · Defeated" : ""}</small></span>
         ${battle.round ? `<span class="initiative-value" title="Initiative">${entry.initiativeRoll ?? index + 1}</span>` : ""}

@@ -151,8 +151,8 @@ export async function hostedMapImage(path, signal) {
   return null;
 }
 
-async function sourcedRecord(kind, recordType, source, name) {
-  const index = await readArchive(kind + "/index.json");
+async function sourcedRecord(kind, recordType, source, name, indexFile = "index.json") {
+  const index = await readArchive(kind + "/" + indexFile);
   const code = Object.keys(index ?? {}).find((entry) => entry.toLowerCase() === source.toLowerCase());
   if (!code) return null;
   const content = await readArchive(kind + "/" + index[code]);
@@ -167,6 +167,15 @@ export async function fullSpell(spell) {
 
 export async function monsterRecord(name, source = "MM") {
   return sourcedRecord("bestiary", "monster", source, name);
+}
+
+export function bestiaryTokenPath({name,source}) {
+  const ascii = name.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/Æ/g,"AE").replace(/æ/g,"ae").replace(/"/g,"");
+  return "bestiary/tokens/"+source+"/"+ascii+".webp";
+}
+
+export function monsterFluff(name, source) {
+  return sourcedRecord("bestiary","monsterFluff",source,name,"fluff-index.json");
 }
 
 export function markedText(value) {

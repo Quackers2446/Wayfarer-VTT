@@ -91,3 +91,5 @@
 .grid-settings-body{padding:0 10px 10px}
 .grid-settings-body .play-form{margin-top:8px}
 #grid-align-feedback:empty{display:none}
+.token-marker canvas{display:block;width:100%;height:100%;border-radius:50%}
+.token-marker canvas[hidden]{display:none}

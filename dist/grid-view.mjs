@@ -1,3 +1,4 @@
+import {drawMonsterArtwork} from "./monster-art.mjs";
 import {keyAt, occupies} from "./combat.mjs";
 import {regionAt} from "./encounters.mjs";
 import {cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
@@ -110,13 +111,11 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
     c.strokeStyle = actor.id === selected ? "#ffeead" : actor.id === target ? "#ffd3c8" : "#f6f4de";
     c.lineWidth = map.size * (actor.id === selected || actor.id === target ? .075 : .031);
     c.fill();
-    const portrait = tokenImages?.get(actor.tokenArt);
+    const portrait = tokenImages?.get(actor.id);
     if (portrait) {
       c.save();
       c.clip();
-      const factor = 2*radius / Math.max(portrait.naturalWidth,portrait.naturalHeight);
-      const width = portrait.naturalWidth*factor, height = portrait.naturalHeight*factor;
-      c.drawImage(portrait,x-width/2,y-height/2,width,height);
+      drawMonsterArtwork(c,portrait,x,y,2*radius);
       c.restore();
     }
     c.stroke();

@@ -145,3 +145,6 @@ body:has(.game-main){overflow:hidden;background:#17231d}
 
 .game-action-content .button.primary{background:#edcf90;color:#243023;border-color:#d6ba7d}
 .game-action-content .button.primary:hover{background:#f5dda8}
+.game-turn-portrait{display:grid;place-items:center;width:24px;height:24px;overflow:hidden;border-radius:50%}
+.game-turn-portrait canvas{display:block;width:100%;height:100%}
+.game-turn-portrait canvas[hidden]{display:none}
