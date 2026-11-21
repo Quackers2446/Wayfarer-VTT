@@ -4,6 +4,7 @@ import {enrichCharacter} from "./character-rules.mjs";
 import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
+import {createCombatCues} from "./combat-cues.mjs";
 import {createGameChat} from "./game-chat.mjs";
 import {canRescue, discoverStory, rescueSildar, storyPanel, storyVersion} from "./adventure-story.mjs";
 import {enemyTurnPending, runEnemyTurns} from "./enemy-turn.mjs";
@@ -20,7 +21,7 @@ import {artworkURL, createSession, inviteURL, joinPanel, readSession, recentSess
   syncSessionPlayers, tablePanel, writeSession} from "./multiplayer.mjs";
 import {
   actorIsUp, applyDamage, areaCells, castSpell, currentActor, deathSave, diceTerms, distanceFt, drinkPotion, endInitiative, endTurn, joinInitiative, keyAt, moveLeft,
-  exploreToken, heal, log, moveToken, newBattle, occupies, opportunity, placeToken, previewMovement, recordSpell, resolveOpportunity, rollDice,
+  exploreToken, heal, lineClear, log, moveToken, newBattle, occupies, opportunity, placeToken, previewMovement, recordSpell, resolveOpportunity, rollDice,
   rollStrike, startInitiative, supportedSpell, turnAction,
 } from "./combat.mjs";
 
@@ -65,6 +66,7 @@ let logOpen = false;
 let toolsOpen = false;
 let storyOpen = false;
 let scheduledEnemyBattle;
+const combatCues = createCombatCues();
 const controllerKey = "wayfarer-player-v1";
 let controller = globalThis.crypto.randomUUID();
 try {
@@ -195,12 +197,14 @@ function paintBoard() {
     new Set([keyAt(spellSquare.x,spellSquare.y)]) : null;
   const sight = context.game ? partyVision(battle,map) : null;
   const visible = visibleTokens(sight);
+  const selectedTarget = context.game && category === "weapon" && canControl(actor)
+    ? combatSelection(actor,visible).target?.id : targetId;
   const tokenImages = collectArtwork(visible);
   paintTokenPreviews(tokenImages);
   const alignmentOpen = element.querySelector("#grid-settings")?.open;
   const drawingMap = alignmentOpen && gridDraft ? {...map,...gridGeometry(map,gridDraft)} : map;
   const options = {
-    room:context.game && tool !== "room" ? null : room,selected:actor?.id,target:targetId,cursor,art,
+    room:context.game && tool !== "room" ? null : room,selected:actor?.id,target:selectedTarget,cursor,art,
     path:pathPreview,visible,fog:sight ? {visible:sight,memory:exploredCells(battle,map)} : null,
     footprint,showRegions:!context.game || !art || tool==="room",
     markers:visibleMarkers(sight),tokenImages,overlay:alignmentOpen && gridDraft ? "printed" : battle.gridOverlay ?? "artwork",
@@ -354,7 +358,6 @@ function repairWallPlacement(entry,state) {
   return changed;
 }
 
-function currentTarget() {return battle.actors.find((actor) => actor.id === targetId && occupies(actor));}
 function selectedActor() {return currentActor(battle) ?? battle.actors.find(({id}) => id === selectedId);}
 function canControl(actor) {
   if (actor?.side !== "party") return false;
@@ -412,6 +415,24 @@ function choices(actor) {
   ];
 }
 
+function combatSelection(actor, visible) {
+  const list = choices(actor);
+  const weapons = context.game && category === "weapon";
+  const firstWeapon = weapons && combatChoice === "" ? list.findIndex((entry) => entry.mode === "weapon" && entry.usable) : -1;
+  const index = firstWeapon >= 0 ? String(firstWeapon) : combatChoice;
+  const choice = index === "" ? null : list[Number(index)];
+  const targets = battle.actors.filter((entry) => occupies(entry) && (!visible || visible.has(entry.id)));
+  let target = targets.find((entry) => entry.id === targetId);
+  if (!target && weapons && choice && actorIsUp(actor) && occupies(actor)) {
+    const enemies = targets.filter((entry) => entry.side === "hostile" && actorIsUp(entry))
+      .sort((a,b) => distanceFt(actor,a)-distanceFt(actor,b));
+    const weapon = choice.data;
+    const range = weapon?.normalRange ? weapon.longRange || weapon.normalRange : weapon?.reach || 5;
+    target = enemies.find((enemy) => distanceFt(actor,enemy) <= range && lineClear(battle,actor,enemy,map)) ?? enemies[0];
+  }
+  return {list,index,choice,targets,target};
+}
+
 function playOptions(actor) {
   if (!actor || (!battle.round && !context.game)) return "";
   const reaction = opportunity(battle);
@@ -427,11 +448,8 @@ function playOptions(actor) {
   if (actor.hp === 0) return battle.round && actor.resolveDeath
     ? `<p>${actor.stable ? "Stable at 0 HP" : "Unconscious · " + actor.successes + " successes, " + actor.failures + " failures"}</p>
       ${actor.stable || battle.deathRolled ? "" : actionButton("Roll death save","death",{primary:true})}` : "";
-  const list = choices(actor);
-  const choice = combatChoice === "" ? null : list[Number(combatChoice)];
+  const {list,index,choice,targets,target} = combatSelection(actor,visibleTokens());
   const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.key) : null;
-  const visible = visibleTokens();
-  const targets = battle.actors.filter((entry) => occupies(entry) && (!visible || visible.has(entry.id)));
   const pickArea = effect?.area || effect?.teleport;
   const pickTarget = choice && choice.mode !== "potion" && !effect?.self && !pickArea;
   const auxiliary = effect?.beams ? Math.min(3,[5,11,17].filter((level) => actor.level >= level).length) : effect?.aid ? 2 : 0;
@@ -447,14 +465,15 @@ function playOptions(actor) {
   const slotOptions = choice?.mode === "spell" && choice.data.level
     ? Object.entries(actor.slots).filter(([level, pool]) => Number(level) >= choice.data.level && pool.current > 0)
     : [];
+  const missingWeaponTarget = context.game && category === "weapon" && pickTarget && !target;
   return `<form class="play-form" id="combat-form">
     ${field(context.game ? {weapon:"Weapon",spell:"Spell",potion:"Item"}[category] : "Action","combat-choice",[
-      option("","Choose " + (context.game ? {weapon:"a weapon",spell:"a spell",potion:"an item"}[category] : "an action"),combatChoice === ""),
-      ...legalChoices.map(({entry,index}) => option(String(index),entry.name + (entry.data?.prepared === false ? " · unprepared" : entry.usable ? "" : " · manual"), combatChoice === String(index)))])}
+      option("","Choose " + (context.game ? {weapon:"a weapon",spell:"a spell",potion:"an item"}[category] : "an action"),index === ""),
+      ...legalChoices.map(({entry,index:position}) => option(String(position),entry.name + (entry.data?.prepared === false ? " · unprepared" : entry.usable ? "" : " · manual"), index === String(position)))])}
     ${pickArea ? `<p class="game-spell-note">${spellSquare ? "Selected square " + (spellSquare.x+1) + ", " + (spellSquare.y+1) :
       effect.teleport ? "Choose an unoccupied destination on the map." : "Choose a point on the map."}</p>` : ""}
-    ${pickTarget ? field("Target","target-select",[option("","Choose target",!targetId),
-      ...targets.map((entry) => option(entry.id,entry.name,entry.id === targetId))]) : ""}
+    ${pickTarget ? field("Target","target-select",[option("","Choose target",!target),
+      ...targets.map((entry) => option(entry.id,entry.name,entry.id === target?.id))]) : ""}
     ${auxiliary ? `<div class="play-field-row">${Array.from({length:auxiliary},(_,index) =>
       field(effect.beams ? "Beam " + (index+2) : "Target " + (index+2),"extra-target-"+index,
         [option("",effect.beams ? "Same as first target" : "Optional",!extraTargets.get(index)),
@@ -477,7 +496,7 @@ function playOptions(actor) {
     ${choice && !choice.usable ? `<p class="play-hint">${choice.data?.prepared === false ? "This spell is unprepared." :
       "Resolve the effect at the table."}</p>` : ""}
     <div class="play-action-row">${choice?.usable || choice?.manual ? `<button class="button primary small" type="submit"
-      ${choice.mode === "spell" && choice.data.level && !slotOptions.length ? "disabled" : ""}>${choice.mode === "spell" ? (choice.usable ? "Cast spell" : "Record manual cast") : choice.mode === "potion" ? "Use item" : "Roll attack"}</button>` : ""}
+      ${missingWeaponTarget || choice.mode === "spell" && choice.data.level && !slotOptions.length ? "disabled" : ""}>${choice.mode === "spell" ? (choice.usable ? "Cast spell" : "Record manual cast") : choice.mode === "potion" ? "Use item" : "Roll attack"}</button>` : ""}
       ${!context.game ? moveActions : ""}
     </div>
   </form>`;
@@ -731,6 +750,7 @@ function redraw() {
   camera?.destroy();
   const archiveOpen = element.querySelector(".play-archive")?.open;
   const gridOpen = element.querySelector("#grid-settings")?.open;
+  table?.chat?.rememberScroll();
   element.innerHTML = context.game ? gameScreen({
     map,battle,selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
     visibleInitiative:visibleTokens(),
@@ -760,7 +780,12 @@ function redraw() {
       focusedGameMap = map.key;
     }
   }
-  camera = createCamera(frame,element.querySelector(".map-controls"),map,cameraState);
+  const cueLayer = element.querySelector(".combat-cues");
+  const committedBattle = table?.state?.battle ?? battle;
+  combatCues.sync(table?.id ?? battle,committedBattle.monsterEvents ?? [],cueLayer ? {
+    layer:cueLayer,frame,grid:frame.querySelector("#play-grid"),map,sight:partyVision(committedBattle,map),
+  } : null);
+  camera = createCamera(frame,element.querySelector(".map-controls"),map,cameraState,combatCues.place);
   paintBoard();
   if (active) element.querySelector("#"+CSS.escape(active))?.focus({preventScroll:true});
   if (enemyTurnPending(battle) && scheduledEnemyBattle !== battle && (!table || table.online && !table.writing)) {
@@ -794,7 +819,7 @@ function canRollInitiative() {
 function advanceCombat() {
   if (!battle.round) return;
   const message = runEnemyTurns(battle,map);
-  if (message && !status) status = message;
+  if (message && !status && (!context.game || !battle.round)) status = message;
   if (battle.round && !battle.movement &&
       !battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && actorIsUp(actor) && occupies(actor))) {
     endInitiative(battle);
@@ -1232,7 +1257,10 @@ export function showPlay(data) {
   context = data;
   if (!data?.game) focusedGameMap = null;
   if (!data?.sessionRoute) leaveTable();
-  if (!data) return;
+  if (!data) {
+    combatCues.reset();
+    return;
+  }
   if (!battle) useMap(trainingMap);
   if (data.sessionRoute) {
     const id = sessionCode(data.sessionRoute);
@@ -1746,8 +1774,7 @@ document.addEventListener("submit", (event) => {
       case "combat-form": {
         const actor = selectedActor();
         requireControl(actor);
-        const choice = combatChoice === "" ? null : choices(actor)[Number(combatChoice)];
-        const target = currentTarget();
+        const {choice,target} = combatSelection(actor,visibleTokens());
         const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.key) : null;
         const options = {mode:rollMode,cover,square:spellSquare,map,
           keepTemp:event.target.querySelector("#keep-temp")?.checked,

@@ -78,6 +78,7 @@ export function gameScreen({
             </span><small>${actor.initiativeRoll}</small></span>` : "";
         }).join("")}</div>` : ""}
         ${mapViewport(map,true)}
+        <div class="combat-cues" aria-live="polite" aria-atomic="true"></div>
         <div class="game-board-meta">
           <div><p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>${mapHint()}</div>
           ${mapControls(hasToken)}

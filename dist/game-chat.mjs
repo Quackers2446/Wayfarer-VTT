@@ -49,12 +49,20 @@ export function createGameChat(id, sender) {
   let cursor;
   let draft;
   let slot;
+  let scrollTop = 0;
+  let following = true;
 
   try {seen = Number(sessionStorage.getItem(seenKey)) || 0;} catch {}
 
   function markSeen() {
     seen = Math.max(seen,cursor ?? 0);
     try {sessionStorage.setItem(seenKey,String(seen));} catch {}
+  }
+
+  function rememberScroll() {
+    if (!open || !history.isConnected) return;
+    scrollTop = history.scrollTop;
+    following = history.scrollHeight - scrollTop - history.clientHeight < 24;
   }
 
   function updateBadge() {
@@ -74,6 +82,7 @@ export function createGameChat(id, sender) {
     content.hidden = !open;
     if (open) {
       history.scrollTop = history.scrollHeight;
+      rememberScroll();
       markSeen();
     }
     updateBadge();
@@ -81,7 +90,7 @@ export function createGameChat(id, sender) {
 
   function appendMessages(messages) {
     if (!messages.length) return;
-    const atBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 24;
+    rememberScroll();
     empty.remove();
     for (const message of messages) {
       const item = document.createElement("div");
@@ -100,7 +109,8 @@ export function createGameChat(id, sender) {
       history.append(item);
     }
     while (history.childElementCount > 200) history.firstElementChild.remove();
-    if (open && atBottom) history.scrollTop = history.scrollHeight;
+    if (open && following) history.scrollTop = history.scrollHeight;
+    rememberScroll();
     if (open) markSeen();
     updateBadge();
   }
@@ -129,6 +139,7 @@ export function createGameChat(id, sender) {
   }
 
   toggle.addEventListener("click",() => setOpen(!open));
+  history.addEventListener("scroll",rememberScroll);
   body.addEventListener("input",updateSend);
   body.addEventListener("keydown",(event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -164,13 +175,13 @@ export function createGameChat(id, sender) {
 
   return {
     mount(container, name) {
-      const scroll = history.scrollTop;
       slot = container;
       slot.append(panel);
       slot.classList.toggle("chat-open",open);
       author.textContent = "Sending as " + name;
-      if (open) history.scrollTop = scroll;
+      if (open) history.scrollTop = following ? history.scrollHeight : scrollTop;
     },
+    rememberScroll,
     refresh,
     destroy() {
       stopped = true;

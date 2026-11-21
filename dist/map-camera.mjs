@@ -34,7 +34,7 @@ export function mapHint() {
     <span class="map-hint-touch">Drag to pan · Pinch to zoom</span></span>`;
 }
 
-export function createCamera(frame, controls, map, saved) {
+export function createCamera(frame, controls, map, saved, onView) {
   const content = frame.querySelector(".board-content");
   const surface = content.firstElementChild;
   const canvas = surface.firstElementChild;
@@ -50,6 +50,7 @@ export function createCamera(frame, controls, map, saved) {
 
   function render(force = false) {
     if (!painter || !frame.isConnected) return;
+    onView?.();
     const visibleWidth = Math.min(width,viewWidth);
     const visibleHeight = Math.min(height,viewHeight);
     if (visibleWidth <= 0 || visibleHeight <= 0) return;

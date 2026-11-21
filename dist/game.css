@@ -70,6 +70,24 @@ body:has(.game-main){overflow:hidden;background:#17231d}
 .game-turn small{font-size:.75rem;color:#dae6cf}
 .game-turn-hostile{background:#603b34;border-color:#925e50}
 .game-turn-current{border-color:#ead199;box-shadow:0 0 0 1px #b9a274}
+.combat-cues{position:absolute;inset:0;z-index:3;pointer-events:none}
+.combat-cue{
+  position:absolute;max-width:min(238px,calc(100% - 16px));padding:7px 10px;border:1px solid #a68b68;border-radius:7px;
+  background:#242c25;color:#fff3df;box-shadow:0 4px 14px #080c08be;font-size:.85rem;line-height:1.42;overflow-wrap:anywhere;
+}
+.combat-cue[data-point="top"]::after,.combat-cue[data-point="bottom"]::after{
+  content:"";position:absolute;left:var(--cue-tip);width:8px;height:8px;background:#242c25;transform:translateX(-50%) rotate(45deg);
+}
+.combat-cue[data-point="top"]::after{top:-5px;border-top:1px solid #a68b68;border-left:1px solid #a68b68}
+.combat-cue[data-point="bottom"]::after{bottom:-5px;border-right:1px solid #a68b68;border-bottom:1px solid #a68b68}
+.combat-cue-heading{display:flex;align-items:center;justify-content:space-between;gap:9px;margin-bottom:3px}
+.combat-cue-heading strong{color:#f3daac}
+.combat-cue-result{padding:1px 5px;border-radius:4px;background:#475047;color:#eeeade;font-size:.75rem;font-weight:700;white-space:nowrap}
+.combat-cue-result.hit{background:#70483c;color:#ffeee4}
+.combat-cue-result.critical{background:#ecd191;color:#322a1b}
+.combat-cue-roll{font-variant-numeric:tabular-nums;color:#deded2}
+.combat-cue-detail{font-weight:700}
+.combat-cue-note{color:#c3cbbf;font-size:.77rem}
 .game-hud{border-top:1px solid #7b8768;background:#27392c}
 .game-hud-top{gap:13px 20px;min-height:56px;padding:7px 14px;border-bottom:1px solid #4f634e}
 .game-active{display:grid;gap:0;min-width:0;overflow-wrap:anywhere}

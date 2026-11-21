@@ -57,6 +57,13 @@ export function log(battle, text) {
   if (battle.log.length > 160) battle.log.splice(0, battle.log.length - 160);
 }
 
+function monsterEvent(battle, actor, event) {
+  if (actor.side !== "hostile" || !Number.isInteger(actor.x) || !Number.isInteger(actor.y)) return;
+  const events = battle.monsterEvents ??= [];
+  events.push({id:(events.at(-1)?.id ?? 0)+1,actor:actor.id,name:actor.name,x:actor.x,y:actor.y,...event});
+  if (events.length > 48) events.shift();
+}
+
 export function makeActor(record) {
   return {
     attacks:[], spells:[], slots:{}, saves:{}, ability:{}, resist:[], immune:[], vulnerable:[],
@@ -297,7 +304,10 @@ function walkRemaining(battle, actor, board) {
   }
   const distance = walk.path[walk.index-1]?.cost ?? 0;
   battle.spent += distance;
-  if (distance) log(battle, actor.name + " moves " + distance + " ft.");
+  if (distance) {
+    log(battle, actor.name + " moves " + distance + " ft.");
+    monsterEvent(battle,actor,{action:"Moved " + distance + " ft"});
+  }
   battle.movement = null;
 }
 
@@ -331,7 +341,7 @@ export function resolveOpportunity(battle, attackIndex, random = Math.random, bo
     const attack = attacks[attackIndex];
     if (!attack) error("Select a melee attack.");
     foe.reactionUsed = true;
-    resolveWeaponRoll(battle,foe,actor,attack,{},random);
+    resolveWeaponRoll(battle,foe,actor,attack,{reaction:true},random);
   } else log(battle, foe.name + " passes the opportunity attack.");
   battle.movement.passed.push(foe.id);
   battle.movement.foe = null;
@@ -347,6 +357,7 @@ export function turnAction(battle, actor, action) {
     battle.spent += cost;
     actor.prone = false;
     log(battle, actor.name + " stands up.");
+    monsterEvent(battle,actor,{action:"Stood up"});
     return;
   }
   if (action === "bonus-disengage") {
@@ -354,6 +365,7 @@ export function turnAction(battle, actor, action) {
     actor.disengaged = true;
     battle.bonusUsed = true;
     log(battle, actor.name + " uses a bonus action to disengage.");
+    monsterEvent(battle,actor,{action:"Disengage (bonus action)"});
     return;
   }
   if (battle.action) error("This token has used its action.");
@@ -362,7 +374,9 @@ export function turnAction(battle, actor, action) {
   else if (action === "disengage") actor.disengaged = true;
   else error("Choose an action.");
   battle.action = action;
-  log(battle, actor.name + " takes the " + action.charAt(0).toUpperCase() + action.slice(1) + " action.");
+  const label = action.charAt(0).toUpperCase() + action.slice(1);
+  log(battle, actor.name + " takes the " + label + " action.");
+  monsterEvent(battle,actor,{action:label});
 }
 
 export function applyDamage(battle, actor, rawDamage, type, critical = false) {
@@ -507,18 +521,27 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
   attacker.mocked = false;
   const hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= target.ac + (Number(options.cover) || 0));
   const critical = hit && (roll.kept === 20 || (target.hp === 0 && distance <= 5));
+  let damage;
+  let prone;
   log(battle, attacker.name + " · " + weapon.name + " vs " + target.name + " — " + roll.breakdown + " = " + roll.total +
     (critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   if (hit) {
     const retaliation = !ranged && target.tempHp > 0 ? target.agathys : null;
-    damageLog(battle, target, weapon.damage, weapon.type, critical, random);
+    damage = damageLog(battle, target, weapon.damage, weapon.type, critical, random);
     if (retaliation) recordDamage(battle,attacker,retaliation,"cold","Armor of Agathys");
     if (weapon.proneDC && actorIsUp(target)) {
       const save = savingThrow(target,"str",{random});
-      if (save.total < weapon.proneDC) target.prone = true;
+      if (save.total < weapon.proneDC) {
+        prone = true;
+        target.prone = true;
+      }
       log(battle, target.name + " Strength save " + save.total + " vs DC " + weapon.proneDC + (target.prone ? " · prone." : "."));
     }
   }
+  monsterEvent(battle,attacker,{
+    action:weapon.name, target:target.name, roll:roll.breakdown, total:roll.total,
+    outcome:critical ? "Critical hit" : hit ? "Hit" : "Miss", damage, type:weapon.type, prone, reaction:options.reaction,
+  });
   return {roll, hit, critical};
 }
 

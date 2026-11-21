@@ -45,9 +45,11 @@ Under **Grid alignment** in Setup or Table tools, choose **Artwork only**, **Art
 
 **Enter game** opens the play screen. Select a party portrait for its live sheet, inventory, and remaining slots. Pick a square to explore. Wayfarer rolls initiative when a party member reaches an enemy’s sight or engages it. In combat, point at a square to see what it costs to reach and how much movement will remain. On touch screens, select a square and confirm **Move here**.
 
-Hostile NPCs take their turns automatically in both the game screen and combat started from Setup. They use imported weapon attacks and follow the 2014 5e movement limits, walls, weapon ranges, and action economy. The game resolves hostile opportunity attacks and prompts the appropriate player for a party opportunity attack. Roll results appear in the combat log.
+Hostile NPCs take their turns automatically in both the game screen and combat started from Setup. They use imported weapon attacks and follow the 2014 5e movement limits, walls, weapon ranges, and action economy. The game resolves hostile opportunity attacks and prompts the appropriate player for a party opportunity attack. During play, callouts over the monster show its action, attack roll, and result. The combat log keeps the full record.
 
 The **Story** journal opens with the area objective and adds the first player-facing read-aloud passage as the party enters each mapped room that has one. In Cragmaw Hideout, clear Sildar’s room and move beside him to free him and learn where Gundren may have been taken. Branching dialogues, scripted encounters, and quest transitions elsewhere require adventure-specific game logic.
+
+**Weapons** opens with the first usable weapon and selects the nearest visible enemy it can reach. Choose a different weapon or target from the menus.
 
 Fog of war is on when you enter a game. A soft gradient blends visible, explored, and uncharted ground. Creatures follow actual line of sight. Cragmaw Hideout and its player map load prepared walls and sight blockers, with the camera starting near the party. Other maps use sight range, tagged rooms where available, and blocked squares. The party shares visibility across browsers, and the encounter saves explored squares with the party’s positions.
 
@@ -61,6 +63,6 @@ In the game screen, open **Multiplayer** and choose **Start shared session**. Si
 
 Up to four characters can join a party. Each player can use **Claim** next to a portrait to reserve a character in their browser. Unclaimed party members are available to everyone. The map, story discoveries, tokens, initiative, and rolls sync across browsers. Each player controls their camera and tool selection. Between encounters, use **Session → Add to party** to share a character from your local library. Creating a session copies the active encounter and leaves its solo save available.
 
-Open **Chat** on the right side of a shared game. Messages use your claimed character’s name or your username. Minimize the panel to see more of the map. The tab shows unread messages, and the session keeps its latest 200 messages when players rejoin.
+Open **Chat** on the right side of a shared game. Messages use your claimed character’s name or your username. Movement and combat updates preserve the position in chat history. Minimize the panel to see more of the map. The tab shows unread messages, and the session keeps its latest 200 messages when players rejoin.
 
 The hosted Worker stores encounters and chat in D1 and shared uploaded maps in R2. The Python preview serves the solo game and local sample files. To develop the multiplayer API locally, build with `node scripts/build.mjs`, apply the `drizzle/` SQL migrations in order to the local `DB` with Wrangler, and run `wrangler dev --local --config dist/server/wrangler.json`. Hosted requests receive identity from Sites. Local API tests supply a mock `oai-authenticated-user-id` header.
