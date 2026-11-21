@@ -1,3 +1,5 @@
+import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
+import {escape, plural, text} from "./format.mjs";
 import {readCharacters} from "./characters.mjs";
 import {icon} from "./icons.mjs";
 
@@ -20,14 +22,16 @@ const groupNames = {
   "setting-alt":"Campaign setting", screen:"DM screen", recipe:"Recipe book", other:"Other",
   "organized-play":"Organized play", homecraft:"Homecraft",
 };
-const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
-  "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;",
-})[character]);
-const plural = (count, word) => count + " " + word + (count === 1 ? "" : "s");
-const text = (value) => value == null || value === "" ? "—" : escape(value);
-const signed = (value) => typeof value === "number" && value >= 0 ? "+" + value : text(value);
 const byId = (id) => [...catalog.adventures, ...catalog.books].find((entry) => entry.id === id);
-const currentPage = () => navItems.some(([id]) => "#"+id === location.hash) ? location.hash.slice(1) : "overview";
+
+function currentRoute(hash = location.hash) {
+  const [requested, characterId, section = "overview"] = hash.slice(1).split("/");
+  const page = navItems.some(([id]) => id === requested) ? requested : "overview";
+  const character = page === "characters" && characterId
+    ? state.characters.find((entry) => encodeURIComponent(entry.id) === characterId)
+    : null;
+  return {page, character, section};
+}
 
 let state;
 try {
@@ -86,20 +90,20 @@ function emptyParty() {
 
 function partyCards(characters) {
   return '<div class="party-grid">' + characters.map((character, index) => {
-    const key = escape(character.id);
-    const initials = character.name.trim().split(/\s+/).slice(0, 2).map((word) => word[0]).join("");
-    const profile = [character.species, character.characterClass, character.level == null ? "" : "Level " + character.level].filter(Boolean);
-    const hp = character.hp == null && character.maxHp == null ? "—" : text(character.hp) + " / " + text(character.maxHp);
-    return `<article class="character-card">
-      <button class="character-open" type="button" data-action="character" data-id="${key}">
-        <span class="avatar tone-${index % 4}" aria-hidden="true">${escape(initials)}</span>
-        <span class="character-info"><strong>${escape(character.name)}</strong><small>${escape(profile.join(" · "))}</small></span>
-      </button>
-      <div class="card-stats">
+    const hp = [character.hp, character.maxHp].every((value) => value == null)
+      ? "—" : text(character.hp) + " / " + text(character.maxHp);
+    const profile = characterProfile(character);
+    return `<a class="character-card" href="${sheetPath(character)}" aria-label="Open character sheet for ${escape(character.name)}">
+      <span class="character-open">
+        <span class="avatar tone-${index % 4}" aria-hidden="true">${escape(initials(character.name))}</span>
+        <span class="character-info"><strong>${escape(character.name)}</strong>${profile ? '<small>' + profile + '</small>' : ""}</span>
+      </span>
+      <span class="card-stats">
         <span title="Armor Class">${icon("shield", 15)} <b>${text(character.ac)}</b> AC</span>
         <span title="Hit Points">${icon("heart", 15)} <b>${hp}</b> HP</span>
-      </div>
-    </article>`;
+        ${character.level != null ? '<span class="card-level">Level ' + text(character.level) + '</span>' : ""}
+      </span>
+    </a>`;
   }).join("") + '</div>';
 }
 
@@ -239,7 +243,7 @@ function renderResults() {
 }
 
 function render() {
-  const page = currentPage();
+  const {page, character, section} = currentRoute();
   const pageLabel = navItems.find(([id]) => id === page)[1];
   app.innerHTML = `<div class="shell">
     <aside class="sidebar">
@@ -260,14 +264,15 @@ function render() {
       </div>
     </aside>
     <div class="work-area">
-      <div class="topbar">
+      <div class="topbar${character ? " topbar-sheet" : ""}">
         <span class="crumb"><span>Workspace</span> ${icon("chevron", 13)} <strong>${pageLabel}</strong></span>
-        ${button("Import character", "upload", "plus")}
+        ${character ? '<a class="button outline" href="#characters">Back to party</a>' : button("Import character", "upload", "plus")}
       </div>
-      <main id="main" tabindex="-1" class="content">${page === "overview" ? overview() : page === "characters" ? charactersPage() : libraryPage()}</main>
+      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : libraryPage()}</main>
     </div>
   </div>`;
   if (page === "library") renderResults();
+  if (character) fillSheetResults(character, section);
 }
 
 function openDialog(title, subtitle, body, lead = "file", wide = false) {
@@ -305,41 +310,6 @@ function table(headers, rows) {
     headers.map((label) => '<th scope="col">' + escape(label) + '</th>').join("") +
     '</tr></thead><tbody>' + rows.map((row) => '<tr>' + row.map((cell) => '<td>' + cell + '</td>').join("") + '</tr>').join("") +
     '</tbody></table></div>';
-}
-
-function characterDialog(character) {
-  if (!character) return;
-  const details = [
-    ["Armor Class", text(character.ac)],
-    ["Hit Points", text(character.hp) + " / " + text(character.maxHp)],
-    ["Temp HP", text(character.tempHp)],
-    ["Initiative", signed(character.initiative)],
-    ["Speed", /^\d+$/.test(character.speed) ? escape(character.speed) + " ft" : text(character.speed)],
-    ["Proficiency", signed(character.proficiency)],
-    ["Passive Perception", text(character.passivePerception)],
-  ];
-  const profile = [character.species, character.characterClass, character.level == null ? "" : "Level " + character.level].filter(Boolean);
-  const fields = [
-    ["Background", character.background], ["Alignment", character.alignment],
-    ["Player", character.player], ["Experience", character.xp],
-  ].filter(([, value]) => value != null && value !== "");
-  openDialog(character.name, profile.join(" · "), `
-    <div class="sheet-stats">${details.map(([label, value]) => '<div><span>' + label + '</span><strong>' + value + '</strong></div>').join("")}</div>
-    <h3>Ability scores</h3>
-    <div class="ability-grid">${character.abilities.map((ability) => `<div class="ability">
-       <abbr title="${escape(ability.label)}">${escape(ability.abbr)}</abbr><strong>${text(ability.score)}</strong>
-       <span>Mod ${signed(ability.modifier)}</span><span>Save ${signed(ability.save)}</span>
-    </div>`).join("")}</div>
-    ${fields.length ? '<dl class="character-facts">' + fields.map(([label, value]) => '<div><dt>' + label + '</dt><dd>' + text(value) + '</dd></div>').join("") + '</dl>' : ""}
-    ${character.attacks.length ? '<details open><summary>Attacks and actions</summary>' + table(["Attack or action", "Bonus", "Damage"], character.attacks.map((attack) => [text(attack.name), signed(attack.bonus), text(attack.damage)])) + '</details>' : ""}
-    ${character.skills.length ? '<details><summary>Skills</summary>' + table(["Skill", "Bonus"], character.skills.map((skill) => [text(skill.name), signed(skill.bonus)])) + '</details>' : ""}
-    ${character.items.length ? '<details><summary>Inventory <small>' + character.items.length + '</small></summary>' + table(["Item", "Qty", "Weight"], character.items.map((item) => [text(item.name), text(item.quantity), text(item.weight)])) + '</details>' : ""}
-    ${character.spells.length ? '<details><summary>Spells <small>' + character.spells.length + '</small></summary>' +
-      ((character.spellDC != null || character.spellAttack != null) ? '<p>Spell save DC ' + text(character.spellDC) + ' · Spell attack ' + signed(character.spellAttack) + '</p>' : '') +
-      table(["Spell", "Level", "Prepared"], character.spells.map((spell) => [text(spell.name), spell.level || "Cantrip", spell.prepared ? "Yes" : "—"])) + '</details>' : ""}
-    <footer class="dialog-footer"><span>Imported from ${escape(character.sourceName)}</span>
-      ${button("Remove character", "confirm-remove", "", "danger small", character.id)}
-    </footer>`, "users", true);
 }
 
 function adventureDialog(entry) {
@@ -431,7 +401,7 @@ async function runImport(entries) {
       output.innerHTML = '<ul class="import-errors">' + errors.map((error) => '<li>' + escape(error) + '</li>').join("") + '</ul>';
     } else if (count && output.isConnected) {
       dialog.close();
-      if (currentPage() !== "characters") location.hash = "characters";
+      if (currentRoute().page !== "characters") location.hash = "characters";
       else document.querySelector("#main").focus({preventScroll:true});
     }
   } finally {
@@ -515,7 +485,6 @@ document.addEventListener("click", (event) => {
     }
     case "source": sourceDialog(); break;
     case "adventure": adventureDialog(byId(id)); break;
-    case "character": characterDialog(state.characters.find((character) => character.id === id)); break;
     case "select": {
       state.active = id;
       const saved = save();
@@ -536,14 +505,16 @@ document.addEventListener("click", (event) => {
       const character = state.characters.find((entry) => entry.id === id);
       if (!character) break;
       openDialog("Remove " + character.name + "?", "You can import this workbook again at any time.", '<div class="dialog-footer">' +
-        button("Keep character", "character", "", "outline", id) + button("Remove character", "remove", "", "danger-fill", id) + '</div>', "users");
+        button("Keep character", "close", "", "outline") + button("Remove character", "remove", "", "danger-fill", id) + '</div>', "users");
       break;
     }
     case "remove": {
+      const viewing = currentRoute().character?.id === id;
       state.characters = state.characters.filter((entry) => entry.id !== id);
       const saved = save();
       dialog.close();
-      render();
+      if (viewing) location.hash = "characters";
+      else render();
       notice("Character removed." + (saved ? "" : " Browser storage is unavailable."));
       break;
     }
@@ -551,9 +522,14 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("input", (event) => {
-  if (event.target.id !== "catalog-search") return;
-  search = event.target.value;
-  renderResults();
+  if (event.target.id === "catalog-search") {
+    search = event.target.value;
+    renderResults();
+  }
+  if (event.target.id === "sheet-search") {
+    const {character, section} = currentRoute();
+    fillSheetResults(character, section);
+  }
 });
 
 document.addEventListener("change", (event) => {
@@ -561,6 +537,11 @@ document.addEventListener("change", (event) => {
     case "workbooks": importFiles(event.target.files); event.target.value = ""; break;
     case "level-filter": startLevel = event.target.value; renderResults(); break;
     case "catalog-sort": sort = event.target.value; renderResults(); break;
+    case "prepared-only": {
+      const {character, section} = currentRoute();
+      fillSheetResults(character, section);
+      break;
+    }
   }
 });
 
@@ -581,10 +562,14 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
 dialog.addEventListener("close", () => {
   if (dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
 });
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", (event) => {
+  const previous = currentRoute(new URL(event.oldURL).hash);
+  const next = currentRoute();
   render();
-  window.scrollTo({top:0, behavior:"instant"});
-  document.querySelector("#main").focus({preventScroll:true});
+  const sameSheet = next.character && next.character.id === previous.character?.id;
+  const focus = sameSheet ? document.querySelector(".sheet-tab[aria-current]") : document.querySelector("#main");
+  if (!sameSheet) window.scrollTo({top:0, behavior:"instant"});
+  focus?.focus({preventScroll:!sameSheet});
 });
 
 render();
