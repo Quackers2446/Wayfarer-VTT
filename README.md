@@ -14,6 +14,8 @@ Open a character's sheet and use **Upload token** to choose a PNG, JPEG, or WebP
 
 The **Rules** tab shows where the character's missing values were filled in. Existing workbook values take priority. Wayfarer can derive proficiency, walking speed, certain skills and saves, Hit Dice, and spell-slot capacities. It also shows known features and fixed benefits from the character's class, species, and background. Change **Rules edition** in that tab if the automatic match picks the wrong edition. Unrecorded rolls, equipment, chosen options, and remaining spell slots still come from the sheet or the table.
 
+Use **Edit sheet** to enter missing values and record choices such as worn armor, fixed HP advancement, skill training, and remaining spell slots. Blank fields fall back to the workbook or the rules. Saved edits carry into new tokens and survive re-importing the workbook. For a token already placed on a solo map, select it outside combat and choose **Update token from sheet**. The existing token retains its current HP and remaining slots up to the updated maximums.
+
 You can also paste a Google Sheets link with viewer access for anyone with the link. For a restricted workbook, export it using **File → Download → Microsoft Excel (.xlsx)** and upload the file. The Google Sheets link points directly to Google's export endpoint.
 
 ## Refresh the catalog

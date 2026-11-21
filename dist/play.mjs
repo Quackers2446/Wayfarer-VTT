@@ -127,8 +127,12 @@ document.addEventListener("wayfarer:character-token",repaintCreatureArt);
 function partyTokenImage(actor) {
   if (actor.side !== "party") return;
   if (table) return actor.tokenImage;
-  const character = context.characters.find(({id}) => actor.id === "party:"+id);
+  const character = importedCharacter(actor);
   return character ? character.tokenImage : actor.tokenImage;
+}
+
+function importedCharacter(actor) {
+  return actor ? context.characters.find(({id}) => actor.id === "party:"+id) : null;
 }
 
 function collectArtwork(visible) {
@@ -530,7 +534,8 @@ function tokenPanel() {
       ${Object.keys(actor.slots).length ? `<details><summary>Spell slots</summary><div class="play-field-row slot-fields">${Object.entries(actor.slots).map(([level,pool]) =>
         input("Level " + level + (pool.maximum != null ? " / " + pool.maximum : ""), "slot-"+level, pool.current ?? "", "number",
           'min="0" max="' + (pool.maximum ?? 20) + '"')).join("")}</div></details>` : ""}
-      <div class="play-action-row"><button type="submit" class="button outline small">Save token</button>${actionButton("Remove token","remove-token")}</div>
+      <div class="play-action-row"><button type="submit" class="button outline small">Save token</button>
+        ${importedCharacter(actor) ? actionButton("Update token from sheet","refresh-party-token") : ""}${actionButton("Remove token","remove-token")}</div>
     </form>` : ""}
     ${battle.round && actor ? `<div class="turn-info">
       <h3>${escape(actor.name)}’s turn</h3>
@@ -750,7 +755,7 @@ async function launchGame() {
     throw new Error("Import a character to start this adventure, or choose the practice yard.");
   }
   for (const actor of battle.actors.filter((entry) => entry.id.startsWith("party:"))) {
-    const character = context.characters.find((entry) => "party:"+entry.id === actor.id);
+    const character = importedCharacter(actor);
     if (!character) continue;
     const imported = partyActor(character);
     actor.spells = imported.spells;
@@ -776,6 +781,22 @@ async function launchGame() {
   try {localStorage.setItem(activeMapKey,JSON.stringify(preferredGame));} catch {}
   saveBattle();
   location.hash = "game";
+}
+
+function refreshPartyToken(actor, character) {
+  const sheet = partyActor(character);
+  for (const key of ["name","ac","speed","initiative","dex","ability","saves","resist","level","spells","spellDC","spellAttack","spellAbility"]) {
+    actor[key] = sheet[key];
+  }
+  actor.maxHp = sheet.maxHp + (actor.aid ?? 0);
+  actor.hp = Math.min(actor.hp,actor.maxHp);
+  actor.slots ??= {};
+  for (const [rank,slot] of Object.entries(sheet.slots)) {
+    const existing = actor.slots[rank];
+    const maximum = slot.maximum ?? existing?.maximum ?? null;
+    const remaining = existing?.current ?? slot.current ?? null;
+    actor.slots[rank] = {maximum,current:remaining == null || maximum == null ? remaining : Math.min(remaining,maximum)};
+  }
 }
 
 function selectRoom(region) {
@@ -1252,6 +1273,15 @@ document.addEventListener("click", (event) => {
         const character = context.characters.find((entry) => entry.id === selectedParty);
         if (character) add(partyActor(character), map.regions.find(({id}) => id === "01b") ?? room);
         selectedParty = "";
+        break;
+      }
+      case "refresh-party-token": {
+        if (table || battle.round) break;
+        const actor = selectedActor();
+        const character = importedCharacter(actor);
+        if (!character) break;
+        refreshPartyToken(actor,character);
+        status = actor.name + " updated from the character sheet.";
         break;
       }
       case "add-room-monster": {

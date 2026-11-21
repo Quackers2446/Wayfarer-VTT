@@ -1,3 +1,5 @@
+import {sheetOverrides, wornArmorClass} from "./sheet-editor.mjs";
+
 const skills = {
   acrobatics:"dex","animal handling":"wis",arcana:"int",athletics:"str",deception:"cha",history:"int",
   insight:"wis",intimidation:"cha",investigation:"int",medicine:"wis",nature:"int",perception:"wis",
@@ -11,6 +13,7 @@ const unique = (values) => [...new Set(values.filter(Boolean))];
 const filled = (value) => value != null && value !== "";
 const levelNumber = (value) => Number.isInteger(value) && value >= 1 && value <= 20;
 const title = (value) => value.replace(/(^|[\s(-])([a-z])/g,(_,prefix,letter) => prefix+letter.toUpperCase());
+export const sheetSkills = Object.keys(skills).map((skill) => [skill,title(skill)]);
 
 let library = {species:new Map(),backgrounds:new Map(),classes:new Map()};
 let loading;
@@ -72,7 +75,7 @@ function parseClasses(character, edition) {
       });
     });
     const explicit = Number(name.match(/(?:^| )(\d+)$/)?.[1]);
-    const level = levelNumber(explicit) ? explicit : parts.length === 1 && levelNumber(character.level) ? character.level : null;
+    const level = parts.length === 1 && levelNumber(character.level) ? character.level : levelNumber(explicit) ? explicit : null;
     return {rules,subclass,level};
   });
 }
@@ -133,7 +136,8 @@ function standardPools(classes, verified, edition) {
   return {slots:pick(library.classes.get("wizard") ?? [],edition)?.slots[effectiveLevel-1] ?? []};
 }
 
-export function enrichCharacter(raw) {
+export function enrichCharacter(record) {
+  const raw = sheetOverrides(record);
   const character = {...raw};
   const speciesOptions = candidates(raw.species,library.species);
   const backgroundOptions = candidates(raw.background,library.backgrounds);
@@ -172,6 +176,11 @@ export function enrichCharacter(raw) {
     return {...ability,modifier,save};
   });
   const mod = Object.fromEntries(character.abilities.map((ability) => [ability.abbr.toLowerCase(),ability.modifier]));
+  const wornAC = wornArmorClass(raw.sheetEdits?.armor,mod.dex,raw.sheetEdits?.shield);
+  if (raw.sheetEdits?.armor && raw.sheetEdits.ac == null && wornAC !== null) {
+    character.ac = wornAC;
+    derived.add("Armor Class from worn equipment");
+  }
   if (Number.isFinite(mod.dex)) {
     const jack = edition === "2014" && qualified.some(({rules,level}) => rules.name === "Bard" && level >= 2);
     const alert = edition === "2024" && feats.some((name) => normalize(name) === "alert");
@@ -180,17 +189,21 @@ export function enrichCharacter(raw) {
     }
   }
 
+  const skillChoices = raw.sheetEdits?.training ?? {};
   const skillTraining = unique([...fixed(species,"skillProficiencies"),...fixed(background,"skillProficiencies"),
-    ...commonFlags(starting?.rules.skills,(key) => key in skills),...(raw.skillProficiencies ?? []).map(normalize)]);
+    ...commonFlags(starting?.rules.skills,(key) => key in skills),...(raw.skillProficiencies ?? []).map(normalize),
+    ...Object.keys(skillChoices)]).filter((skill) => skillChoices[skill] !== 0);
   const importedSkills = new Map((raw.skills ?? []).map((skill) => [normalize(skill.name),skill]));
   for (const [name, ability] of Object.entries(skills)) {
     const imported = importedSkills.get(name);
     const base = mod[ability];
-    if (Number.isFinite(imported?.bonus) || !Number.isFinite(base) && !skillTraining.includes(name)) continue;
-    const trained = skillTraining.includes(name);
-    const bonus = trained && Number.isFinite(base) && Number.isFinite(pb) ? base + pb : null;
-    if (bonus != null) derived.add("Fixed skill bonuses");
-    importedSkills.set(name,{...imported,name:imported?.name ?? title(name),bonus,base:!trained ? base : null});
+    const choice = skillChoices[name];
+    if (choice == null && Number.isFinite(imported?.bonus)) continue;
+    if (choice == null && !Number.isFinite(base) && !skillTraining.includes(name)) continue;
+    const rank = choice ?? (skillTraining.includes(name) ? 1 : null);
+    const bonus = rank != null && Number.isFinite(base) && (rank === 0 || Number.isFinite(pb)) ? base + (rank ? rank*pb : 0) : null;
+    if (bonus != null) derived.add(choice == null ? "Fixed skill bonuses" : "Chosen skill bonuses");
+    importedSkills.set(name,{...imported,name:imported?.name ?? title(name),bonus,base:rank == null ? base : null});
   }
   character.skills = [...importedSkills.values()].sort((a,b) => a.name.localeCompare(b.name));
   const perception = importedSkills.get("perception")?.bonus;
@@ -201,7 +214,7 @@ export function enrichCharacter(raw) {
   const spellSlots = {...raw.spellSlots};
   for (const [rank,maximum] of Object.entries(spellLevels)) {
     const imported = spellSlots[rank] ?? {};
-    if (imported.maximum == null && (!Number.isFinite(imported.current) || imported.current <= maximum)) {
+    if (imported.maximum == null && (raw.sheetEdits?.slots?.[rank]?.current != null || !Number.isFinite(imported.current) || imported.current <= maximum)) {
       spellSlots[rank] = {current:imported.current ?? null,maximum};
       derived.add(pact ? "Pact slot capacity" : "Spell slot capacity");
     }
@@ -226,18 +239,29 @@ export function enrichCharacter(raw) {
     .map(([mode,value]) => `${title(mode)} ${value === true ? "equal to walking speed" : Number.isFinite(value) ? value+" ft" :
       value && Number.isFinite(value.number) ? value.number+" ft (conditional)" : "see species trait"}`);
   const unspecifiedToughness = species?.name === "Dwarf" && species.source === "PHB" ||
-    single?.rules.name === "Sorcerer" && single.rules.edition === "2014" && !single.subclass;
-  if (verified && single && level === 1 && species && background && Number.isFinite(mod.con) && !unspecifiedToughness) {
-    const bloodline = single.subclass?.features.some(([required,name]) => required === 1 && name === "Draconic Resilience");
-    const bonus = Number(speciesTraits.includes("Dwarven Toughness")) + Number(Boolean(bloodline)) +
-      2*Number(feats.some((name) => normalize(name) === "tough"));
-    fill("maxHp",Math.max(1,single.rules.hitDie+mod.con+bonus),"Starting hit point maximum");
+    qualified.some(({rules,subclass}) => rules.name === "Sorcerer" && rules.edition === "2014" && !subclass);
+  let fixedMaximum = null;
+  if (verified && starting && Number.isFinite(mod.con) && !unspecifiedToughness) {
+    fixedMaximum = Math.max(1,starting.rules.hitDie+mod.con);
+    for (const entry of classes) {
+      const gains = entry.level-Number(entry === starting);
+      fixedMaximum += gains*Math.max(1,Math.floor(entry.rules.hitDie/2)+1+mod.con);
+      if (entry.subclass?.features.some(([required,name]) => required <= entry.level && name === "Draconic Resilience")) {
+        fixedMaximum += entry.level;
+      }
+    }
+    if (speciesTraits.includes("Dwarven Toughness")) fixedMaximum += level;
+    if (feats.some((name) => normalize(name) === "tough")) fixedMaximum += 2*level;
+    if (raw.sheetEdits?.fixedHp && raw.sheetEdits.maxHp == null) {
+      character.maxHp = fixedMaximum;
+      derived.add("Fixed hit point maximum");
+    } else if (single && level === 1 && species && background) fill("maxHp",fixedMaximum,"Starting hit point maximum");
   }
   const sourceNames = unique([species,background,...qualified.map(({rules}) => rules)].filter(Boolean).map(({name,source}) => `${name} (${source})`));
   const classTools = (starting?.rules.tools ?? []).filter((value) => typeof value === "string");
   const toolChoice = (value) => /\b(choice|choose)\b/i.test(value);
   character.rulesDetails = {
-    edition,derived:[...derived],sources:sourceNames,
+    edition,derived:[...derived],sources:sourceNames,wornAC,fixedMaximum,
     size:species?.size?.map((size) => sizeNames[size]).filter(Boolean).join(" or ") || "",
     darkvision:species?.darkvision,extraSpeeds,hitDice,
     baseAC:Number.isFinite(mod.dex) ? 10+mod.dex : null,
@@ -246,7 +270,7 @@ export function enrichCharacter(raw) {
     speciesSpells:(species?.spells ?? []).filter(([required]) => levelNumber(level) && required <= level),
     languages:unique([...fixed(species,"languageProficiencies"),...fixed(background,"languageProficiencies"),
       ...(edition === "2024" ? ["common"] : []),...(raw.languages ?? [])]).map(displayName),
-    tools:unique([...fixed(species,"toolProficiencies"),...fixed(background,"toolProficiencies"),...classTools.filter((value) => !toolChoice(value))]).map(displayName),
+    tools:unique([...fixed(species,"toolProficiencies"),...fixed(background,"toolProficiencies"),...classTools.filter((value) => !toolChoice(value)),...(raw.tools ?? [])]).map(displayName),
     armor:unique([...fixed(species,"armorProficiencies"),...(starting?.rules.armor ?? []).filter((value) => typeof value === "string")]).map(displayName),
     weapons:unique([...fixed(species,"weaponProficiencies"),...(starting?.rules.weapons ?? []).filter((value) => typeof value === "string")]).map(displayName),
     choices:unique([describeChoice(species,"skillProficiencies","Species skills"),describeChoice(species,"toolProficiencies","Species tools"),

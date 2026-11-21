@@ -2,7 +2,8 @@ import {setGameTokenImage, showPlay} from "./play.mjs";
 import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
 import {paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
-import {enrichCharacter, loadCharacterRules} from "./character-rules.mjs";
+import {enrichCharacter, loadCharacterRules, sheetSkills} from "./character-rules.mjs";
+import {readSheetEdits, validateSheetEdits} from "./sheet-editor.mjs";
 import {escape, plural, text} from "./format.mjs";
 import {readCharacters} from "./characters.mjs";
 import {icon} from "./icons.mjs";
@@ -478,7 +479,7 @@ function storeCharacters(characters, name, sourceKey) {
         existing.species.toLowerCase() === character.species.toLowerCase()));
     const id = index < 0 ? crypto.randomUUID() : state.characters[index].id;
     const record = {...character, id, sourceName: name, sourceKey,tokenImage:state.characters[index]?.tokenImage,
-      rulesEditionOverride:state.characters[index]?.rulesEditionOverride};
+      rulesEditionOverride:state.characters[index]?.rulesEditionOverride,sheetEdits:state.characters[index]?.sheetEdits};
     if (index < 0) state.characters.push(record);
     else state.characters[index] = record;
   }
@@ -569,6 +570,26 @@ function googleExport(value) {
 }
 
 document.addEventListener("submit", (event) => {
+  if (event.target.id === "character-edit-form") {
+    event.preventDefault();
+    const {character} = currentRoute();
+    const raw = state.characters.find(({id}) => id === character?.id);
+    if (!raw) return;
+    try {
+      const edits = readSheetEdits(new FormData(event.target),sheetSkills);
+      validateSheetEdits(enrichCharacter({...raw,sheetEdits:edits}));
+      raw.sheetEdits = edits;
+      const saved = save();
+      render();
+      const output = app.querySelector("#character-edit-status");
+      output.textContent = saved ? "Character sheet saved." : "Updated for this visit. Browser storage is unavailable.";
+      output.tabIndex = -1;
+      output.focus({preventScroll:false});
+    } catch (error) {
+      event.target.querySelector("#character-edit-status").textContent = error.message;
+    }
+    return;
+  }
   if (event.target.id !== "google-form") return;
   event.preventDefault();
   const url = googleExport(new FormData(event.target).get("url"));

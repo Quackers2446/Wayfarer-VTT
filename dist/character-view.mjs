@@ -1,6 +1,8 @@
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {tokenPortrait} from "./character-token.mjs";
+import {sheetSkills} from "./character-rules.mjs";
+import {sheetEditor} from "./sheet-editor.mjs";
 import {matchSpell, ruleKey, spellByKey, spellKey} from "./rules-library.mjs";
 
 export function sheetPath(character, section = "overview") {
@@ -23,6 +25,7 @@ function sections(character, embedded) {
     ...(character.items.length || embedded ? [["inventory", "Inventory"]] : []),
     ...(character.spells.length || Object.keys(character.spellSlots ?? {}).length ? [["spells", "Spells"]] : []),
     ...(character.rulesDetails ? [["rules", "Rules"]] : []),
+    ...(embedded ? [] : [["edit", "Edit sheet"]]),
   ];
 }
 
@@ -259,6 +262,7 @@ export function characterPage(character, requestedSection, {embedded = false, to
     inventory: inventoryContent,
     spells: () => spellContent(character),
     rules: () => rulesContent(character,embedded),
+    edit: () => sheetEditor(character,sheetSkills),
   };
   const portrait = `<div class="sheet-avatar" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage,character.tokenSession)}</div>`;
   const tokenControls = tokenEditable ? `<div class="sheet-token-controls">
