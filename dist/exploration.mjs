@@ -1,19 +1,26 @@
 import {actorIsUp, distanceFt, lineClear, occupies, startInitiative} from "./combat.mjs";
 import {cellCenter, regionAt} from "./encounters.mjs";
 
-const roomId = (map, cell) => regionAt(map,...cellCenter(map,cell))?.id;
+function roomId(map,cell) {
+  const region = regionAt(map,...cellCenter(map,cell));
+  return region?.key ?? region?.id;
+}
 const hostile = (actor) => actor?.side === "hostile" && actorIsUp(actor) && occupies(actor);
 
-export function noticesEnemy(battle, map, partyMember, enemy) {
-  if (!actorIsUp(partyMember) || !occupies(partyMember) || !hostile(enemy)) return false;
-  const distance = distanceFt(partyMember,enemy);
-  if (distance > (enemy.sight ?? 30) || !lineClear(battle,partyMember,enemy)) return false;
+export function inSight(battle, map, partyMember, target, maxDistance = 30) {
+  if (!actorIsUp(partyMember) || !occupies(partyMember)) return false;
+  const distance = distanceFt(partyMember,target);
+  if (distance > maxDistance || !lineClear(battle,partyMember,target)) return false;
   if (!map.regions.length || distance <= 5) return true;
   const friendRoom = roomId(map,partyMember);
-  const enemyRoom = roomId(map,enemy);
+  const enemyRoom = roomId(map,target);
   // The source provides room areas, while manually marked walls govern the grid.
   // Keep encounters in their source room until the party reaches its boundary.
   return Boolean(friendRoom && friendRoom === enemyRoom) || ((!friendRoom || !enemyRoom) && distance <= 15);
+}
+
+export function noticesEnemy(battle,map,partyMember,enemy) {
+  return hostile(enemy) && inSight(battle,map,partyMember,enemy,enemy.sight ?? 30);
 }
 
 export function enemyInSight(battle, map, actor) {

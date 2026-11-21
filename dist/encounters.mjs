@@ -34,13 +34,18 @@ export async function moduleMaps(id) {
       const offsetY = y > 0 ? y - size : y;
       const parent = image.mapParent?.autoScale ? images.find((entry) => entry.id === image.mapParent.id) : null;
       const baseRegions = image.mapRegions ?? parent?.mapRegions ?? [];
-      const regions = baseRegions.map((region) => ({
-        id:region.area,
-        entry:entries.get(region.area),
-        points:parent && !image.mapRegions
-          ? region.points.map(([x,y]) => [x * width / parent.width, y * height / parent.height])
-          : region.points,
-      })).filter((region) => region.points?.length >= 3);
+      const instances = new Map();
+      const regions = baseRegions.map((region) => {
+        const occurrence = (instances.get(region.area) ?? 0) + 1;
+        instances.set(region.area,occurrence);
+        return {
+          id:region.area, key:occurrence === 1 ? region.area : region.area + ":" + occurrence,
+          entry:entries.get(region.area),
+          points:parent && !image.mapRegions
+            ? region.points.map(([x,y]) => [x * width / parent.width, y * height / parent.height])
+            : region.points,
+        };
+      }).filter((region) => region.points?.length >= 3);
       const key = image.href?.path ?? image.id ?? image.title;
       if (!key || seen.has(key)) continue;
       seen.add(key);
@@ -58,26 +63,31 @@ export async function moduleMaps(id) {
 const pilotRooms = {
   "01b":[],
   "01e":[["Goblin",2]],
-  "021":[["Wolf",3]],
+  "021":[["Wolf",3,null,null,"MM","neutral"]],
   "025":[],
   "029":[["Goblin",1]],
-  "02f":[["Goblin",5],["Goblin",1,"Yeemik",12]],
+  "02f":[["Goblin",5],["Goblin",1,"Yeemik",12],["Sildar Hallwinter",1,null,null,"LMoP","neutral",1,true]],
   "034":[["Goblin",3]],
   "037":[["Bugbear",1,"Klarg"],["Wolf",1,"Ripper"],["Goblin",2]],
 };
 
 export const roomNotes = {
-  "021":"The wolves start chained. Load them when combat begins.",
+  "021":"The wolves start chained. Set them hostile when they can attack.",
   "025":"The passage’s hazards are resolved manually.",
   "029":"The lookout can raise the alarm. Flood triggers are resolved manually.",
-  "02f":"The captive is present in the room entry. Add him as a neutral token if needed.",
+  "02f":"Sildar starts bound, unarmed, and at 1 hit point.",
   "034":"A goblin can flee to warn Klarg. Move that token manually if it happens.",
 };
 
+export function authoredRoster(map, region) {
+  if (map.module !== "LMoP" || map.id !== "1ab" || !(region.id in pilotRooms)) return null;
+  return pilotRooms[region.id].map(([name,count,nickname,hp,source="MM",side="hostile",currentHp,disarmed]) =>
+    ({name,count,nickname,hp,source,side,currentHp,disarmed}));
+}
+
 export function roomRoster(map, region) {
-  if (map.module === "LMoP" && map.id === "1ab" && region.id in pilotRooms) {
-    return pilotRooms[region.id].map(([name, count, nickname, hp]) => ({name, count, nickname, hp, source:"MM"}));
-  }
+  const authored = authoredRoster(map,region);
+  if (authored) return authored;
   const choices = new Map();
   const gather = function* (entry) {
     if (typeof entry === "string") {
@@ -218,22 +228,29 @@ function monsterAttack(action) {
   return [base];
 }
 
-export async function creatureActor({name, source, nickname, hp}) {
+export async function creatureActor({name, source, nickname, hp, side, currentHp, disarmed, named}) {
   const data = await monsterRecord(name, source);
   if (!data || !data.hp?.average || !data.ac?.[0]) throw new Error("A full stat block is unavailable for " + name + " (" + source + ").");
   const baseAC = data.ac[0];
   const maxHp = hp ?? data.hp.average;
   const speed = data.speed?.walk;
+  const token = data.token ?? data;
+  const tokenName = token.name.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[‘’]/g,"'").replace(/"/g,"");
+  const tokenArt = data.tokenHref?.type === "internal" ? data.tokenHref.path :
+    data.hasToken || data.token ? "bestiary/tokens/" + token.source + "/" + tokenName + ".webp" : null;
   return makeActor({
     name:nickname || data.name, ac:typeof baseAC === "number" ? baseAC : baseAC.ac,
-    hp:maxHp, maxHp, speed:typeof speed === "number" ? speed : speed?.number ?? 0,
+    hp:currentHp ?? maxHp, maxHp,
+    side:side ?? (named && data.isNpc ? "neutral" : "hostile"),
+    statName:data.name, source:data.source, tokenArt,
+    speed:typeof speed === "number" ? speed : speed?.number ?? 0,
     dex:data.dex, initiative:modifier(data.dex) ?? 0, level:null,
     ability:Object.fromEntries(abilities.map((key) => [key,modifier(data[key])])),
     saves:Object.fromEntries(Object.entries(data.save ?? {}).map(([key,value]) => [key,Number(value)])),
     creatureType:typeof data.type === "string" ? data.type : data.type?.type,
     packTactics:data.trait?.some((trait) => trait.name === "Pack Tactics"),
     nimbleEscape:data.trait?.some((trait) => trait.name === "Nimble Escape"),
-    attacks:data.action?.flatMap(monsterAttack) ?? [],
+    attacks:disarmed ? [] : data.action?.flatMap(monsterAttack) ?? [],
     resist:data.resist, immune:data.immune, vulnerable:data.vulnerable,
   });
 }

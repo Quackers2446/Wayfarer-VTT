@@ -7,7 +7,7 @@ function polygon(context, points) {
   context.closePath();
 }
 
-export function drawGrid(canvas, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true}) {
+export function drawGrid(canvas, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true, markers = [], tokenImages}) {
   if (!canvas) return;
   const c = canvas.getContext("2d");
   const scale = Math.min(1, 1600 / Math.max(map.width,map.height));
@@ -79,6 +79,22 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
     c.stroke();
   }
 
+  for (const marker of markers) {
+    const [x,y] = cellCenter(map,marker);
+    const length = map.size * .30;
+    const tones = {treasure:"#926739",object:"#49647a",hazard:"#a2653b",trap:"#a05142",creature:"#62665c"};
+    c.save();
+    c.translate(x,y);
+    c.rotate(Math.PI/4);
+    c.fillStyle = tones[marker.type] ?? tones.object;
+    c.strokeStyle = "#f5e8c5"; c.lineWidth = map.size * .034;
+    c.fillRect(-length,-length,2*length,2*length);
+    c.strokeRect(-length,-length,2*length,2*length);
+    c.restore();
+    c.textAlign="center"; c.textBaseline="middle"; c.font="700 "+map.size*.35+"px system-ui"; c.fillStyle="#fff2d7";
+    c.fillText({treasure:"◆",object:"◈",hazard:"!",trap:"!",creature:"?"}[marker.type] ?? "·",x,y);
+  }
+
   for (const actor of battle.actors.filter((actor) => occupies(actor) && (!visible || visible.has(actor.id)))) {
     const [x,y] = cellCenter(map,actor);
     const radius = map.size * .42;
@@ -86,11 +102,28 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
     c.fillStyle = actor.hp === 0 ? "#828584" : actor.side === "party" ? "#356b61" : actor.side === "neutral" ? "#6e6653" : "#9a453a";
     c.strokeStyle = actor.id === selected ? "#ffeead" : actor.id === target ? "#ffd3c8" : "#f6f4de";
     c.lineWidth = map.size * (actor.id === selected || actor.id === target ? .075 : .031);
-    c.fill(); c.stroke();
+    c.fill();
+    const portrait = tokenImages?.get(actor.tokenArt);
+    if (portrait) {
+      c.save();
+      c.clip();
+      const factor = 2*radius / Math.max(portrait.naturalWidth,portrait.naturalHeight);
+      const width = portrait.naturalWidth*factor, height = portrait.naturalHeight*factor;
+      c.drawImage(portrait,x-width/2,y-height/2,width,height);
+      c.restore();
+    }
+    c.stroke();
     c.font = "700 " + map.size*.42 + "px system-ui";
     c.fillStyle = "#fff9e8";
     c.textAlign = "center"; c.textBaseline = "middle";
-    c.fillText(actor.marker || actor.name.charAt(0).toUpperCase(), x,y);
+    if (!portrait) c.fillText(actor.marker || actor.name.charAt(0).toUpperCase(),x,y);
+    else if (actor.marker) {
+      const bx=x+radius*.72, by=y+radius*.72;
+      c.beginPath(); c.arc(bx,by,map.size*.16,0,Math.PI*2);
+      c.fillStyle="#2b3027"; c.fill(); c.lineWidth=map.size*.019; c.strokeStyle="#efe6c7"; c.stroke();
+      c.font="700 "+map.size*.19+"px system-ui"; c.fillStyle="#fff9e8";
+      c.fillText(actor.marker,bx,by);
+    }
   }
 
   if (cursor) {

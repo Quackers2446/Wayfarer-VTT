@@ -1,12 +1,13 @@
+import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
-import {enemyInSight, engageEnemy, noticesEnemy} from "./exploration.mjs";
+import {enemyInSight, engageEnemy, inSight, noticesEnemy} from "./exploration.mjs";
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord} from "./rules-library.mjs";
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
 import {drawGrid, gridPosition, terrainAt} from "./grid-view.mjs";
 import {
-  actorIsUp, applyDamage, areaCells, castSpell, currentActor, deathSave, diceTerms, drinkPotion, endInitiative, endTurn, joinInitiative, keyAt, makeActor, moveLeft,
+  actorIsUp, applyDamage, areaCells, castSpell, currentActor, deathSave, diceTerms, drinkPotion, endInitiative, endTurn, joinInitiative, keyAt, moveLeft,
   exploreToken, heal, log, moveToken, newBattle, occupies, opportunity, placeToken, previewMovement, recordSpell, resolveOpportunity, rollDice,
   rollStrike, startInitiative, supportedSpell, turnAction,
 } from "./combat.mjs";
@@ -50,14 +51,17 @@ let castSlot = "";
 const extraTargets = new Map();
 let pendingSquare;
 let centerBoard = false;
+const sceneJobs = new WeakMap();
+const tokenImages = new Map();
+const tokenRequests = new Map();
 const activeMapKey = "wayfarer-active-map-v1";
 let preferredGame;
 try {preferredGame = JSON.parse(localStorage.getItem(activeMapKey));} catch {}
 
 
 function root() {return document.querySelector("#play-mount");}
-function saveBattle() {
-  battles[map.key] = battle;
+function saveBattle(entry = map, state = battle) {
+  battles[entry.key] = state;
   try {localStorage.setItem(saveKey, JSON.stringify(battles));} catch {
     status = "Browser storage is unavailable. This encounter will last until the page closes.";
   }
@@ -69,7 +73,7 @@ async function decodeMapImage(blob, entry) {
     const image = new Image();
     image.src = url;
     await image.decode();
-    if (Math.abs(image.naturalWidth / image.naturalHeight / (entry.width / entry.height) - 1) > .03) {
+    if (entry && Math.abs(image.naturalWidth / image.naturalHeight / (entry.width / entry.height) - 1) > .03) {
       throw new Error("This image does not match the map’s aspect ratio. Choose the image for this map variant.");
     }
     return image;
@@ -81,8 +85,51 @@ async function decodeMapImage(blob, entry) {
 function visibleTokens() {
   if (!context?.game) return null;
   const heroes = battle.actors.filter((actor) => actor.side === "party");
-  return new Set(battle.actors.filter((actor) => actor.side !== "hostile" || battle.order.includes(actor.id) ||
-    heroes.some((hero) => noticesEnemy(battle,map,hero,actor))).map(({id}) => id));
+  return new Set(battle.actors.filter((actor) => actor.side === "party" || battle.order.includes(actor.id) ||
+    (occupies(actor) && heroes.some((hero) => actor.side === "hostile"
+      ? noticesEnemy(battle,map,hero,actor) : inSight(battle,map,hero,actor)))).map(({id}) => id));
+}
+
+function visibleMarkers() {
+  const entries = battle.markers ?? [];
+  if (!context?.game || (toolsOpen && tool === "room")) return entries;
+  const heroes = battle.actors.filter((actor) => actor.side === "party");
+  return entries.filter((marker) => (!marker.hidden || marker.revealed) &&
+    heroes.some((hero) => inSight(battle,map,hero,marker)));
+}
+
+function loadTokenImages(visible) {
+  for (const actor of battle.actors) {
+    const path = actor.tokenArt;
+    if (!path || actor.dead || (visible && !visible.has(actor.id)) || tokenImages.has(path) || tokenRequests.has(path)) continue;
+    const request = (async () => {
+      const blob = await mapImage(path).catch(() => null) ??
+        await hostedMapImage(path,AbortSignal.timeout(9000));
+      return blob ? decodeMapImage(blob) : null;
+    })();
+    tokenRequests.set(path,request);
+    request.catch(() => null).then((image) => {
+      if (tokenImages.size >= 128) tokenImages.delete(tokenImages.keys().next().value);
+      tokenImages.set(path,image);
+      tokenRequests.delete(path);
+      if (image && root()) paintBoard();
+    });
+  }
+}
+
+function ensureScene(entry = map, state = battle) {
+  if (entry.module === "training" || state.sceneReady) return Promise.resolve();
+  if (sceneJobs.has(state)) return sceneJobs.get(state);
+  const loading = populateScene(entry,state).then(() => {
+    if (battles[entry.key] === state) saveBattle(entry,state);
+  }).catch(() => {
+    if (map === entry && battle === state) status = "Some starting tokens could not be read. Reopen the map to retry.";
+  }).finally(() => {
+    sceneJobs.delete(state);
+    if (map === entry && battle === state) redraw();
+  });
+  sceneJobs.set(state,loading);
+  return loading;
 }
 
 function paintBoard() {
@@ -100,9 +147,12 @@ function paintBoard() {
   const effect = choice?.usable && choice.mode === "spell" ? supportedSpell(choice.data.key) : null;
   const footprint = spellSquare ? effect?.area ? areaCells(battle,spellSquare,effect.area,map) :
     new Set([keyAt(spellSquare.x,spellSquare.y)]) : null;
+  const visible = visibleTokens();
+  loadTokenImages(visible);
   drawGrid(canvas,map,battle,{
     room:context.game && tool !== "room" ? null : room,selected:actor?.id,target:targetId,cursor,art,
-    path:pathPreview,visible:visibleTokens(),footprint,showRegions:!context.game || !art || tool==="room",
+    path:pathPreview,visible,footprint,showRegions:!context.game || !art || tool==="room",
+    markers:visibleMarkers(),tokenImages,
   });
 }
 
@@ -171,14 +221,19 @@ function useMap(entry) {
   room = map.regions.find(({id}) => id === initialRoom) ?? null;
   selectedCreature = 0; tool = context?.game ? "move" : "room"; status = ""; zoom = "100";
   pathPreview = null; previewMessage = ""; spellSquare = null; pendingSquare = null; centerBoard = true;
-  if (map.module !== "training") loadArtwork(entry);
+  battles[map.key] = battle;
+  if (map.module !== "training") {
+    loadArtwork(entry);
+    ensureScene(entry,battle);
+  }
 }
 
 function currentTarget() {return battle.actors.find((actor) => actor.id === targetId && occupies(actor));}
 function selectedActor() {return currentActor(battle) ?? battle.actors.find(({id}) => id === selectedId);}
 function actionButton(label, action, options = {}) {
   return `<button class="button ${options.primary ? "primary" : "outline"} small"
-    type="button" data-play="${action}" ${options.disabled ? " disabled" : ""}>${escape(label)}</button>`;
+    type="button" data-play="${action}"${options.id ? ' data-id="' + escape(options.id) + '"' : ""}
+    ${options.disabled ? " disabled" : ""}>${escape(label)}</button>`;
 }
 function option(value, label, selected) {
   return `<option value="${escape(value)}"${selected ? " selected" : ""}>${escape(label)}</option>`;
@@ -275,7 +330,7 @@ function playOptions(actor) {
 }
 
 function setupControls() {
-  if (battle.round) return "";
+  if (battle.round || sceneJobs.has(battle)) return "";
   const eligible = context.characters.filter((character) => !battle.actors.some((actor) => actor.id === "party:" + character.id));
   return `<div class="play-stack">
     ${eligible.length ? `<div class="play-inline">
@@ -292,23 +347,40 @@ function setupControls() {
   </div>`;
 }
 
+function sceneMarkers(region) {
+  const markers = (battle.markers ?? []).filter((marker) => marker.origin === areaKey(region));
+  if (!markers.length) return "";
+  return '<ul class="scene-markers">' + markers.map((marker) => `<li>
+    ${actionButton(marker.name,"inspect-marker",{id:marker.id})}
+    ${marker.hidden && !marker.revealed ? actionButton("Reveal","reveal-marker",{id:marker.id}) : ""}
+  </li>`).join("") + "</ul>";
+}
+
 function roomPanel() {
   const roster = room ? roomRoster(map,room) : [];
   const authored = map.module === "LMoP" && map.id === "1ab";
-  const loaded = battle.actors.some((actor) => actor.origin === room?.id && actor.side === "hostile" && !actor.dead);
+  const starting = battle.actors.filter((actor) => actor.origin === areaKey(room) && actor.side !== "party");
+  const unavailable = battle.unplacedScene?.[areaKey(room)] ?? 0;
   return `<section class="play-panel">
     <h2>Room</h2>
     ${map.regions.length ? field("Map area","play-room",[option("","Choose a room",!room),
-      ...map.regions.map((region) => option(region.id, region.entry?.name ?? region.id,region.id === room?.id))]) :
-      '<p>The archive has no tagged rooms for this map.</p>'}
+      ...map.regions.map((region) => {
+        const id = areaKey(region);
+        const instance = id === region.id ? "" : " (" + id.split(":").at(-1) + ")";
+        return option(id,(region.entry?.name ?? region.id)+instance,id === areaKey(room));
+      })]) : '<p>The archive has no tagged rooms for this map.</p>'}
     ${room ? `<div class="room-body">
        ${roomNotes[room.id] && authored ? `<p class="play-hint">${roomNotes[room.id]}</p>` : ""}
-       ${roster.length ? `<p>${authored ? "Initial encounter" : "Creature references"} · ${roster.map(({name, count, nickname}) =>
-         escape(nickname ?? (authored ? count + " × " + name : name))).join(", ")}</p>
-         ${!battle.round ? (authored ? actionButton(loaded ? "Encounter loaded" : "Load room encounter","populate",{disabled:loaded,primary:!loaded}) :
-           `<div class="play-inline">${field("Creature","room-creature",roster.map((entry,index) => option(index,entry.name,index === selectedCreature)))}
-           ${actionButton("Add token","add-room-monster")}</div>`) : ""}` :
-         room.entry && map.module !== "training" ? '<p>No starting enemies are listed for this area.</p>' : ""}
+       ${starting.length ? `<p>${plural(starting.length,"room token")}${starting.some(({dead})=>dead) ?
+         " · " + starting.filter(({dead})=>dead).length + " defeated" : ""}</p>` : ""}
+       ${unavailable ? `<p>${plural(unavailable,"creature")} need more space for placement.</p>` : ""}
+       ${authored && room.id === "021" && !battle.round && starting.some((actor)=>actor.side==="neutral" && !actor.dead)
+         ? actionButton("Set wolves hostile","release-wolves") : ""}
+       ${!battle.round && !sceneJobs.has(battle) && roster.length ? `<div class="play-inline">
+         ${field("Creature reference","room-creature",roster.map((entry,index) => option(index,entry.nickname ?? entry.name,index === selectedCreature)))}
+         ${actionButton("Add token","add-room-monster")}
+       </div>` : ""}
+       ${sceneMarkers(room)}
        ${room.entry ? `<details><summary>Room entry</summary><div class="room-text">${formatEntries(room.entry.entries)}</div></details>` : ""}
     </div>` : '<p>Pick an area from the list or select a highlighted room on the grid.</p>'}
   </section>`;
@@ -344,14 +416,16 @@ function tokenPanel() {
         data-play="token" data-id="${escape(entry.id)}" aria-pressed="${entry.id === (battle.round ? targetId : selectedId)}">
         <span class="token-marker token-${entry.side}">${escape(entry.marker ?? entry.name.charAt(0).toUpperCase())}</span>
         <span><strong>${escape(entry.name)}</strong><small>${entry.hp} / ${entry.maxHp} HP · AC ${entry.ac}
-          ${entry.tempHp ? " · +" + entry.tempHp + " temp" : ""}${entry.prone ? " · Prone" : ""}${entry.dead ? " · Defeated" : ""}</small></span>
+          ${entry.side === "neutral" ? " · Neutral" : ""}${entry.tempHp ? " · +" + entry.tempHp + " temp" : ""}${entry.prone ? " · Prone" : ""}${entry.dead ? " · Defeated" : ""}</small></span>
         ${battle.round ? `<span class="initiative-value" title="Initiative">${entry.initiativeRoll ?? index + 1}</span>` : ""}
-      </button>`).join("")}</div>` : '<p>Add a party member or load a room encounter.</p>'}
+      </button>`).join("")}</div>` : sceneJobs.has(battle) ? '<p role="status">Placing room tokens…</p>' : '<p>Add a party member or a creature from the room entries.</p>'}
     ${setupControls()}
     ${actor && !battle.round ? `<form class="token-settings" id="token-settings">
       <div class="play-field-row">
         ${input("Attacks per Attack action","actor-swings",actor.swings,"number",'min="1" max="8" required')}
         ${input("Current HP","actor-hp",actor.hp,"number",'min="0" max="'+actor.maxHp+'" required')}
+        ${!actor.id.startsWith("party:") && actor.side !== "party" ? field("Disposition","actor-side",
+          [option("hostile","Hostile",actor.side==="hostile"),option("neutral","Neutral",actor.side==="neutral")]) : ""}
       </div>
       ${actor.spells.length ? `<div class="play-field-row">
         ${input("Spell save DC","actor-spell-dc",actor.spellDC,"number",'min="1" max="40"')}
@@ -369,7 +443,7 @@ function tokenPanel() {
       ${playOptions(actor)}
     </div>` : ""}
     <div class="play-action-row">
-      ${battle.round ? actionButton("End turn","end",{primary:true,disabled:Boolean(battle.movement)}) : actionButton("Roll initiative","start",{primary:true,disabled:battle.actors.filter(occupies).length < 2})}
+      ${battle.round ? actionButton("End turn","end",{primary:true,disabled:Boolean(battle.movement)}) : actionButton("Roll initiative","start",{primary:true,disabled:sceneJobs.has(battle) || battle.actors.filter((actor) => occupies(actor) && actor.side !== "neutral").length < 2})}
       ${battle.round ? actionButton("End initiative","end-initiative",{disabled:Boolean(battle.movement)}) : ""}
       ${battle.round || battle.actors.length ? actionButton("Reset encounter","reset") : ""}
     </div>
@@ -400,7 +474,7 @@ function playPage() {
   }
   const tools = [["room","Inspect room"],["move",battle.round ? "Move token" : "Place token"],["difficult","Difficult terrain"],["wall","Block square"],["clear","Clear terrain"]];
   return `<header class="play-header"><div><h1>Encounter setup</h1><p>Choose an adventure, map, and party.</p></div>
-      ${actionButton(pending ? "Preparing…" : "Enter game","enter-game",{primary:true,disabled:pending})}</header>
+      ${actionButton(pending || sceneJobs.has(battle) ? "Preparing…" : "Enter game","enter-game",{primary:true,disabled:pending || sceneJobs.has(battle)})}</header>
     ${archivePanel()}
     <div class="play-layout">
       <div class="play-main">
@@ -420,7 +494,7 @@ function playPage() {
           <div class="board-toolbar">
             ${field("Grid tool","grid-tool",tools.map(([id,label]) => option(id,label,tool===id)))}
             ${field("Zoom","grid-zoom",["100","150","200","300"].map((value) => option(value,value+"%",zoom===value)))}
-            <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span></div>
+            <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span><span><i class="map-marker-key"></i> Room marker</span></div>
           </div>
           ${!isTraining ? `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` : ""}
           <p class="play-status" role="status">${escape(status)}</p>
@@ -527,20 +601,13 @@ function checkGameCell(x,y,region,token) {
 }
 
 async function loadRoster(records, area) {
-  const groups = await Promise.all(records.map(async (record) => {
-    const base = await creatureActor(record);
-    return Array.from({length:record.count}, (_,index) => makeActor({
-      ...structuredClone(base), id:undefined,
-      marker:record.count > 1 ? String(index+1) : undefined,
-      name:record.count > 1 ? base.name + " " + (index+1) : base.name,
-    }));
-  }));
-  const creatures = groups.flat();
+  const creatures = (await Promise.all(records.map((record) => rosterTokens(record)))).flat();
   for (const creature of creatures) add(creature,area);
   return creatures.length;
 }
 
 async function launchGame() {
+  await ensureScene();
   const entry = map.regions.find(({id}) => id === "01b") ?? map.regions[0];
   if (!battle.round && !battle.actors.some((actor) => actor.side === "party")) {
     for (const character of context.characters) {
@@ -549,12 +616,6 @@ async function launchGame() {
   }
   if (!battle.actors.some((actor) => actor.side === "party")) {
     throw new Error("Import a character to start this adventure, or choose the practice yard.");
-  }
-  if (!battle.authoredSetup && !battle.round && map.module === "LMoP" && map.id === "1ab") {
-    const sections = map.regions.filter((region) => region.id !== "021" &&
-      !battle.actors.some((actor) => actor.side === "hostile" && actor.origin === region.id));
-    for (const region of sections) await loadRoster(roomRoster(map,region),region);
-    battle.authoredSetup = true;
   }
   for (const actor of battle.actors.filter((entry) => entry.id.startsWith("party:"))) {
     const character = context.characters.find((entry) => "party:"+entry.id === actor.id);
@@ -626,7 +687,7 @@ function freeCell(region) {
 function add(actor, area = room) {
   const {x,y} = freeCell(area);
   placeToken(battle,actor,x,y,map);
-  actor.origin = area?.id;
+  actor.origin = areaKey(area);
   battle.actors.push(actor);
   selectedId = actor.id;
   tool = "move";
@@ -635,7 +696,12 @@ function add(actor, area = room) {
 function checkCell(x,y,region) {
   if (x < 0 || x >= map.cols || y < 0 || y >= map.rows) return;
   cursor = {x,y};
-  if (tool === "room") return selectRoom(region);
+  if (tool === "room") {
+    selectRoom(region);
+    const marker = visibleMarkers().find((entry) => entry.x === x && entry.y === y);
+    if (marker) document.dispatchEvent(new CustomEvent("wayfarer:marker",{detail:marker}));
+    return;
+  }
   const token = battle.actors.find((actor) => occupies(actor) && actor.x === x && actor.y === y);
   if (tool === "move" && context.game) return checkGameCell(x,y,region,token);
   if (tool === "move") {
@@ -732,6 +798,11 @@ document.addEventListener("click", (event) => {
   const {play,id} = button.dataset;
   if (play === "archive-picker") {root().querySelector("#play-archive-file").click(); return;}
   if (play === "art") {root().querySelector("#play-art").click(); return;}
+  if (play === "inspect-marker") {
+    const marker = battle.markers?.find((entry) => entry.id === id);
+    if (marker) document.dispatchEvent(new CustomEvent("wayfarer:marker",{detail:marker}));
+    return;
+  }
   if (play === "inspect") {
     const actor = battle.actors.find((entry) => entry.id === id);
     if (actor) document.dispatchEvent(new CustomEvent("wayfarer:inspect",{detail:structuredClone(actor)}));
@@ -745,6 +816,19 @@ document.addEventListener("click", (event) => {
   }
   interact(async () => {
     switch (play) {
+      case "reveal-marker": {
+        const marker = battle.markers?.find((entry) => entry.id === id);
+        if (marker) { marker.revealed = true; status = marker.name + " revealed."; }
+        break;
+      }
+      case "release-wolves":
+        if (!battle.round && map.module === "LMoP" && map.id === "1ab" && room?.id === "021") {
+          for (const actor of battle.actors.filter((entry) => entry.origin === areaKey(room) && entry.side === "neutral" && !entry.dead)) {
+            actor.side = "hostile";
+          }
+          if (context.game) battle.actors.filter((actor) => actor.side === "party").some(detectNearby);
+        }
+        break;
       case "game-category": category = id; tool = "move"; resetActionSelection(); break;
       case "control-party": {
         const actor = battle.actors.find((entry) => entry.id === id);
@@ -784,11 +868,10 @@ document.addEventListener("click", (event) => {
         selectedParty = "";
         break;
       }
-      case "populate":
       case "add-room-monster": {
         if (battle.round || !room) return;
         const roster = roomRoster(map,room);
-        const records = play === "populate" ? roster : [roster[selectedCreature]].filter(Boolean);
+        const records = [roster[selectedCreature]].filter(Boolean).map((entry) => ({...entry,count:1}));
         const count = await loadRoster(records,room);
         tool = "room";
         status = plural(count,"token") + " placed.";
@@ -863,7 +946,7 @@ document.addEventListener("change", (event) => {
     case "play-archive-file": loadFile(event.target.files[0], event.target.files[0]?.name); return;
     case "play-module": selectModule(value); return;
     case "play-map": {const entry = maps.find(({key}) => key===value); if (entry) useMap(entry); break;}
-    case "play-room": selectRoom(map.regions.find((region) => region.id === value)); tool = "room"; break;
+    case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
     case "grid-tool": tool = value; break;
     case "grid-zoom": zoom = value; break;
     case "room-creature": selectedCreature = Number(value); break;
@@ -914,6 +997,8 @@ document.addEventListener("submit", (event) => {
         if (!actor || battle.round) return;
         actor.swings = Number(value("actor-swings"));
         actor.hp = Number(value("actor-hp"));
+        const disposition = value("actor-side");
+        if (disposition === "hostile" || disposition === "neutral") actor.side = disposition;
         if (actor.spells.length) {
           for (const [field,id] of [["spellDC","actor-spell-dc"],["spellAttack","actor-spell-attack"],["spellAbility","actor-spell-ability"]]) {
             const number = value(id);

@@ -327,6 +327,12 @@ function table(headers, rows) {
     '</tbody></table></div>';
 }
 
+document.addEventListener("wayfarer:marker", (event) => {
+  const marker = event.detail;
+  const labels = {treasure:"Treasure",trap:"Trap",hazard:"Hazard",object:"Object",creature:"Creature reference"};
+  openDialog(marker.name, labels[marker.type] ?? "Room marker", formatEntries(marker.detail), "map");
+});
+
 function showGameSheet(character, section = "overview") {
   gameSheet = {character,section};
   const subtitle = [character.species,character.characterClass,character.level == null ? "" : "Level " + character.level].filter(Boolean).join(" · ");
