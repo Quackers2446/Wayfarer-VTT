@@ -9,6 +9,7 @@ import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, m
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
 import {drawGrid, gridPosition, terrainAt} from "./grid-view.mjs";
 import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
+import {artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, sessionCode, sessionHash, tablePanel, writeSession} from "./multiplayer.mjs";
 import {
   actorIsUp, applyDamage, areaCells, castSpell, currentActor, deathSave, diceTerms, drinkPotion, endInitiative, endTurn, joinInitiative, keyAt, moveLeft,
   exploreToken, heal, log, moveToken, newBattle, occupies, opportunity, placeToken, previewMovement, recordSpell, resolveOpportunity, rollDice,
@@ -44,6 +45,11 @@ let selectedParty = "";
 let camera;
 let artworkRequest;
 let artworkNote = "";
+let customArtwork;
+let table;
+let tableOpen = false;
+let tableMessage = "";
+let showInvitation;
 let category = "move";
 let logOpen = false;
 let toolsOpen = false;
@@ -66,6 +72,7 @@ try {preferredGame = JSON.parse(localStorage.getItem(activeMapKey));} catch {}
 
 function root() {return document.querySelector("#play-mount");}
 function saveBattle(entry = map, state = battle) {
+  if (table) return;
   battles[entry.key] = state;
   try {localStorage.setItem(saveKey, JSON.stringify(battles));} catch {
     status = "Browser storage is unavailable. This encounter will last until the page closes.";
@@ -214,12 +221,12 @@ function updateArtwork() {
   paintBoard();
 }
 
-async function loadArtwork(entry, file) {
+async function loadArtwork(entry, file, sharedURL) {
   artworkRequest?.abort();
   const request = new AbortController();
   artworkRequest = request;
   const current = () => artworkRequest === request && map === entry;
-  if (!entry.asset && !file) {
+  if (!entry.asset && !file && !sharedURL) {
     artworkNote = "Showing the schematic. Choose a map image to add artwork.";
     return;
   }
@@ -228,7 +235,10 @@ async function loadArtwork(entry, file) {
   const timeout = setTimeout(() => request.abort(), 12000);
   try {
     let image;
-    if (file) {
+    if (sharedURL) {
+      const response = await fetch(sharedURL,{signal:request.signal});
+      if (response.ok) image = await decodeMapImage(await response.blob(),entry);
+    } else if (file) {
       image = await decodeMapImage(file, entry);
     } else {
       const embedded = await mapImage(entry.asset).catch(() => null);
@@ -242,8 +252,9 @@ async function loadArtwork(entry, file) {
     if (!current()) return;
     if (image) {
       art = image;
-      alignImage(image);
-      artworkNote = file ? "Using your map image." : entry.artist ? "Map artwork by " + entry.artist + "." : "Map artwork loaded from 5etools.";
+      customArtwork = file;
+      if (!table) alignImage(image);
+      artworkNote = sharedURL ? "Shared map artwork." : file ? "Using your map image." : entry.artist ? "Map artwork by " + entry.artist + "." : "Map artwork loaded from 5etools.";
     } else {
       artworkNote = "Map artwork is unavailable. Showing the schematic.";
     }
@@ -264,6 +275,7 @@ function useMap(entry) {
   camera?.destroy();
   camera = null;
   artworkNote = "";
+  customArtwork = null;
   detectedGrid = null; gridDraft = null;
   map = entry;
   const saved = battles[map.key];
@@ -582,6 +594,7 @@ function playPage() {
   const tools = [["room","Inspect room"],["move",battle.round ? "Move token" : "Place token"],["difficult","Difficult terrain"],["wall","Block square"],["clear","Clear terrain"]];
   return `<header class="play-header"><div><h1>Encounter setup</h1><p>Choose an adventure, map, and party.</p></div>
       ${actionButton(pending || sceneJobs.has(battle) ? "Preparing…" : "Enter game","enter-game",{primary:true,disabled:pending || sceneJobs.has(battle)})}</header>
+    ${joinPanel()}
     ${archivePanel()}
     <div class="play-layout">
       <div class="play-main">
@@ -624,6 +637,13 @@ function playPage() {
 function redraw() {
   const element = root();
   if (!element) return;
+  if (context.sessionRoute && !table?.state) {
+    element.innerHTML = `<section class="session-entry play-panel"><h1>Join shared session</h1>
+      <p role="status">${escape(tableMessage || "Connecting to the table…")}</p>
+      ${table?.error ? actionButton("Try again","retry-session") : ""}
+      <a href="#play" class="button outline small">Back to setup</a></section>`;
+    return;
+  }
   const active = document.activeElement?.id;
   const cameraState = camera?.state();
   camera?.destroy();
@@ -633,6 +653,7 @@ function redraw() {
     map,battle,selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
     category,actions:playOptions(selectedActor()), tacticalTools:tableTools(), room,status,artworkNote,
     logOpen,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
+    tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage) : "",shared:Boolean(table),
     adventureName:context.adventures.find(({id}) => id === map.module)?.name,
   }) : playPage();
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
@@ -838,9 +859,148 @@ async function loadFile(file, name) {
   }
 }
 
+function sharedSheet(character) {
+  const fields = ["id","species","characterClass","level","abilities","skills","items","spells","attacks","proficiency","passivePerception","background","alignment"];
+  return Object.fromEntries(fields.filter((key) => character[key] != null).map((key) => [key,character[key]]));
+}
+
+const tableState = () => ({battle,alignment:map.printedGrid ?? null});
+
+async function hostTable() {
+  const route = location.hash;
+  pending = true;
+  setTableMessage("Starting shared session…");
+  try {
+    const state = tableState();
+    state.battle = structuredClone(battle);
+    state.battle.sheets = Object.fromEntries(context.characters
+      .filter(({id}) => battle.actors.some((actor) => actor.id === "party:"+id))
+      .map((character) => ["party:"+character.id,sharedSheet(character)]));
+    const result = await createSession({...map,detectedGrid},state,customArtwork);
+    if (location.hash !== route) return;
+    showInvitation = result.id;
+    location.hash = sessionHash(result.id);
+  } catch (error) {
+    if (location.hash === route) setTableMessage(error.message);
+  } finally {pending = false;}
+}
+
+function setTableMessage(message) {
+  tableMessage = message;
+  const output = root()?.querySelector(".session-panel [role=status]");
+  if (output) output.textContent = message;
+}
+
+function applyTableState(connection, snapshot) {
+  const turn = currentActor(battle)?.id;
+  const round = battle.round;
+  const geometryChanged = JSON.stringify(map.printedGrid ?? null) !== JSON.stringify(snapshot.state.alignment);
+  connection.state = snapshot.state;
+  connection.revision = snapshot.revision;
+  connection.online = true;
+  battle = structuredClone(snapshot.state.battle);
+  if (geometryChanged && map.sourceGrid) {
+    setAlignment(snapshot.state.alignment ?? map.sourceGrid);
+    gridDraft = null;
+    cursor = null;
+  }
+  if (!battle.actors.some(({id}) => id === selectedId)) {
+    selectedId = battle.actors.find((actor) => actor.side === "party" && actorIsUp(actor))?.id ?? "";
+  }
+  if (turn !== currentActor(battle)?.id || round !== battle.round) {
+    resetActionSelection();
+    category = "move";
+  }
+  pathPreview = null; pendingSquare = null; previewMessage = "";
+}
+
+async function pollTable(connection) {
+  if (table !== connection || connection.reading) return;
+  clearTimeout(connection.timer);
+  connection.reading = true;
+  try {
+    if (connection.writing) return;
+    const snapshot = await readSession(connection.id,connection.revision);
+    if (table !== connection || connection.writing) return;
+    if (snapshot && snapshot.revision > connection.revision) {
+      applyTableState(connection,snapshot);
+      status = "";
+      tableMessage = "";
+      redraw();
+    } else if (!connection.online) {
+      connection.online = true;
+      setTableMessage("Connected");
+    }
+  } catch {
+    if (table === connection) {
+      connection.online = false;
+      setTableMessage("Connection lost. Reconnecting…");
+    }
+  } finally {
+    connection.reading = false;
+    if (table === connection) connection.timer = setTimeout(() => pollTable(connection),document.hidden ? 9000 : 1500);
+  }
+}
+
+async function connectTable(connection) {
+  connection.error = false;
+  tableMessage = "";
+  redraw();
+  try {
+    const snapshot = await readSession(connection.id);
+    if (table !== connection) return;
+    map = snapshot.map;
+    detectedGrid = map.detectedGrid;
+    art = null; artworkNote = ""; customArtwork = null; gridDraft = null;
+    selectedId = ""; tool = "move"; category = "move"; status = ""; room = null; cursor = null;
+    resetActionSelection();
+    applyTableState(connection,snapshot);
+    recentSession(connection.id);
+    tableOpen = showInvitation === connection.id;
+    showInvitation = null;
+    if (map.asset || snapshot.hasArtwork) loadArtwork(map,null,snapshot.hasArtwork ? artworkURL(connection.id) : null);
+    pollTable(connection);
+  } catch (failure) {
+    if (table !== connection) return;
+    tableMessage = failure.message;
+    connection.error = true;
+  }
+  redraw();
+}
+
+function leaveTable() {
+  if (!table) return;
+  clearTimeout(table.timer);
+  artworkRequest?.abort();
+  ({map,battle,art,artworkNote,customArtwork,detectedGrid,room,selectedId,tool} = table.solo);
+  table = null;
+  tableOpen = false;
+  tableMessage = "";
+  status = "";
+  resetActionSelection();
+  camera?.destroy();
+  camera = null;
+}
+
 export function showPlay(data) {
   context = data;
+  if (!data?.sessionRoute) leaveTable();
+  if (!data) return;
   if (!battle) useMap(trainingMap);
+  if (data.sessionRoute) {
+    const id = sessionCode(data.sessionRoute);
+    if (table?.id === id) {redraw(); return;}
+    leaveTable();
+    revision++;
+    pending = false;
+    artworkRequest?.abort();
+    camera?.destroy();
+    camera = null;
+    table = {id,solo:{map,battle,art,artworkNote,customArtwork,detectedGrid,room,selectedId,tool}};
+    if (id) connectTable(table);
+    else {tableMessage = "Check the session link and try again."; redraw();}
+    return;
+  }
   redraw();
   if (hasArchive() && lastAdventure !== context.activeAdventure) {
     lastAdventure = context.activeAdventure;
@@ -850,28 +1010,43 @@ export function showPlay(data) {
 }
 
 document.addEventListener("wayfarer:archive", () => {
-  if (root() && !pending) {
+  if (root() && !pending && context && !table) {
     const preferred = context.game ? preferredGame : null;
     lastAdventure = context.activeAdventure;
     selectModule(preferred?.module || context.activeAdventure || "LMoP",preferred?.map);
   }
 });
 
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && table?.state) pollTable(table);
+});
+
 async function interact(run) {
+  const connection = table;
+  if (connection && (!connection.state || connection.writing)) return;
+  if (connection) connection.writing = true;
   try {
     status = "";
     await run();
-    if (context.game && battle.round) {
+    if (context?.game && battle.round) {
       const heroes = battle.actors.filter((actor) => actor.side === "party");
       for (const enemy of battle.actors.filter((actor) => actor.side === "hostile" && !battle.order.includes(actor.id))) {
         if (heroes.some((hero) => noticesEnemy(battle,map,hero,enemy))) joinInitiative(battle,enemy);
       }
     }
+    if (connection !== table) return;
     saveBattle();
   } catch (failure) {
     status = failure instanceof Error ? failure.message : "The action could not be completed.";
+    if (connection && connection === table) {
+      applyTableState(connection,connection);
+      connection.writing = false;
+      redraw();
+      return;
+    }
   }
-  if (context.game && battle.round && !battle.movement &&
+  if (connection !== table) return;
+  if (context?.game && battle.round && !battle.movement &&
       !battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && actorIsUp(actor))) {
     endInitiative(battle);
     category = "move";
@@ -879,7 +1054,30 @@ async function interact(run) {
     status = "Encounter cleared. Free movement restored.";
     saveBattle();
   }
-  redraw();
+  if (connection) {
+    const next = tableState();
+    try {
+      if (JSON.stringify(next) !== JSON.stringify(connection.state)) {
+        const result = await writeSession(connection.id,connection.revision,next);
+        if (connection !== table) return;
+        if (result.state) {
+          applyTableState(connection,result);
+          status = "Another player acted first. Review the board and try again.";
+        } else {
+          connection.state = structuredClone(next);
+          connection.revision = result.revision;
+          connection.online = true;
+        }
+        tableMessage = "";
+      }
+    } catch (error) {
+      if (connection !== table) return;
+      applyTableState(connection,connection);
+      connection.online = false;
+      status = error.message;
+    } finally {connection.writing = false;}
+  }
+  if (context) redraw();
 }
 
 document.addEventListener("click", (event) => {
@@ -903,6 +1101,20 @@ document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-play]");
   if (!button || pending) return;
   const {play,id} = button.dataset;
+  if (play === "retry-session") {if (table?.error) connectTable(table); return;}
+  if (play === "game-table") {
+    tableOpen = !tableOpen;
+    if (tableOpen) {logOpen = false; toolsOpen = false; tool = "move"; gridDraft = null;}
+    redraw();
+    return;
+  }
+  if (play === "host-session") {if (!table) hostTable(); return;}
+  if (play === "copy-session" && table) {
+    const input = root().querySelector("#session-link");
+    Promise.resolve().then(() => navigator.clipboard.writeText(inviteURL(table.id)))
+      .then(() => setTableMessage("Invite link copied."), () => {input.select(); setTableMessage("Copy the selected invite link.");});
+    return;
+  }
   if (play === "archive-picker") {root().querySelector("#play-archive-file").click(); return;}
   if (play === "art") {root().querySelector("#play-art").click(); return;}
   if (play === "inspect-marker") {
@@ -912,7 +1124,9 @@ document.addEventListener("click", (event) => {
   }
   if (play === "inspect") {
     const actor = battle.actors.find((entry) => entry.id === id);
-    if (actor) document.dispatchEvent(new CustomEvent("wayfarer:inspect",{detail:structuredClone(actor)}));
+    if (actor) document.dispatchEvent(new CustomEvent("wayfarer:inspect",{
+      detail:structuredClone({...actor,sharedSheet:table ? battle.sheets?.[id] : undefined}),
+    }));
     return;
   }
   if (play === "enter-game") {
@@ -960,8 +1174,8 @@ document.addEventListener("click", (event) => {
         }
         break;
       }
-      case "game-log": logOpen = !logOpen; toolsOpen = false; break;
-      case "game-tools": toolsOpen = !toolsOpen; logOpen = false; if (!toolsOpen) {tool="move"; gridDraft=null;} break;
+      case "game-log": logOpen = !logOpen; toolsOpen = false; tableOpen = false; break;
+      case "game-tools": toolsOpen = !toolsOpen; logOpen = false; tableOpen = false; if (!toolsOpen) {tool="move"; gridDraft=null;} break;
       case "archive-local": {
         pending = true;
         status = "Opening the supplied archive…";
@@ -1088,7 +1302,7 @@ document.addEventListener("change", (event) => {
     case "play-map": {const entry = maps.find(({key}) => key===value); if (entry) useMap(entry); break;}
     case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
     case "grid-tool": tool = value; break;
-    case "grid-overlay": battle.gridOverlay = value; saveBattle(); break;
+    case "grid-overlay": interact(() => {battle.gridOverlay = value;}); return;
     case "room-creature": selectedCreature = Number(value); break;
     case "play-party": selectedParty = value; break;
     case "combat-choice": combatChoice = value; spellSquare = null; castSlot = ""; extraTargets.clear(); break;
@@ -1114,8 +1328,24 @@ document.addEventListener("submit", (event) => {
   if (!root()?.contains(event.target)) return;
   event.preventDefault();
   const value = (id) => event.target.querySelector("#"+id)?.value;
+  if (event.target.id === "session-join-form") {
+    const id = sessionCode(value("session-invite"));
+    if (id) location.hash = sessionHash(id);
+    else root().querySelector("#session-join-error").textContent = "Enter a valid Wayfarer invite link or session code.";
+    return;
+  }
   interact(async () => {
     switch (event.target.id) {
+      case "session-party-form": {
+        if (!table || battle.round) return;
+        const character = context.characters.find(({id}) => id === value("session-character"));
+        if (!character || battle.actors.some(({id}) => id === "party:"+character.id)) return;
+        const actor = partyActor(character);
+        add(actor,map.regions.find(({id}) => id === "01b") ?? map.regions[0]);
+        (battle.sheets ??= {})[actor.id] = sharedSheet(character);
+        status = actor.name + " joined the party.";
+        break;
+      }
       case "grid-align-form": {
         const alignment = readAlignment();
         if (!alignment || !setAlignment(alignment)) throw new Error("Enter valid spacing and keep saved pieces inside the grid.");

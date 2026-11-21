@@ -253,9 +253,11 @@ function render() {
   const {page, character, section} = currentRoute();
   if (page === "game") {
     app.innerHTML = '<main id="main" tabindex="-1" class="game-main"><div id="play-mount"></div></main>';
-    showPlay({characters:state.characters, adventures:catalog.adventures, activeAdventure:state.active, localArchive, game:true});
+    showPlay({characters:state.characters, adventures:catalog.adventures, activeAdventure:state.active, localArchive, game:true,
+      sessionRoute:location.hash.slice(6)});
     return;
   }
+  if (page !== "play") showPlay(null);
   const pageLabel = navItems.find(([id]) => id === page)[1];
   app.innerHTML = `<div class="shell">
     <aside class="sidebar">
@@ -344,10 +346,10 @@ function showGameSheet(character, section = "overview") {
 
 document.addEventListener("wayfarer:inspect", (event) => {
   const actor = event.detail;
-  const imported = state.characters.find((character) => "party:" + character.id === actor.id);
+  const imported = actor.sharedSheet ?? state.characters.find((character) => "party:" + character.id === actor.id);
   const potions = new Map((actor.potions ?? []).map(({name,quantity}) => [name,quantity]));
   showGameSheet({
-    sourceName:"Game token", characterClass:"", species:"", skills:[], items:[], spells:[], level:actor.level,
+    sourceName:"Game token", characterClass:"", species:"", skills:[], items:[], spells:actor.spells ?? [], level:actor.level,
     abilities:[["STR","Strength"],["DEX","Dexterity"],["CON","Constitution"],["INT","Intelligence"],["WIS","Wisdom"],["CHA","Charisma"]]
       .map(([abbr,label]) => ({abbr,label,modifier:actor.ability?.[abbr.toLowerCase()],save:actor.saves?.[abbr.toLowerCase()]})),
     ...imported, id:imported?.id ?? actor.id, name:actor.name, hp:actor.hp, maxHp:actor.maxHp,

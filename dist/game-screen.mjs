@@ -28,7 +28,7 @@ function portraits(party, selected, inCombat) {
 
 export function gameScreen({
   map, battle, selected, party, category, actions, tacticalTools, room, status, artworkNote,
-  logOpen, toolsOpen, destination, cursor, adventureName, hasToken,
+  logOpen, toolsOpen, destination, cursor, adventureName, hasToken, tableOpen, tableContent, shared,
 }) {
   const active = battle.round > 0;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
@@ -40,12 +40,13 @@ export function gameScreen({
   return `<section class="game-screen ${active ? "game-combat" : ""}" aria-label="Wayfarer game">
     <header class="game-top">
       <div class="game-location">
-        <a href="#play" class="game-button game-exit">${icon("home",16)}<span>Setup</span></a>
+        <a href="#play" class="game-button game-exit">${icon("home",16)}<span>${shared ? "Leave" : "Setup"}</span></a>
         <span class="game-top-divider"></span>
         <div><h1>${escape(map.title)}</h1>${adventureName ? `<p>${escape(adventureName)}</p>` : ""}</div>
       </div>
       <div class="game-top-right">
         <span class="game-phase" aria-live="polite"><i></i>${active ? "Combat · Round " + battle.round : "Exploring"}</span>
+        ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"`)}
         ${button("Log","book","game-log",`aria-pressed="${logOpen}"`)}
         ${button("Tools","map","game-tools",`aria-pressed="${toolsOpen}"`)}
       </div>
@@ -73,6 +74,7 @@ export function gameScreen({
           ${battle.log.length ? `<ol class="play-log">${battle.log.slice(-25).reverse().map((entry) => "<li>"+escape(entry)+"</li>").join("")}</ol>` : '<p>No rolls recorded.</p>'}
         </aside>` : ""}
         ${toolsOpen ? `<aside class="game-flyout tools-flyout play-panel" aria-label="Table tools">${tacticalTools}</aside>` : ""}
+        ${tableOpen ? `<aside class="game-flyout tools-flyout play-panel session-panel" aria-label="Multiplayer">${tableContent}</aside>` : ""}
       </div>
     </div>
     <footer class="game-hud">

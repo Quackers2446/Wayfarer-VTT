@@ -16,8 +16,6 @@ You can also paste a Google Sheets link with viewer access for anyone with the l
 
 Run `python3 scripts/build-catalog.py /path/to/5etools.zip` from this folder. The committed index contains bibliographic data, chapter titles, and map references from the supplied 5etools v2.41.2 ZIP. Map images live in the separate 5etools image pack. The dashboard art is original, generated for Wayfarer.
 
-The current dashboard covers campaign setup. Grid gameplay and AI-assisted encounter mapping are future milestones.
-
 ## Artwork
 
 The built-in ImageGen tool created the four original dashboard scenes in `dist/assets`. These are the prompts used for the selected JPEGs.
@@ -42,3 +40,11 @@ Under **Grid alignment** in Setup or Table tools, choose **Artwork only**, **Art
 Weapons, spells, and items appear in the action bar. Select a spell, choose an appropriate slot and targets, and cast. The automated effects cover Sacred Flame, Poison Spray, Fire Bolt, Ray of Frost, Vicious Mockery, Eldritch Blast, Mind Sliver, Healing Word, Cure Wounds, the standard False Life, Armor of Agathys, Misty Step, Aid, and Fireball. For other spells, open **Spell rules**, resolve the effect at the table, and use **Record manual cast** when available. Workbook-specific charges and free casts follow table rulings. In Setup, edit token slots and spell modifiers. Re-import a workbook to capture its slot values on newly added tokens.
 
 The rules layer runs locally in the browser. [SRD attribution](dist/assets/srd-attribution.txt).
+
+## Play together
+
+In the game screen, open **Multiplayer** and choose **Start shared session**. Copy the invite link from **Session**. Players with access to the Wayfarer Site can open the link or paste it under **Join a shared session** in Setup. The link lets them reopen the same encounter later.
+
+Everyone at the table can operate the party and run combat. The map, tokens, initiative, rolls, and other encounter changes sync across browsers. Each player controls their own camera and tool selection. Between encounters, use **Session → Add to party** to share a character from your local library. Creating a session copies the active encounter and leaves its solo save available.
+
+The hosted Worker stores encounters in D1 and shared uploaded maps in R2. The Python preview still serves the solo game and local sample files. To develop the multiplayer API locally, build with `node scripts/build.mjs`, apply `drizzle/0000_shared_tables.sql` to the local `DB` with Wrangler, and run `wrangler dev --local --config dist/server/wrangler.json`. Hosted requests receive identity from Sites. Local API tests supply a mock `oai-authenticated-user-id` header.

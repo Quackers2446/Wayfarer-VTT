@@ -95,6 +95,18 @@
 .play-board-panel .board-frame { aspect-ratio:var(--map-ratio); min-height:220px; max-height:68vh }
 .board-toolbar .map-hint { margin-bottom:9px }
 .manual-hp .play-form { padding:0 10px 9px }
+.session-join { margin-bottom:13px }
+.session-inline { display:flex; align-items:end; gap:8px; flex-wrap:wrap }
+.session-inline .play-field { flex:1 1 160px }
+.session-inline input,.session-inline select { padding:7px 9px; min-width:0; max-width:100%; border:1px solid #b7c1b0; border-radius:6px; background:#f9f7ed; color:#24372c; font:inherit }
+.session-inline > input { flex:1 1 160px }
+.session-join p:empty,.session-panel p:empty { display:none }
+.session-entry { width:min(460px,calc(100% - 24px)); margin:12vh auto; padding:22px }
+.session-entry a,.session-entry button { margin:13px 6px 0 0 }
+.session-panel { display:grid; gap:7px }
+.session-panel .session-inline .play-field,.session-panel p { color:var(--game-muted) }
+.session-panel p { margin:0 }
+.session-panel .session-connection { font-weight:700 }
 .spell-link { font:inherit; font-weight:700 }
 .play-field { grid-template-columns:minmax(0,1fr) }
 .play-field > .select-field { min-width:0 }
