@@ -25,7 +25,9 @@ async function request(path, init) {
   if (response.status === 204) return null;
   const data = await response.json().catch(() => null);
   if ((!response.ok && response.status !== 409) || !data) {
-    throw new Error(data?.message ?? "The shared session could not be reached. Check your site access and try again.");
+    const error = new Error(data?.message ?? "The shared session could not be reached. Check the link and try again.");
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -57,16 +59,17 @@ export function joinPanel() {
   </section>`;
 }
 
-export function tablePanel(table, characters, battle, message) {
-  if (!table) return `<h2>Multiplayer</h2><p>Start a shared session from this encounter. Anyone you give the link to who has site access can control the table.</p>
-    <button type="button" class="game-button" data-play="host-session">Start shared session</button><p role="status">${escape(message)}</p>`;
+export function tablePanel(table, characters, battle, message, needsSignIn) {
+  if (!table) return `<h2>Multiplayer</h2><p>Start a shared session from this encounter. Anyone with the invite link can control the table.</p>
+    ${needsSignIn ? '<a class="game-button" href="/signin-with-chatgpt?return_to=%2F%23game" target="_top">Sign in to host</a>' :
+      '<button type="button" class="game-button" data-play="host-session">Start shared session</button>'}<p role="status">${escape(message)}</p>`;
   const options = characters.filter((character) => !battle.actors.some(({id}) => id === "party:"+character.id));
   return `<h2>Shared session</h2>
     <p class="session-connection" role="status">${escape(message || (table.online ? "Connected" : "Reconnecting…"))}</p>
     <label class="play-field" for="session-link">Invite link</label>
     <div class="session-inline"><input id="session-link" type="url" readonly value="${escape(inviteURL(table.id))}">
       <button type="button" class="game-button" data-play="copy-session">Copy link</button></div>
-    <p>Players with site access share the map, party controls, and combat log.</p>
+    <p>Anyone with this invite link can join and control the table without signing in.</p>
     <form id="session-party-form" class="session-inline">
       ${options.length ? `<label class="play-field">Your character<select id="session-character">${options.map(({id,name}) =>
         `<option value="${escape(id)}">${escape(name)}</option>`).join("")}</select></label>

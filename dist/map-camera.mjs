@@ -1,10 +1,12 @@
 import {escape} from "./format.mjs";
+import {rasterPixelRatio} from "./grid-view.mjs";
 import {icon} from "./icons.mjs";
 
 const minZoom = .75;
 const maxZoom = 8;
 const step = 1.25;
 const dragThreshold = 5;
+const panBuffer = 64;
 const mapCenter = {x:.5,y:.5};
 
 export function mapViewport(map, game = false) {
@@ -28,7 +30,7 @@ export function mapControls(hasToken) {
 }
 
 export function mapHint() {
-  return `<span class="map-hint"><span class="map-hint-mouse">Drag to pan · Scroll to zoom</span>
+  return `<span class="map-hint"><span class="map-hint-mouse">Drag or scroll to pan · Ctrl + scroll to zoom</span>
     <span class="map-hint-touch">Drag to pan · Pinch to zoom</span></span>`;
 }
 
@@ -48,20 +50,30 @@ export function createCamera(frame, controls, map, saved) {
 
   function render(force = false) {
     if (!painter || !frame.isConnected) return;
-    // Reuse the same viewport-sized buffer while panning, including near the map edges.
     const visibleWidth = Math.min(width,viewWidth);
     const visibleHeight = Math.min(height,viewHeight);
     if (visibleWidth <= 0 || visibleHeight <= 0) return;
     const x = Math.max(0,Math.min(width-visibleWidth,frame.scrollLeft-left));
     const y = Math.max(0,Math.min(height-visibleHeight,frame.scrollTop-top));
     const ratio = window.devicePixelRatio || 1;
-    const view = {x,y,width:visibleWidth,height:visibleHeight,mapWidth:width,mapHeight:height,ratio};
-    const changed = !lastView || Object.keys(view).some((key) => view[key] !== lastView[key]);
-    if (changed) {
-      Object.assign(canvas.style,{left:`${x}px`,top:`${y}px`,width:`${visibleWidth}px`,height:`${visibleHeight}px`});
-      lastView = view;
+    // A small margin lets the browser scroll painted pixels while the camera stays at the same zoom.
+    const paddedWidth = Math.min(width,visibleWidth + 2*panBuffer);
+    const paddedHeight = Math.min(height,visibleHeight + 2*panBuffer);
+    const padded = rasterPixelRatio(paddedWidth,paddedHeight,ratio) === ratio;
+    const rasterWidth = padded ? paddedWidth : visibleWidth;
+    const rasterHeight = padded ? paddedHeight : visibleHeight;
+    if (lastView && lastView.mapWidth === width && lastView.mapHeight === height && lastView.ratio === ratio &&
+        lastView.width === rasterWidth && lastView.height === rasterHeight &&
+        x >= lastView.x && y >= lastView.y &&
+        x + visibleWidth <= lastView.x + rasterWidth && y + visibleHeight <= lastView.y + rasterHeight) {
+      if (force) painter(canvas,lastView);
+      return;
     }
-    if (changed || force) painter(canvas,view);
+    const rasterX = Math.max(0,Math.min(width-rasterWidth,x-(rasterWidth-visibleWidth)/2));
+    const rasterY = Math.max(0,Math.min(height-rasterHeight,y-(rasterHeight-visibleHeight)/2));
+    Object.assign(canvas.style,{left:`${rasterX}px`,top:`${rasterY}px`,width:`${rasterWidth}px`,height:`${rasterHeight}px`});
+    lastView = {x:rasterX,y:rasterY,width:rasterWidth,height:rasterHeight,mapWidth:width,mapHeight:height,ratio};
+    painter(canvas,lastView);
   }
 
   function scheduleRender() {
@@ -129,19 +141,16 @@ export function createCamera(frame, controls, map, saved) {
   const observer = new ResizeObserver(resize);
   observer.observe(frame);
 
+  const pointers = new Map();
+  let drag, pinch, pinchFrame, blockClick;
   frame.addEventListener("wheel", (event) => {
+    if (pointers.size) {event.preventDefault(); return;}
+    if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewHeight : 1;
-    if (!event.ctrlKey && (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY))) {
-      frame.scrollBy((event.deltaX || event.deltaY)*unit,event.shiftKey ? 0 : event.deltaY*unit);
-    } else if (event.deltaY) {
-      const delta = Math.max(-200,Math.min(200,event.deltaY*unit));
-      scale(zoom*Math.exp(-delta*(event.ctrlKey ? .015 : .0025)),local(event));
-    }
+    const delta = Math.max(-180,Math.min(180,event.deltaY*unit));
+    if (delta) scale(zoom*Math.exp(-delta*.005),local(event));
   },{passive:false,signal});
-
-  const pointers = new Map();
-  let drag, pinch, blockClick;
   function startDrag(pointer) {
     drag = {x:pointer.clientX,y:pointer.clientY,left:frame.scrollLeft,top:frame.scrollTop};
   }
@@ -151,6 +160,18 @@ export function createCamera(frame, controls, map, saved) {
       point:local({clientX:(a.clientX+b.clientX)/2,clientY:(a.clientY+b.clientY)/2}),
       distance:Math.max(1,Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)),
     };
+  }
+  function updatePinch() {
+    pinchFrame = undefined;
+    const {point,distance} = pinchGeometry();
+    if (!pinch.mode) {
+      const travel = Math.hypot(point.x-pinch.point.x,point.y-pinch.point.y);
+      const stretch = Math.abs(distance-pinch.distance)/2;
+      if (stretch >= dragThreshold && travel <= stretch*1.25) pinch.mode = "zoom";
+      else if (travel >= dragThreshold && travel > stretch*1.25) pinch.mode = "pan";
+    }
+    if (pinch.mode === "pan") aim(pinch.world,point);
+    if (pinch.mode === "zoom") scale(pinch.zoom*distance/pinch.distance,point,pinch.world);
   }
   function markDrag() {
     blockClick = true;
@@ -165,7 +186,7 @@ export function createCamera(frame, controls, map, saved) {
       startDrag(event);
     } else {
       const {point,distance} = pinchGeometry();
-      pinch = {zoom,world:position(point),distance};
+      pinch = {zoom,world:position(point),point,distance};
       markDrag();
     }
   },{signal});
@@ -175,8 +196,7 @@ export function createCamera(frame, controls, map, saved) {
     event.stopPropagation();
     pointers.set(event.pointerId,event);
     if (pinch) {
-      const {point,distance} = pinchGeometry();
-      scale(pinch.zoom*distance/pinch.distance,point,pinch.world);
+      if (pinchFrame === undefined) pinchFrame = requestAnimationFrame(updatePinch);
       return;
     }
     const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
@@ -185,7 +205,13 @@ export function createCamera(frame, controls, map, saved) {
     frame.scrollTo(drag.left - dx,drag.top - dy);
   },{capture:true,signal});
   function release(event) {
-    if (!pointers.delete(event.pointerId)) return;
+    if (!pointers.has(event.pointerId)) return;
+    if (pinchFrame !== undefined) {
+      cancelAnimationFrame(pinchFrame);
+      if (event.type === "pointerup") updatePinch();
+      pinchFrame = undefined;
+    }
+    pointers.delete(event.pointerId);
     pinch = null;
     if (pointers.size) startDrag(pointers.values().next().value);
     else frame.classList.remove("board-panning");
@@ -201,10 +227,12 @@ export function createCamera(frame, controls, map, saved) {
 
   return {
     state:() => ({zoom,center:frame.isConnected ? position() : lastCenter}),
+    gesturing:() => pointers.size > 0,
     destroy() {
       listeners.abort();
       observer.disconnect();
       if (animation !== undefined) cancelAnimationFrame(animation);
+      if (pinchFrame !== undefined) cancelAnimationFrame(pinchFrame);
       canvas.width = canvas.height = 0;
     },
     paint(draw) {painter = draw; render(true);},

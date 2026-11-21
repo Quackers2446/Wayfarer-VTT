@@ -6,6 +6,10 @@ import {cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
 const maxRasterEdge = 4096;
 const maxRasterPixels = 8 * 1024 * 1024;
 
+export function rasterPixelRatio(width, height, ratio) {
+  return Math.min(ratio,maxRasterEdge/Math.max(width,height),Math.sqrt(maxRasterPixels/(width*height)));
+}
+
 function polygon(context, points) {
   context.beginPath();
   points.forEach(([x,y], index) => index ? context.lineTo(x,y) : context.moveTo(x,y));
@@ -14,8 +18,7 @@ function polygon(context, points) {
 
 export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
   // Match the display density while keeping the backing buffer bounded by the visible area.
-  const ratio = Math.min(view.ratio, maxRasterEdge / Math.max(view.width,view.height),
-    Math.sqrt(maxRasterPixels / (view.width*view.height)));
+  const ratio = rasterPixelRatio(view.width,view.height,view.ratio);
   const pixelsWide = Math.max(1,Math.floor(view.width*ratio));
   const pixelsHigh = Math.max(1,Math.floor(view.height*ratio));
   if (canvas.width !== pixelsWide) canvas.width = pixelsWide;

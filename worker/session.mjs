@@ -120,10 +120,13 @@ export async function sessionRequest(request, env) {
   const url = new URL(request.url);
   const match = sessionPath.exec(url.pathname);
   if (url.pathname !== api && !match) return fail(404,"Session endpoint not found.");
-  if (!request.headers.get("oai-authenticated-user-id")) return fail(401,"Sign in with a ChatGPT account that has access to this site.");
   if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) return fail(403,"Open Wayfarer to update this session.");
   try {
-    if (!match && request.method === "POST") return await create(request,env);
+    if (!match && request.method === "POST") {
+      if (!request.headers.get("oai-authenticated-user-id")) return fail(401,"Sign in to start a shared session.");
+      return await create(request,env);
+    }
+    // The unlisted, randomly generated session ID is the guest's invitation and access credential.
     if (match?.[2] && request.method === "GET") {
       const id = match[1];
       const row = await env.DB.prepare("SELECT artwork_type FROM game_sessions WHERE id=?").bind(id).first();

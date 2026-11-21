@@ -49,6 +49,7 @@ let customArtwork;
 let table;
 let tableOpen = false;
 let tableMessage = "";
+let needsHostSignIn = false;
 let showInvitation;
 let category = "move";
 let logOpen = false;
@@ -653,7 +654,7 @@ function redraw() {
     map,battle,selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
     category,actions:playOptions(selectedActor()), tacticalTools:tableTools(), room,status,artworkNote,
     logOpen,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
-    tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage) : "",shared:Boolean(table),
+    tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage,needsHostSignIn) : "",shared:Boolean(table),
     adventureName:context.adventures.find(({id}) => id === map.module)?.name,
   }) : playPage();
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
@@ -881,7 +882,13 @@ async function hostTable() {
     showInvitation = result.id;
     location.hash = sessionHash(result.id);
   } catch (error) {
-    if (location.hash === route) setTableMessage(error.message);
+    if (location.hash === route) {
+      setTableMessage(error.message);
+      if (error.status === 401) {
+        needsHostSignIn = true;
+        redraw();
+      }
+    }
   } finally {pending = false;}
 }
 
@@ -919,9 +926,9 @@ async function pollTable(connection) {
   clearTimeout(connection.timer);
   connection.reading = true;
   try {
-    if (connection.writing) return;
+    if (connection.writing || camera?.gesturing()) return;
     const snapshot = await readSession(connection.id,connection.revision);
-    if (table !== connection || connection.writing) return;
+    if (table !== connection || connection.writing || camera?.gesturing()) return;
     if (snapshot && snapshot.revision > connection.revision) {
       applyTableState(connection,snapshot);
       status = "";

@@ -43,7 +43,7 @@ The rules layer runs locally in the browser. [SRD attribution](dist/assets/srd-a
 
 ## Play together
 
-In the game screen, open **Multiplayer** and choose **Start shared session**. Copy the invite link from **Session**. Players with access to the Wayfarer Site can open the link or paste it under **Join a shared session** in Setup. The link lets them reopen the same encounter later.
+In the game screen, open **Multiplayer** and choose **Start shared session**. Sign in to host, then copy the invite link from **Session**. Guests can open the link or paste it under **Join a shared session** in Setup without signing in. The unlisted link lets them reopen the same encounter later.
 
 Everyone at the table can operate the party and run combat. The map, tokens, initiative, rolls, and other encounter changes sync across browsers. Each player controls their own camera and tool selection. Between encounters, use **Session → Add to party** to share a character from your local library. Creating a session copies the active encounter and leaves its solo save available.
 
