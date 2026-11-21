@@ -103,6 +103,8 @@
 .session-join p:empty,.session-panel p:empty { display:none }
 .session-entry { width:min(460px,calc(100% - 24px)); margin:12vh auto; padding:22px }
 .session-entry a,.session-entry button { margin:13px 6px 0 0 }
+.session-entry .session-inline input { font-size:1rem }
+.session-entry [role=status]:empty { display:none }
 .session-panel { display:grid; gap:7px }
 .session-panel .session-inline .play-field,.session-panel p { color:var(--game-muted) }
 .session-panel p { margin:0 }

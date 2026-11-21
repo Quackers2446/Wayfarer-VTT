@@ -57,10 +57,10 @@ The rules layer runs locally in the browser. [SRD attribution](dist/assets/srd-a
 
 ## Play together
 
-In the game screen, open **Multiplayer** and choose **Start shared session**. Sign in to host, then copy the invite link from **Session**. Guests can open the link or paste it under **Join a shared session** in Setup without signing in. The unlisted link lets them reopen the same encounter later.
+In the game screen, open **Multiplayer** and choose **Start shared session**. Sign in to host, choose a username, and copy the invite link from **Session**. Guests choose a username when they first join through the invite link or through **Join a shared session** in Setup. A returning browser keeps its username. The **Session** button shows how many players are online. Open it to see who joined and which character each player claimed.
 
 Up to four characters can join a party. Each player can use **Claim** next to a portrait to reserve a character in their browser. Unclaimed party members are available to everyone. The map, story discoveries, tokens, initiative, and rolls sync across browsers. Each player controls their camera and tool selection. Between encounters, use **Session → Add to party** to share a character from your local library. Creating a session copies the active encounter and leaves its solo save available.
 
-Open **Chat** on the right side of a shared game. Messages use your claimed character’s name or the name you enter in chat. Minimize the panel to see more of the map. The tab shows unread messages, and the session keeps its latest 200 messages when players rejoin.
+Open **Chat** on the right side of a shared game. Messages use your claimed character’s name or your username. Minimize the panel to see more of the map. The tab shows unread messages, and the session keeps its latest 200 messages when players rejoin.
 
 The hosted Worker stores encounters and chat in D1 and shared uploaded maps in R2. The Python preview serves the solo game and local sample files. To develop the multiplayer API locally, build with `node scripts/build.mjs`, apply the `drizzle/` SQL migrations in order to the local `DB` with Wrangler, and run `wrangler dev --local --config dist/server/wrangler.json`. Hosted requests receive identity from Sites. Local API tests supply a mock `oai-authenticated-user-id` header.

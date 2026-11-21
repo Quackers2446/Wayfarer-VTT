@@ -2,7 +2,6 @@ import {icon} from "./icons.mjs";
 import {readChat, sendChat} from "./multiplayer.mjs";
 
 const timeFormat = new Intl.DateTimeFormat(undefined,{hour:"numeric",minute:"2-digit"});
-const aliasKey = "wayfarer-chat-name-v1";
 
 export function createGameChat(id, sender) {
   const panel = document.createElement("aside");
@@ -20,8 +19,7 @@ export function createGameChat(id, sender) {
         <p class="chat-empty">No messages yet.</p>
       </div>
       <form class="chat-form" autocomplete="off">
-        <label class="chat-name">Name <input id="game-chat-name" type="text" maxlength="40"></label>
-        <p class="chat-author" hidden></p>
+        <p class="chat-author"></p>
         <div class="chat-compose">
           <textarea id="game-chat-message" rows="2" maxlength="500" aria-label="Message" placeholder="Message the party"></textarea>
           <button class="game-button chat-send" type="submit" disabled>Send</button>
@@ -37,7 +35,6 @@ export function createGameChat(id, sender) {
   const history = panel.querySelector(".chat-history");
   const empty = history.querySelector(".chat-empty");
   const form = panel.querySelector("form");
-  const name = form.querySelector("input");
   const author = form.querySelector(".chat-author");
   const body = form.querySelector("textarea");
   const send = form.querySelector(".chat-send");
@@ -53,11 +50,7 @@ export function createGameChat(id, sender) {
   let draft;
   let slot;
 
-  name.placeholder = "Guest " + sender.slice(0,4).toUpperCase();
-  try {
-    name.value = localStorage.getItem(aliasKey) ?? "";
-    seen = Number(sessionStorage.getItem(seenKey)) || 0;
-  } catch {}
+  try {seen = Number(sessionStorage.getItem(seenKey)) || 0;} catch {}
 
   function markSeen() {
     seen = Math.max(seen,cursor ?? 0);
@@ -136,9 +129,6 @@ export function createGameChat(id, sender) {
   }
 
   toggle.addEventListener("click",() => setOpen(!open));
-  name.addEventListener("input",() => {
-    try {localStorage.setItem(aliasKey,name.value);} catch {}
-  });
   body.addEventListener("input",updateSend);
   body.addEventListener("keydown",(event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -151,8 +141,7 @@ export function createGameChat(id, sender) {
     event.stopPropagation();
     const text = body.value.trim();
     if (!text || submitting) return;
-    const alias = name.value.trim();
-    if (draft?.body !== text || draft.alias !== alias) draft = {messageId:crypto.randomUUID(),sender,alias,body:text};
+    if (draft?.body !== text) draft = {messageId:crypto.randomUUID(),sender,body:text};
     submitting = true;
     updateSend();
     status.textContent = "";
@@ -174,14 +163,12 @@ export function createGameChat(id, sender) {
   refresh();
 
   return {
-    mount(container, character) {
+    mount(container, name) {
       const scroll = history.scrollTop;
       slot = container;
       slot.append(panel);
       slot.classList.toggle("chat-open",open);
-      name.parentElement.hidden = Boolean(character);
-      author.hidden = !character;
-      author.textContent = character ? "Sending as " + character.name : "";
+      author.textContent = "Sending as " + name;
       if (open) history.scrollTop = scroll;
     },
     refresh,

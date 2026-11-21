@@ -7,7 +7,8 @@ function button(label, symbol, action, extra = "") {
   return `<button class="game-button" type="button" data-play="${action}" ${extra}>${symbol ? icon(symbol,17) : ""}${escape(label)}</button>`;
 }
 
-function portraits(party, selected, inCombat, controllers, controller) {
+function portraits(party, selected, inCombat, controllers, controller, players) {
+  const names = new Map(players.map(({id,username}) => [id,username]));
   return party.length ? party.map((character, index) => {
     const name = escape(character.name);
     const id = escape(character.id);
@@ -22,7 +23,7 @@ function portraits(party, selected, inCombat, controllers, controller) {
         </span>
         <span class="game-character-info"><strong>${name}</strong><small>${character.hp} / ${character.maxHp} HP${character.tempHp ? " · +" + character.tempHp : ""}</small>
           <progress max="${character.maxHp}" value="${hp}" aria-label="${name} hit points"></progress>
-          ${owner ? `<small>${mine ? "Your character" : "Claimed"}</small>` : ""}
+          ${owner ? `<small>${mine ? "Your character" : escape(names.get(owner) ?? "Claimed")}</small>` : ""}
         </span>
       </button>
       ${!inCombat && (!owner || mine) && actorIsUp(character) && selected?.id !== character.id
@@ -35,10 +36,11 @@ function portraits(party, selected, inCombat, controllers, controller) {
 export function gameScreen({
   map, battle, selected, party, category, actions, tacticalTools, room, status, artworkNote,
   logOpen, toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,
-  destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative,
+  destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative, players = [],
 }) {
   const active = battle.round > 0;
   const enemyTurn = active && selected?.side === "hostile";
+  const online = players.filter((player) => player.online).length;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
   const total = selected && active ? speedOf(selected) + battle.dash : 0;
   const categoryList = [
@@ -54,7 +56,8 @@ export function gameScreen({
       </div>
       <div class="game-top-right">
         <span class="game-phase" aria-live="polite"><i></i>${active ? "Combat · Round " + battle.round : "Exploring"}</span>
-        ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"`)}
+        ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"${shared ?
+          ` data-online="${online}" aria-label="Session" aria-description="${online} ${online === 1 ? "player" : "players"} online"` : ""}`)}
         ${button("Story","book","game-story",`aria-pressed="${storyOpen}"`)}
         ${button("Log","book","game-log",`aria-pressed="${logOpen}"`)}
         ${button("Tools","map","game-tools",`aria-pressed="${toolsOpen}"`)}
@@ -63,7 +66,7 @@ export function gameScreen({
     <div class="game-middle">
       <aside class="game-party" aria-label="Party">
         <h2>Party</h2>
-        <div class="game-roster">${portraits(party,selected,active,controllers,controller)}</div>
+        <div class="game-roster">${portraits(party,selected,active,controllers,controller,players)}</div>
       </aside>
       <div class="game-stage">
         ${active ? `<div class="game-initiative" aria-label="Initiative order">${battle.order.filter((id) => !visibleInitiative || visibleInitiative.has(id)).map((id) => {

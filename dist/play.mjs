@@ -16,7 +16,8 @@ import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, m
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
 import {drawGrid, gridPosition, terrainAt} from "./grid-view.mjs";
 import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
-import {artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, sessionCode, sessionHash, tablePanel, writeSession} from "./multiplayer.mjs";
+import {artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
+  syncSessionPlayers, tablePanel, writeSession} from "./multiplayer.mjs";
 import {
   actorIsUp, applyDamage, areaCells, castSpell, currentActor, deathSave, diceTerms, distanceFt, drinkPotion, endInitiative, endTurn, joinInitiative, keyAt, moveLeft,
   exploreToken, heal, log, moveToken, newBattle, occupies, opportunity, placeToken, previewMovement, recordSpell, resolveOpportunity, rollDice,
@@ -713,14 +714,18 @@ function playPage() {
 function redraw() {
   const element = root();
   if (!element) return;
+  const active = document.activeElement?.id;
   if (context.sessionRoute && !table?.state) {
     element.innerHTML = `<section class="session-entry play-panel"><h1>Join shared session</h1>
-      <p role="status">${escape(tableMessage || "Connecting to the table…")}</p>
-      ${table?.error ? actionButton("Try again","retry-session") : ""}
+      ${table?.needsUsername ? `<form id="session-username-form" class="session-inline">
+        ${input("Username","session-username",table.usernameDraft ?? rememberedUsername(),"text",'required maxlength="24" autocomplete="nickname"')}
+        <button class="button primary small" type="submit" ${table.joining ? "disabled" : ""}>${table.joining ? "Joining…" : "Join session"}</button>
+      </form><p role="status">${escape(tableMessage)}</p>` : `<p role="status">${escape(tableMessage || "Connecting to the table…")}</p>
+      ${table?.error ? actionButton("Try again","retry-session") : ""}`}
       <a href="#play" class="button outline small">Back to setup</a></section>`;
+    if (active === "session-username") element.querySelector("#session-username")?.focus({preventScroll:true});
     return;
   }
-  const active = document.activeElement?.id;
   let cameraState = camera?.state();
   if (!context.game) focusedGameMap = null;
   camera?.destroy();
@@ -734,13 +739,14 @@ function redraw() {
     storyOpen,storyContent:storyOpen ? storyPanel(battle,map) : "",
     rescueAvailable:canControl(selectedActor()) && canRescue(battle,map,selectedActor()),
     canAct:canControl(selectedActor()), controllers:table ? battle.controllers ?? {} : null, controller,
-    tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage,needsHostSignIn) : "",shared:Boolean(table),
+    tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage,needsHostSignIn,controller) : "",
+    shared:Boolean(table),players:table?.players,
     adventureName:context.adventures.find(({id}) => id === map.module)?.name,
   }) : playPage();
   const chatSlot = element.querySelector(".game-chat-slot");
   if (chatSlot && table?.chat) {
     const character = battle.actors.find((actor) => actor.side === "party" && battle.controllers?.[actor.id] === controller);
-    table.chat.mount(chatSlot,character);
+    table.chat.mount(chatSlot,character?.name || table.player);
   }
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
   if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open","");
@@ -1143,11 +1149,43 @@ async function pollTable(connection) {
   }
 }
 
-async function connectTable(connection) {
+async function pollPlayers(connection) {
+  if (table !== connection || connection.readingPlayers || !connection.state) return;
+  clearTimeout(connection.playerTimer);
+  connection.readingPlayers = true;
+  try {
+    const result = await syncSessionPlayers(connection.id,controller);
+    if (table === connection && !connection.writing && !camera?.gesturing() &&
+        JSON.stringify(result.players) !== JSON.stringify(connection.players)) {
+      connection.players = result.players;
+      redraw();
+    }
+  } catch {
+    // A failed heartbeat leaves the last visible roster in place until the next poll.
+  } finally {
+    connection.readingPlayers = false;
+    if (table === connection) connection.playerTimer = setTimeout(() => pollPlayers(connection),document.hidden ? 15000 : 3500);
+  }
+}
+
+async function connectTable(connection, username) {
+  if (connection.joining) return;
+  connection.joining = true;
+  if (username !== undefined) connection.usernameDraft = username;
   connection.error = false;
   tableMessage = "";
   redraw();
   try {
+    const entry = await syncSessionPlayers(connection.id,controller,username);
+    if (table !== connection) return;
+    if (!entry.player) {
+      connection.needsUsername = true;
+      return;
+    }
+    connection.player = entry.player;
+    connection.players = entry.players;
+    connection.needsUsername = false;
+    rememberedUsername(entry.player);
     const snapshot = await readSession(connection.id);
     if (table !== connection) return;
     map = snapshot.map;
@@ -1163,17 +1201,21 @@ async function connectTable(connection) {
     showInvitation = null;
     if (map.asset || snapshot.hasArtwork) loadArtwork(map,null,snapshot.hasArtwork ? artworkURL(connection.id) : null);
     pollTable(connection);
+    connection.playerTimer = setTimeout(() => pollPlayers(connection),3500);
   } catch (failure) {
     if (table !== connection) return;
     tableMessage = failure.message;
     connection.error = true;
+  } finally {
+    connection.joining = false;
+    if (table === connection) redraw();
   }
-  redraw();
 }
 
 function leaveTable() {
   if (!table) return;
   clearTimeout(table.timer);
+  clearTimeout(table.playerTimer);
   table.chat?.destroy();
   artworkRequest?.abort();
   ({map,battle,art,artworkNote,customArtwork,detectedGrid,room,selectedId,tool} = table.solo);
@@ -1225,6 +1267,7 @@ document.addEventListener("wayfarer:archive", () => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && table?.state) {
     pollTable(table);
+    pollPlayers(table);
     table.chat?.refresh();
   }
 });
@@ -1543,7 +1586,12 @@ document.addEventListener("pointermove", (event) => {
 });
 
 document.addEventListener("input", (event) => {
-  if (!root()?.contains(event.target) || !event.target.id.startsWith("grid-align-")) return;
+  if (!root()?.contains(event.target)) return;
+  if (event.target.id === "session-username" && table?.needsUsername) {
+    table.usernameDraft = event.target.value;
+    return;
+  }
+  if (!event.target.id.startsWith("grid-align-")) return;
   const alignment = readAlignment();
   const feedback = root().querySelector("#grid-align-feedback");
   if (alignment && fitsCurrentGrid(gridGeometry(map,alignment),battle)) {
@@ -1605,6 +1653,10 @@ document.addEventListener("submit", (event) => {
     const id = sessionCode(value("session-invite"));
     if (id) location.hash = sessionHash(id);
     else root().querySelector("#session-join-error").textContent = "Enter a valid Wayfarer invite link or session code.";
+    return;
+  }
+  if (event.target.id === "session-username-form") {
+    if (table?.needsUsername) connectTable(table,value("session-username"));
     return;
   }
   interact(async () => {
