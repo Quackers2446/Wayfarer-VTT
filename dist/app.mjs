@@ -1,6 +1,7 @@
-import {showPlay} from "./play.mjs";
+import {setGameTokenImage, showPlay} from "./play.mjs";
 import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
+import {paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
 import {escape, plural, text} from "./format.mjs";
 import {readCharacters} from "./characters.mjs";
 import {icon} from "./icons.mjs";
@@ -101,7 +102,7 @@ function partyCards(characters) {
     const profile = characterProfile(character);
     return `<a class="character-card" href="${sheetPath(character)}" aria-label="Open character sheet for ${escape(character.name)}">
       <span class="character-open">
-        <span class="avatar tone-${index % 4}" aria-hidden="true">${escape(initials(character.name))}</span>
+        <span class="avatar tone-${index % 4}" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage)}</span>
         <span class="character-info"><strong>${escape(character.name)}</strong>${profile ? '<small>' + profile + '</small>' : ""}</span>
       </span>
       <span class="card-stats">
@@ -290,6 +291,7 @@ function render() {
   if (page === "play") showPlay({characters:state.characters, adventures:catalog.adventures,
     activeAdventure:state.active, localArchive});
   if (character) fillSheetResults(character, section);
+  paintCharacterPortraits(app);
 }
 
 function openDialog(title, subtitle, body, lead = "file", wide = false) {
@@ -338,9 +340,10 @@ document.addEventListener("wayfarer:marker", (event) => {
 function showGameSheet(character, section = "overview") {
   gameSheet = {character,section};
   const subtitle = [character.species,character.characterClass,character.level == null ? "" : "Level " + character.level].filter(Boolean).join(" · ");
-  openDialog(character.name, subtitle, characterPage(character,section,{embedded:true}), "users", true);
+  openDialog(character.name, subtitle, characterPage(character,section,{embedded:true,tokenEditable:Boolean(character.gameActorId)}), "users", true);
   dialog.classList.add("game-sheet-dialog");
   fillSheetResults(character,section);
+  paintCharacterPortraits(dialog);
   if (section !== "overview") dialog.querySelector('.sheet-tab[aria-current]')?.focus({preventScroll:true});
 }
 
@@ -354,11 +357,53 @@ document.addEventListener("wayfarer:inspect", (event) => {
       .map(([abbr,label]) => ({abbr,label,modifier:actor.ability?.[abbr.toLowerCase()],save:actor.saves?.[abbr.toLowerCase()]})),
     ...imported, id:imported?.id ?? actor.id, name:actor.name, hp:actor.hp, maxHp:actor.maxHp,
     ac:actor.ac, speed:String(actor.speed), initiative:actor.initiative, tempHp:actor.tempHp,
+    tokenImage:actor.tokenImage, tokenSession:actor.tokenSession, gameActorId:actor.side === "party" ? actor.id : undefined,
     spellDC:actor.spellDC, spellAttack:actor.spellAttack, spellSlots:actor.slots,
     attacks:imported?.attacks ?? actor.attacks,
     items:(imported?.items ?? []).map((item) => ({...item,quantity:potions.get(item.name) ?? item.quantity})),
   });
 });
+
+let changingToken = false;
+
+async function changeCharacterToken(source, file) {
+  const view = dialog.contains(source) ? gameSheet : currentRoute();
+  const character = view?.character;
+  if (!character || changingToken) return;
+  const sheet = source.closest(".character-sheet");
+  const report = (target, message) => {
+    const output = target?.querySelector(".sheet-token-status");
+    if (output) output.textContent = message;
+  };
+  changingToken = true;
+  report(sheet,"Saving token…");
+  try {
+    const image = file ? await saveTokenImage(file) : undefined;
+    if (character.gameActorId) await setGameTokenImage(character.gameActorId,image,character.tokenSession);
+    const local = state.characters.find(({id}) => character.gameActorId ? character.gameActorId === "party:"+id : character.id === id);
+    let saved = true;
+    if (local) {
+      if (image) local.tokenImage = image;
+      else delete local.tokenImage;
+      saved = save();
+    }
+    const message = !saved ? "Token changed for this visit. Browser storage is unavailable." : image ? "Token saved." : "Token removed.";
+    if (character.gameActorId) {
+      document.dispatchEvent(new Event("wayfarer:character-token"));
+      if (gameSheet === view && dialog.open) {
+        showGameSheet({...character,tokenImage:image},view.section);
+        dialog.querySelector('[data-action="pick-token"]')?.focus({preventScroll:true});
+        report(dialog,message);
+      }
+    } else if (currentRoute().character?.id === character.id) {
+      render();
+      app.querySelector('[data-action="pick-token"]')?.focus({preventScroll:true});
+      report(app,message);
+    }
+  } catch (error) {
+    report(sheet,error.message);
+  } finally {changingToken = false;}
+}
 
 async function spellDialog(key) {
   const record = spellByKey(key);
@@ -427,7 +472,7 @@ function storeCharacters(characters, name, sourceKey) {
       (existing.name.toLowerCase() === character.name.toLowerCase() &&
         existing.species.toLowerCase() === character.species.toLowerCase()));
     const id = index < 0 ? crypto.randomUUID() : state.characters[index].id;
-    const record = {...character, id, sourceName: name, sourceKey};
+    const record = {...character, id, sourceName: name, sourceKey,tokenImage:state.characters[index]?.tokenImage};
     if (index < 0) state.characters.push(record);
     else state.characters[index] = record;
   }
@@ -545,6 +590,8 @@ document.addEventListener("click", (event) => {
   switch (action) {
     case "upload": importDialog(); break;
     case "pick": document.querySelector("#workbooks").click(); break;
+    case "pick-token": if (!changingToken) control.closest(".character-sheet").querySelector("#character-token-file").click(); break;
+    case "clear-token": changeCharacterToken(control); break;
     case "samples": if (localSamples.length) fetchLocalSamples(); break;
     case "close": dialog.close(); break;
     case "kind": {
@@ -608,6 +655,12 @@ document.addEventListener("input", (event) => {
 document.addEventListener("change", (event) => {
   switch (event.target.id) {
     case "workbooks": importFiles(event.target.files); event.target.value = ""; break;
+    case "character-token-file": {
+      const file = event.target.files[0];
+      if (file) changeCharacterToken(event.target,file);
+      event.target.value = "";
+      break;
+    }
     case "level-filter": startLevel = event.target.value; renderResults(); break;
     case "catalog-sort": sort = event.target.value; renderResults(); break;
     case "prepared-only": {

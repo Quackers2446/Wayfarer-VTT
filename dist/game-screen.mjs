@@ -15,7 +15,9 @@ function portraits(party, selected, inCombat) {
     const hp = Math.max(0, Math.min(character.hp,character.maxHp));
     return `<div class="game-character ${character.id === selected?.id ? "game-character-current" : ""}">
       <button type="button" class="game-portrait" data-play="inspect" data-id="${id}" aria-label="Open character sheet for ${name}">
-        <span class="game-avatar palette-${index%4}" aria-hidden="true">${escape(initials)}</span>
+        <span class="game-avatar palette-${index%4}" aria-hidden="true">
+          <span data-token-initial>${escape(initials)}</span><canvas data-creature-portrait="${id}" hidden></canvas>
+        </span>
         <span class="game-character-info"><strong>${name}</strong><small>${character.hp} / ${character.maxHp} HP${character.tempHp ? " · +" + character.tempHp : ""}</small>
           <progress max="${character.maxHp}" value="${hp}" aria-label="${name} hit points"></progress>
         </span>

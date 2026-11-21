@@ -10,6 +10,8 @@ From the `wayfarer` folder, run `python3 scripts/serve.py` and open <http://127.
 
 Use **Import character** to select or drop one or more `.xlsx` files, including Excel exports from Google Sheets. The importer supports the supplied v1.3 and v1.4 layouts and simple sheets with labels such as Character Name, Class, Species, Level, Armor Class, Hit Points, and Strength. Simple sheets can use a two-column label/value layout or a header row with the values directly beneath it. The importer reads spreadsheet values saved by Excel or Google Sheets. Re-export a workbook with missing calculated results to restore its formula values.
 
+Open a character's sheet and use **Upload token** to choose a PNG, JPEG, or WebP image for its portrait and map token. Wayfarer crops the center to a square and preserves transparency. The same controls are available by opening a party portrait during play. Shared games sync token changes to the rest of the table.
+
 You can also paste a Google Sheets link with viewer access for anyone with the link. For a restricted workbook, export it using **File → Download → Microsoft Excel (.xlsx)** and upload the file. The Google Sheets link points directly to Google's export endpoint.
 
 ## Refresh the catalog

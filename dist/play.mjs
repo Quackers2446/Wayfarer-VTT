@@ -1,4 +1,5 @@
 import {drawMonsterArtwork, monsterArtwork} from "./monster-art.mjs";
+import {characterTokenArtwork, localTokenBlob, uploadSessionToken} from "./character-token.mjs";
 import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
@@ -120,11 +121,20 @@ function repaintCreatureArt() {
   });
 }
 
+document.addEventListener("wayfarer:character-token",repaintCreatureArt);
+
+function partyTokenImage(actor) {
+  if (actor.side !== "party") return;
+  if (table) return actor.tokenImage;
+  const character = context.characters.find(({id}) => actor.id === "party:"+id);
+  return character ? character.tokenImage : actor.tokenImage;
+}
+
 function collectArtwork(visible) {
   const result = new Map();
   for (const actor of battle.actors) {
     if (visible && !visible.has(actor.id)) continue;
-    const art = monsterArtwork(actor,map,repaintCreatureArt);
+    const art = characterTokenArtwork(partyTokenImage(actor),table?.id,repaintCreatureArt) ?? monsterArtwork(actor,map,repaintCreatureArt);
     if (art) result.set(actor.id,art);
   }
   return result;
@@ -877,7 +887,15 @@ async function hostTable() {
     state.battle.sheets = Object.fromEntries(context.characters
       .filter(({id}) => battle.actors.some((actor) => actor.id === "party:"+id))
       .map((character) => ["party:"+character.id,sharedSheet(character)]));
-    const result = await createSession({...map,detectedGrid},state,customArtwork);
+    const tokens = new Map();
+    for (const actor of state.battle.actors) {
+      const hash = partyTokenImage(actor);
+      if (!hash) {delete actor.tokenImage; continue;}
+      actor.tokenImage = hash;
+      if (!tokens.has(hash)) tokens.set(hash,await localTokenBlob(hash));
+    }
+    if (location.hash !== route) return;
+    const result = await createSession({...map,detectedGrid},state,customArtwork,tokens);
     if (location.hash !== route) return;
     showInvitation = result.id;
     location.hash = sessionHash(result.id);
@@ -1028,14 +1046,15 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && table?.state) pollTable(table);
 });
 
-async function interact(run) {
+async function interact(run, {cosmetic = false} = {}) {
   const connection = table;
   if (connection && (!connection.state || connection.writing)) return;
+  let succeeded = true;
   if (connection) connection.writing = true;
   try {
     status = "";
     await run();
-    if (context?.game && battle.round) {
+    if (!cosmetic && context?.game && battle.round) {
       const heroes = battle.actors.filter((actor) => actor.side === "party");
       for (const enemy of battle.actors.filter((actor) => actor.side === "hostile" && !battle.order.includes(actor.id))) {
         if (heroes.some((hero) => noticesEnemy(battle,map,hero,enemy))) joinInitiative(battle,enemy);
@@ -1045,6 +1064,7 @@ async function interact(run) {
     saveBattle();
   } catch (failure) {
     status = failure instanceof Error ? failure.message : "The action could not be completed.";
+    succeeded = false;
     if (connection && connection === table) {
       applyTableState(connection,connection);
       connection.writing = false;
@@ -1053,7 +1073,7 @@ async function interact(run) {
     }
   }
   if (connection !== table) return;
-  if (context?.game && battle.round && !battle.movement &&
+  if (!cosmetic && context?.game && battle.round && !battle.movement &&
       !battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && actorIsUp(actor))) {
     endInitiative(battle);
     category = "move";
@@ -1068,6 +1088,7 @@ async function interact(run) {
         const result = await writeSession(connection.id,connection.revision,next);
         if (connection !== table) return;
         if (result.state) {
+          succeeded = false;
           applyTableState(connection,result);
           status = "Another player acted first. Review the board and try again.";
         } else {
@@ -1078,6 +1099,7 @@ async function interact(run) {
         tableMessage = "";
       }
     } catch (error) {
+      succeeded = false;
       if (connection !== table) return;
       applyTableState(connection,connection);
       connection.online = false;
@@ -1085,6 +1107,22 @@ async function interact(run) {
     } finally {connection.writing = false;}
   }
   if (context) redraw();
+  return succeeded;
+}
+
+export async function setGameTokenImage(id,image,session) {
+  const route = location.hash;
+  const sameGame = () => context?.game && location.hash === route && table?.id === session;
+  if (!sameGame()) throw new Error("Reopen the character in this session to change its token.");
+  const success = await interact(async () => {
+    if (session && image) await uploadSessionToken(session,image);
+    if (!sameGame()) throw new Error("The game has changed.");
+    const actor = battle.actors.find((actor) => actor.id === id && actor.side === "party");
+    if (!actor) throw new Error("This character is no longer in the party.");
+    if (image) actor.tokenImage = image;
+    else delete actor.tokenImage;
+  },{cosmetic:true});
+  if (!success) throw new Error(status || "The token could not be updated. Try again.");
 }
 
 document.addEventListener("click", (event) => {
@@ -1132,7 +1170,8 @@ document.addEventListener("click", (event) => {
   if (play === "inspect") {
     const actor = battle.actors.find((entry) => entry.id === id);
     if (actor) document.dispatchEvent(new CustomEvent("wayfarer:inspect",{
-      detail:structuredClone({...actor,sharedSheet:table ? battle.sheets?.[id] : undefined}),
+      detail:structuredClone({...actor,tokenImage:partyTokenImage(actor),tokenSession:table?.id,
+        sharedSheet:table ? battle.sheets?.[id] : undefined}),
     }));
     return;
   }
@@ -1347,7 +1386,10 @@ document.addEventListener("submit", (event) => {
         if (!table || battle.round) return;
         const character = context.characters.find(({id}) => id === value("session-character"));
         if (!character || battle.actors.some(({id}) => id === "party:"+character.id)) return;
+        const connection = table;
         const actor = partyActor(character);
+        if (actor.tokenImage) await uploadSessionToken(connection.id,actor.tokenImage);
+        if (connection !== table) return;
         add(actor,map.regions.find(({id}) => id === "01b") ?? map.regions[0]);
         (battle.sheets ??= {})[actor.id] = sharedSheet(character);
         status = actor.name + " joined the party.";

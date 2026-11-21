@@ -195,7 +195,7 @@ export function partyActor(character) {
     scores[abilityText] ?? (Number.isFinite(character.spellDC) && Number.isFinite(character.proficiency)
       ? character.spellDC - 8 - character.proficiency : null);
   return makeActor({
-    id:"party:" + character.id, side:"party", resolveDeath:true, name:character.name, ac:character.ac,
+    id:"party:" + character.id, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
     speed, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),

@@ -40,6 +40,14 @@
   overflow-wrap: anywhere;
 }
 
+.sheet-token-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px }
+.sheet-token-controls button { font-size:.82rem }
+.sheet-token-controls .sheet-token-status { flex-basis:100%; margin:0; font-size:.8rem }
+.sheet-token-status:empty { display:none }
+.sheet-token-bar { display:flex; align-items:center; gap:10px; padding:4px 0 10px }
+.sheet-token-bar .sheet-token-controls { margin:0 }
+.sheet-token-bar .sheet-avatar { flex:none; width:36px; height:36px; border-radius:50%; background:#365849; font-size:.84rem }
+
 .level-badge {
   padding: 6px 11px;
   border: 1px solid #a49766;

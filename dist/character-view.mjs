@@ -1,5 +1,6 @@
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
+import {tokenPortrait} from "./character-token.mjs";
 import {matchSpell, spellKey} from "./rules-library.mjs";
 
 export function sheetPath(character, section = "overview") {
@@ -204,7 +205,7 @@ export function fillSheetResults(character, section) {
     </section>`).join("")}</div>` : '<p class="sheet-empty">No matching spells.</p>');
 }
 
-export function characterPage(character, requestedSection, {embedded = false} = {}) {
+export function characterPage(character, requestedSection, {embedded = false, tokenEditable = !embedded} = {}) {
   const nav = sections(character,embedded);
   const profile = characterProfile(character);
   const section = nav.some(([key]) => key === requestedSection) ? requestedSection : "overview";
@@ -218,14 +219,22 @@ export function characterPage(character, requestedSection, {embedded = false} = 
     inventory: inventoryContent,
     spells: () => spellContent(character),
   };
+  const portrait = `<div class="sheet-avatar" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage,character.tokenSession)}</div>`;
+  const tokenControls = tokenEditable ? `<div class="sheet-token-controls">
+    <button type="button" class="game-button" data-action="pick-token">${character.tokenImage ? "Replace token" : "Upload token"}</button>
+    ${character.tokenImage ? '<button type="button" class="game-button" data-action="clear-token">Remove token</button>' : ""}
+    <input id="character-token-file" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Character token image" hidden>
+    <p class="sheet-token-status" role="status"></p>
+  </div>` : "";
   return `<article class="character-sheet">
-    <header class="sheet-hero">
-      <div class="sheet-avatar" aria-hidden="true">${escape(initials(character.name))}</div>
+    ${embedded ? tokenEditable ? `<div class="sheet-token-bar">${portrait}${tokenControls}</div>` : "" : `<header class="sheet-hero">
+      ${portrait}
       <div><h1>${escape(character.name)}</h1>
         ${profile ? `<p>${profile}</p>` : ""}
+        ${tokenControls}
       </div>
       ${character.level != null ? `<span class="level-badge">Level ${text(character.level)}</span>` : ""}
-    </header>
+    </header>`}
     ${vitals(character)}
     <nav class="sheet-nav" aria-label="Character sheet sections">
       ${nav.map(([key,label]) => {

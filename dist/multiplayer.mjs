@@ -32,12 +32,13 @@ async function request(path, init) {
   return data;
 }
 
-export function createSession(map, state, artwork) {
+export function createSession(map, state, artwork, tokens) {
   const payload = JSON.stringify({map,state});
-  if (!artwork) return request(api,{method:"POST",body:payload,headers:{"Content-Type":"application/json"}});
+  if (!artwork && !tokens.size) return request(api,{method:"POST",body:payload,headers:{"Content-Type":"application/json"}});
   const body = new FormData();
   body.set("session",payload);
-  body.set("artwork",artwork);
+  if (artwork) body.set("artwork",artwork);
+  for (const [id,blob] of tokens) body.set("token-"+id,blob);
   return request(api,{method:"POST",body});
 }
 

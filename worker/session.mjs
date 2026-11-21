@@ -1,8 +1,11 @@
 const api = "/api/sessions";
-const sessionPath = /^\/api\/sessions\/([\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12})(\/artwork)?$/;
+const sessionPath = /^\/api\/sessions\/([\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12})(\/artwork|\/tokens\/([\da-f]{64}))?$/;
+const tokenIdPattern = /^[\da-f]{64}$/;
 const maxMapBytes = 512 * 1024;
 const maxStateBytes = 768 * 1024;
 const maxImageBytes = 16 * 1024 * 1024;
+const maxTokenBytes = 1280 * 1024;
+const maxSessionTokenBytes = 12 * 1024 * 1024;
 const imageTypes = new Set(["image/png","image/jpeg","image/webp"]);
 const headers = {"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"};
 const bytes = (text) => new TextEncoder().encode(text).byteLength;
@@ -34,6 +37,7 @@ function validState(state) {
     battle.actors.every((actor) => record(actor) && typeof actor.id === "string" && typeof actor.name === "string" &&
       [actor.hp,actor.maxHp,actor.ac,actor.speed].every(Number.isFinite) && ["party","hostile","neutral"].includes(actor.side) &&
       [actor.tempHp,actor.successes,actor.failures].every((value) => value == null || Number.isFinite(value)) &&
+      (actor.tokenImage == null || actor.side === "party" && typeof actor.tokenImage === "string" && tokenIdPattern.test(actor.tokenImage)) &&
       (actor.initiativeRoll == null || Number.isFinite(actor.initiativeRoll)) &&
       [actor.x,actor.y].every((value) => value == null || Number.isInteger(value)) &&
       [actor.attacks,actor.spells].every(Array.isArray) && record(actor.slots)) &&
@@ -57,14 +61,44 @@ async function boundedBody(request, limit) {
   }
 }
 
+const tokenKey = (session,id) => `tokens/${session}/${id}`;
+
+async function validToken(blob, id) {
+  if (!(blob instanceof Blob) || !imageTypes.has(blob.type) || !blob.size || blob.size > maxTokenBytes) return false;
+  const data = new Uint8Array(await blob.arrayBuffer());
+  const signature = (offset,length) => String.fromCharCode(...data.subarray(offset,offset+length));
+  if (blob.type === "image/webp" && (signature(0,4) !== "RIFF" || signature(8,4) !== "WEBP")) return false;
+  if (blob.type === "image/png" && (data[0] !== 137 || signature(1,3) !== "PNG")) return false;
+  if (blob.type === "image/jpeg" && (data[0] !== 255 || data[1] !== 216 || data[2] !== 255)) return false;
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256",data));
+  return id === Array.from(hash,(byte) => byte.toString(16).padStart(2,"0")).join("");
+}
+
+async function sessionToken(request, env, session, id) {
+  const key = tokenKey(session,id);
+  if (request.method === "GET") {
+    const image = await env.BUCKET.get(key);
+    return image ? new Response(image.body,{headers:{...headers,"Content-Type":image.httpMetadata.contentType}}) : fail(404,"No shared token image.");
+  }
+  if (request.method !== "PUT") return fail(405,"This action is unavailable.");
+  if (!await env.DB.prepare("SELECT id FROM game_sessions WHERE id=?").bind(session).first()) {
+    return fail(404,"This session could not be found.");
+  }
+  const body = await boundedBody(request,maxTokenBytes);
+  const blob = body?.slice(0,body.size,request.headers.get("Content-Type") ?? "");
+  if (!await validToken(blob,id)) return fail(400,"Choose a valid PNG, JPEG, or WebP token image.");
+  await env.BUCKET.put(key,blob.stream(),{httpMetadata:{contentType:blob.type}});
+  return new Response(null,{status:204,headers});
+}
+
 async function create(request, env) {
   const multipart = request.headers.get("Content-Type")?.startsWith("multipart/form-data;");
-  const body = await boundedBody(request,maxMapBytes + maxStateBytes + (multipart ? maxImageBytes + 4096 : 0));
+  const body = await boundedBody(request,maxMapBytes + maxStateBytes + (multipart ? maxImageBytes + maxSessionTokenBytes + 65536 : 0));
   if (!body) return fail(413,"The map or artwork is too large to share.");
-  let input, artwork;
+  let input, artwork, form;
   try {
     if (multipart) {
-      const form = await new Response(body,{headers:{"Content-Type":request.headers.get("Content-Type")}}).formData();
+      form = await new Response(body,{headers:{"Content-Type":request.headers.get("Content-Type")}}).formData();
       input = JSON.parse(form.get("session"));
       artwork = form.get("artwork");
     } else input = JSON.parse(await body.text());
@@ -75,13 +109,32 @@ async function create(request, env) {
   if (artwork && (!(artwork instanceof Blob) || !imageTypes.has(artwork.type) || artwork.size > maxImageBytes || !artwork.size)) {
     return fail(400,"Choose a PNG, JPEG, or WebP map image up to 16 MB.");
   }
+  const tokens = new Map();
+  let total = 0;
+  const referenced = new Set(input.state.battle.actors.map(({tokenImage}) => tokenImage).filter(Boolean));
+  for (const hash of referenced) {
+    const blob = form?.get("token-"+hash);
+    if (!await validToken(blob,hash)) return fail(400,"One of the character token images could not be shared.");
+    total += blob.size;
+    if (total > maxSessionTokenBytes) return fail(413,"The party’s token images are too large to share together.");
+    tokens.set(hash,blob);
+  }
   const id = crypto.randomUUID();
-  if (artwork) await env.BUCKET.put(id,artwork.stream(),{httpMetadata:{contentType:artwork.type}});
+  const uploaded = [];
   try {
+    if (artwork) {
+      await env.BUCKET.put(id,artwork.stream(),{httpMetadata:{contentType:artwork.type}});
+      uploaded.push(id);
+    }
+    for (const [hash,blob] of tokens) {
+      const key = tokenKey(id,hash);
+      await env.BUCKET.put(key,blob.stream(),{httpMetadata:{contentType:blob.type}});
+      uploaded.push(key);
+    }
     await env.DB.prepare("INSERT INTO game_sessions (id,map,state,artwork_type) VALUES (?,?,?,?)")
       .bind(id,map,state,artwork?.type ?? null).run();
   } catch (error) {
-    if (artwork) await env.BUCKET.delete(id).catch(() => {});
+    await Promise.allSettled(uploaded.map((key) => env.BUCKET.delete(key)));
     throw error;
   }
   return reply({id,revision:0},201);
@@ -127,6 +180,7 @@ export async function sessionRequest(request, env) {
       return await create(request,env);
     }
     // The unlisted, randomly generated session ID is the guest's invitation and access credential.
+    if (match?.[3]) return await sessionToken(request,env,match[1],match[3]);
     if (match?.[2] && request.method === "GET") {
       const id = match[1];
       const row = await env.DB.prepare("SELECT artwork_type FROM game_sessions WHERE id=?").bind(id).first();

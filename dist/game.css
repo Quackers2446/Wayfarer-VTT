@@ -101,7 +101,6 @@ body:has(.game-main){overflow:hidden;background:#17231d}
 .game-sheet-dialog .dialog-content{padding:12px}
 .game-sheet-dialog .sheet-tab{border-top:0;border-left:0;border-right:0;background:transparent}
 .game-sheet-dialog .sheet-vitals{grid-template-columns:repeat(3,minmax(0,1fr))}
-.game-sheet-dialog .sheet-hero{display:none}
 @media(max-width:1020px){.game-hud-body{grid-template-columns:1fr;gap:6px}}
 @media(max-width:650px){
   .game-middle{grid-template-columns:59px minmax(0,1fr)}
