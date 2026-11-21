@@ -217,7 +217,8 @@ function monsterAttack(action) {
   const reach = Number(body.match(/reach (\d+) ft/i)?.[1]) || 5;
   const range = body.match(/range (\d+)(?:\/(\d+))? ft/i);
   const actionType = body.match(/\{@atk ([^}]+)/)?.[1] ?? "";
-  const proneDC = action.name === "Bite" && /knocked prone/i.test(body) ? Number(body.match(/\{@dc (\d+)\}/)?.[1]) || null : null;
+  const proneDC = action.name === "Bite" && /knocked (?:prone|\{@condition prone\})/i.test(body)
+    ? Number(body.match(/\{@dc (\d+)\} Strength saving throw/i)?.[1]) || null : null;
   const [first, alternate] = damages;
   const base = {name:action.name, bonus:Number(bonus), damage:first[1], type:first[2], reach, proneDC};
   const ranged = range ? {normalRange:Number(range[1]), longRange:Number(range[2] || range[1])} : null;
@@ -228,6 +229,18 @@ function monsterAttack(action) {
   return [base];
 }
 
+function repeatedAttacks(actions, attacks) {
+  const entry = actions?.find(({name}) => name === "Multiattack")?.entries?.[0];
+  if (typeof entry !== "string") return null;
+  const match = entry.match(/^[^.]+? makes (two|three) attacks with its ([\w ]+)\.(?: The second attack has disadvantage\.)?$/i);
+  if (!match) return null;
+  const weapon = attacks.find(({name}) => name.toLowerCase() === match[2].toLowerCase());
+  if (!weapon) return null;
+  return Array.from({length:match[1].toLowerCase() === "two" ? 2 : 3},(_,index) => ({
+    name:weapon.name, disadvantage:index === 1 && /second attack has disadvantage/i.test(entry),
+  }));
+}
+
 export async function creatureActor({name, source, nickname, hp, side, currentHp, disarmed, named}) {
   const data = await monsterRecord(name, source);
   if (!data || !data.hp?.average || !data.ac?.[0]) throw new Error("A full stat block is unavailable for " + name + " (" + source + ").");
@@ -236,6 +249,8 @@ export async function creatureActor({name, source, nickname, hp, side, currentHp
   const speed = data.speed?.walk;
   const tokenArt = data.tokenHref?.type === "internal" ? data.tokenHref.path :
     data.hasToken || data.token ? bestiaryTokenPath(data.token ?? data) : null;
+  const attacks = disarmed ? [] : data.action?.flatMap(monsterAttack) ?? [];
+  const multiattack = repeatedAttacks(data.action,attacks);
   return makeActor({
     name:nickname || data.name, ac:typeof baseAC === "number" ? baseAC : baseAC.ac,
     hp:currentHp ?? maxHp, maxHp,
@@ -248,7 +263,7 @@ export async function creatureActor({name, source, nickname, hp, side, currentHp
     creatureType:typeof data.type === "string" ? data.type : data.type?.type,
     packTactics:data.trait?.some((trait) => trait.name === "Pack Tactics"),
     nimbleEscape:data.trait?.some((trait) => trait.name === "Nimble Escape"),
-    attacks:disarmed ? [] : data.action?.flatMap(monsterAttack) ?? [],
+    attacks, multiattack, swings:multiattack?.length ?? 1,
     resist:data.resist, immune:data.immune, vulnerable:data.vulnerable,
   });
 }
@@ -259,7 +274,7 @@ export const trainingMap = {
   cols:15, rows:9, offsetX:0, offsetY:0,
   regions:[
     {id:"entry",entry:{name:"Entry gate", entries:["A field for learning movement, reach, and initiative."]},points:rect(70,70,350,490)},
-    {id:"yard",entry:{name:"Practice ring", entries:["Take turns controlling each side. Use the terrain tools to mark barriers and difficult squares."]},points:rect(420,70,560,490)},
+    {id:"yard",entry:{name:"Practice ring", entries:["The guard acts on its own initiative. Use the terrain tools to mark barriers and difficult squares."]},points:rect(420,70,560,490)},
   ],
 };
 

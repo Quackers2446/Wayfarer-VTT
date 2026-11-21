@@ -61,20 +61,21 @@ export function joinPanel() {
 }
 
 export function tablePanel(table, characters, battle, message, needsSignIn) {
-  if (!table) return `<h2>Multiplayer</h2><p>Start a shared session from this encounter. Anyone with the invite link can control the table.</p>
+  if (!table) return `<h2>Multiplayer</h2><p>Invite up to three friends. Each player can claim a party member.</p>
     ${needsSignIn ? '<a class="game-button" href="/signin-with-chatgpt?return_to=%2F%23game" target="_top">Sign in to host</a>' :
       '<button type="button" class="game-button" data-play="host-session">Start shared session</button>'}<p role="status">${escape(message)}</p>`;
   const options = characters.filter((character) => !battle.actors.some(({id}) => id === "party:"+character.id));
+  const full = battle.actors.filter(({side}) => side === "party").length >= 4;
   return `<h2>Shared session</h2>
     <p class="session-connection" role="status">${escape(message || (table.online ? "Connected" : "Reconnecting…"))}</p>
     <label class="play-field" for="session-link">Invite link</label>
     <div class="session-inline"><input id="session-link" type="url" readonly value="${escape(inviteURL(table.id))}">
       <button type="button" class="game-button" data-play="copy-session">Copy link</button></div>
-    <p>Anyone with this invite link can join and control the table without signing in.</p>
-    <form id="session-party-form" class="session-inline">
+    <p>Open this link to join without signing in. Use Claim on a party portrait to reserve a character for this browser.</p>
+    ${full ? "<p>The party has four characters. Claim an available portrait to play.</p>" : `<form id="session-party-form" class="session-inline">
       ${options.length ? `<label class="play-field">Your character<select id="session-character">${options.map(({id,name}) =>
         `<option value="${escape(id)}">${escape(name)}</option>`).join("")}</select></label>
       <button class="game-button" type="submit"${battle.round ? " disabled" : ""}>Add to party</button>` : '<a href="#characters" class="game-link">Import a character</a>'}
     </form>
-    ${options.length && battle.round ? "<p>Party members can join between encounters.</p>" : ""}`;
+    ${options.length && battle.round ? "<p>Party members can join between encounters.</p>" : ""}`}`;
 }

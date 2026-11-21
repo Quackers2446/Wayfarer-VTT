@@ -97,6 +97,11 @@ body:has(.game-main){overflow:hidden;background:#17231d}
   box-shadow:0 9px 25px #06150ebb;
 }
 .tools-flyout{display:grid;gap:6px}
+.story-flyout{width:min(355px,calc(100% - 16px))}
+.story-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.story-flyout section{border-top:1px solid #d7ceba;margin-top:9px;padding-top:9px}
+.story-flyout h3{margin:0 0 4px;font-size:.9rem}
+.story-flyout p{font-size:.86rem;line-height:1.5;margin:0 0 5px}
 .game-sheet-dialog{width:min(870px,calc(100% - 20px))}
 .game-sheet-dialog .dialog-content{padding:12px}
 .game-sheet-dialog .sheet-tab{border-top:0;border-left:0;border-right:0;background:transparent}

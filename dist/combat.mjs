@@ -204,13 +204,12 @@ export function placeToken(battle, actor, x, y, board) {
   actor.y = y;
 }
 
-function findPath(battle, actor, x, y, board, exploration = false) {
+function findPath(battle, actor, x, y, board, exploration = false, {goal, budget = exploration ? Infinity : moveLeft(battle,actor)} = {}) {
   const origin = keyAt(actor.x, actor.y);
   const destination = keyAt(x, y);
   const blockers = new Map(battle.actors.filter((entry) => entry.id !== actor.id && occupies(entry)).map((entry) =>
     [keyAt(entry.x, entry.y), entry]));
   if (blockers.has(destination)) error("Another token occupies that square.");
-  const budget = exploration ? Infinity : moveLeft(battle, actor);
   const known = new Map([[origin, 0]]);
   const pending = [{x:actor.x, y:actor.y, cost:0, previous:null}];
   let nextUnvisited = 0;
@@ -220,7 +219,7 @@ function findPath(battle, actor, x, y, board, exploration = false) {
     const cell = exploration ? pending[nextUnvisited++] : pending.pop();
     const here = keyAt(cell.x, cell.y);
     if (cell.cost !== known.get(here)) continue;
-    if (here === destination) {
+    if (here === destination || (goal && !blockers.has(here) && goal(cell))) {
       const path = [];
       for (let step = cell; step.previous; step = step.previous) path.push({x:step.x,y:step.y,cost:step.cost});
       return {cost:cell.cost,path:path.reverse()};
@@ -243,6 +242,10 @@ function findPath(battle, actor, x, y, board, exploration = false) {
     }
   }
   return null;
+}
+
+export function approachPath(battle, actor, board, goal) {
+  return findPath(battle,actor,null,null,board,false,{goal,budget:Math.max(90,moveLeft(battle,actor)+speedOf(actor))});
 }
 
 export function previewMovement(battle, actor, x, y, board) {
