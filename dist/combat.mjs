@@ -647,7 +647,7 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
     }
     if (effect.teleport && battle.actors.some((actor) => occupies(actor) && actor.x===square.x && actor.y===square.y)) error("Choose an unoccupied destination.");
     if (distanceFt(caster,square) > effect.range) error("The selected square is out of range.");
-    if (!lineClear(battle,caster,square,options.map)) error("Full cover blocks the spell.");
+    if (!lineClear(battle,caster,square,options.map,{vision:Boolean(effect.teleport)})) error("The spell cannot reach that square.");
   } else {
     if (!targets.length) error("Choose at least one target.");
     for (const creature of targets) {

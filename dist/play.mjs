@@ -902,18 +902,22 @@ function add(actor, area = room) {
   tool = "move";
 }
 
+function canUseMapSquare(x,y) {
+  if (!context.game || !mapWalls(map)) return true;
+  const key = keyAt(x,y);
+  if (exploredCells(battle).includes(key) || partyVision(battle,map).has(key)) return true;
+  const actor = selectedActor();
+  return tool === "move" && category === "move" && actor?.side === "party" && occupies(actor) &&
+    mapFloor(map,x,y) && distanceFt(actor,{x,y}) <= 5;
+}
+
 function checkCell(x,y,region) {
   if (root()?.querySelector("#grid-settings")?.open && gridDraft) {
     status = "Save the grid alignment to use the adjusted squares.";
     return;
   }
   if (x < 0 || x >= map.cols || y < 0 || y >= map.rows) return;
-  if (context.game && mapWalls(map) && !partyVision(battle,map).has(keyAt(x,y)) && !exploredCells(battle).includes(keyAt(x,y))) {
-    const actor = selectedActor();
-    const stepIntoFog = tool === "move" && category === "move" && actor?.side === "party" && occupies(actor) &&
-      mapFloor(map,x,y) && distanceFt(actor,{x,y}) <= 5;
-    if (!stepIntoFog) {status = "Choose a square the party has seen."; return;}
-  }
+  if (!canUseMapSquare(x,y)) {status = "Choose a square the party has seen."; return;}
   cursor = {x,y};
   if (tool === "room") {
     selectRoom(region);
@@ -1396,9 +1400,10 @@ function movePreview(x,y) {
   const actor = selectedActor();
   if (!actor) return null;
   cursor = {x,y};
-  const route = battle.round ? previewMovement(battle,actor,x,y,map) : null;
+  const known = canUseMapSquare(x,y);
+  const route = battle.round && known ? previewMovement(battle,actor,x,y,map) : null;
   pathPreview = route?.path.length ? [actor,...route.path] : null;
-  previewMessage = battle.round
+  previewMessage = !known ? "Unexplored square." : battle.round
     ? route ? "Move " + route.cost + " ft · " + (moveLeft(battle,actor)-route.cost) + " ft remaining" : "Outside remaining movement or blocked."
     : "Click a square to move freely.";
   const line = root()?.querySelector("#game-move-preview");
