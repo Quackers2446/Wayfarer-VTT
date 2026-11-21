@@ -3,22 +3,37 @@ import {keyAt, occupies} from "./combat.mjs";
 import {regionAt} from "./encounters.mjs";
 import {cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
 
+const maxRasterEdge = 4096;
+const maxRasterPixels = 8 * 1024 * 1024;
+
 function polygon(context, points) {
   context.beginPath();
   points.forEach(([x,y], index) => index ? context.lineTo(x,y) : context.moveTo(x,y));
   context.closePath();
 }
 
-export function drawGrid(canvas, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
-  if (!canvas) return;
+export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
+  // Match the display density while keeping the backing buffer bounded by the visible area.
+  const ratio = Math.min(view.ratio, maxRasterEdge / Math.max(view.width,view.height),
+    Math.sqrt(maxRasterPixels / (view.width*view.height)));
+  const pixelsWide = Math.max(1,Math.floor(view.width*ratio));
+  const pixelsHigh = Math.max(1,Math.floor(view.height*ratio));
+  if (canvas.width !== pixelsWide) canvas.width = pixelsWide;
+  if (canvas.height !== pixelsHigh) canvas.height = pixelsHigh;
   const c = canvas.getContext("2d");
-  const scale = Math.min(1, 1600 / Math.max(map.width,map.height));
-  canvas.width = Math.max(1, Math.round(map.width * scale));
-  canvas.height = Math.max(1, Math.round(map.height * scale));
-  c.setTransform(canvas.width/map.width,0,0,canvas.height/map.height,0,0);
+  const mapScaleX = view.mapWidth/map.width, mapScaleY = view.mapHeight/map.height;
+  const rasterScaleX = pixelsWide/view.width, rasterScaleY = pixelsHigh/view.height;
+  const left = view.x/mapScaleX, top = view.y/mapScaleY;
+  const width = view.width/mapScaleX, height = view.height/mapScaleY;
+  c.save();
+  c.setTransform(rasterScaleX*mapScaleX,0,0,rasterScaleY*mapScaleY,-view.x*rasterScaleX,-view.y*rasterScaleY);
   c.fillStyle = "#1f2b24";
-  c.fillRect(0,0,map.width,map.height);
-  if (art) c.drawImage(art,0,0,map.width,map.height);
+  c.fillRect(left,top,width,height);
+  c.imageSmoothingQuality = "high";
+  if (art) {
+    const sourceX = art.naturalWidth/map.width, sourceY = art.naturalHeight/map.height;
+    c.drawImage(art,left*sourceX,top*sourceY,width*sourceX,height*sourceY,left,top,width,height);
+  }
   c.lineWidth = Math.max(1,map.size *.042);
 
   for (const {id, points} of showRegions ? map.regions : []) {
@@ -138,10 +153,11 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
     const [x,y,width,height]=cellBounds(map,cursor);
     c.strokeRect(x+.04*width,y+.04*height,.92*width,.92*height);
   }
+  c.restore();
 }
 
-export function gridPosition(map, canvas, event) {
-  const bounds = canvas.getBoundingClientRect();
+export function gridPosition(map, surface, event) {
+  const bounds = surface.getBoundingClientRect();
   const px = (event.clientX - bounds.left) * map.width / bounds.width;
   const py = (event.clientY - bounds.top) * map.height / bounds.height;
   return {

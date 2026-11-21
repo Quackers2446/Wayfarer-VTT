@@ -153,8 +153,8 @@ function ensureScene(entry = map, state = battle) {
 }
 
 function paintBoard() {
-  const canvas = root()?.querySelector("#play-grid");
-  if (!canvas) return;
+  const element = root();
+  if (!element || !camera) return;
   const actor = selectedActor();
   const choice = combatChoice === "" ? null : choices(actor)[Number(combatChoice)];
   const effect = choice?.usable && choice.mode === "spell" ? supportedSpell(choice.data.key) : null;
@@ -163,13 +163,14 @@ function paintBoard() {
   const visible = visibleTokens();
   const tokenImages = collectArtwork(visible);
   paintTokenPreviews(tokenImages);
-  const alignmentOpen = root().querySelector("#grid-settings")?.open;
+  const alignmentOpen = element.querySelector("#grid-settings")?.open;
   const drawingMap = alignmentOpen && gridDraft ? {...map,...gridGeometry(map,gridDraft)} : map;
-  drawGrid(canvas,drawingMap,battle,{
+  const options = {
     room:context.game && tool !== "room" ? null : room,selected:actor?.id,target:targetId,cursor,art,
     path:pathPreview,visible,footprint,showRegions:!context.game || !art || tool==="room",
     markers:visibleMarkers(),tokenImages,overlay:alignmentOpen && gridDraft ? "printed" : battle.gridOverlay ?? "artwork",
-  });
+  };
+  camera.paint((canvas,view) => drawGrid(canvas,view,drawingMap,battle,options));
 }
 
 function setAlignment(alignment) {

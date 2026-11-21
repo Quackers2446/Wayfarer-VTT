@@ -11,8 +11,10 @@ export function mapViewport(map, game = false) {
   const instructions = game ? "Use the arrow keys and Enter to act on a square." :
     "Use the arrow keys and Enter to apply the grid tool.";
   return `<div class="board-frame${game ? " game-board" : ""}" style="--map-ratio:${map.width}/${map.height}">
-    <div class="board-content"><canvas id="play-grid" tabindex="0" role="application"
-      aria-label="${escape(map.title)} grid. ${instructions} Shift and arrows pan. Plus and minus zoom. Zero fits the map."></canvas></div>
+    <div class="board-content"><div id="play-grid" tabindex="0" role="application"
+      aria-label="${escape(map.title)} grid. ${instructions} Shift and arrows pan. Plus and minus zoom. Zero fits the map.">
+      <canvas class="board-raster" aria-hidden="true"></canvas>
+    </div></div>
   </div>`;
 }
 
@@ -32,7 +34,8 @@ export function mapHint() {
 
 export function createCamera(frame, controls, map, saved) {
   const content = frame.querySelector(".board-content");
-  const canvas = content.firstElementChild;
+  const surface = content.firstElementChild;
+  const canvas = surface.firstElementChild;
   const zoomLabel = controls.querySelector(".map-zoom");
   const zoomIn = controls.querySelector('[data-camera="in"]');
   const zoomOut = controls.querySelector('[data-camera="out"]');
@@ -41,6 +44,33 @@ export function createCamera(frame, controls, map, saved) {
   let zoom = saved?.zoom ?? 1;
   let lastCenter = saved?.center ?? mapCenter;
   let width, height, left, top, viewWidth, viewHeight;
+  let painter, animation, lastView;
+
+  function render(force = false) {
+    if (!painter || !frame.isConnected) return;
+    // Reuse the same viewport-sized buffer while panning, including near the map edges.
+    const visibleWidth = Math.min(width,viewWidth);
+    const visibleHeight = Math.min(height,viewHeight);
+    if (visibleWidth <= 0 || visibleHeight <= 0) return;
+    const x = Math.max(0,Math.min(width-visibleWidth,frame.scrollLeft-left));
+    const y = Math.max(0,Math.min(height-visibleHeight,frame.scrollTop-top));
+    const ratio = window.devicePixelRatio || 1;
+    const view = {x,y,width:visibleWidth,height:visibleHeight,mapWidth:width,mapHeight:height,ratio};
+    const changed = !lastView || Object.keys(view).some((key) => view[key] !== lastView[key]);
+    if (changed) {
+      Object.assign(canvas.style,{left:`${x}px`,top:`${y}px`,width:`${visibleWidth}px`,height:`${visibleHeight}px`});
+      lastView = view;
+    }
+    if (changed || force) painter(canvas,view);
+  }
+
+  function scheduleRender() {
+    if (animation !== undefined) return;
+    animation = requestAnimationFrame(() => {
+      animation = undefined;
+      render();
+    });
+  }
 
   function middle() {return {x:viewWidth/2,y:viewHeight/2};}
   function position(point = middle()) {
@@ -50,6 +80,7 @@ export function createCamera(frame, controls, map, saved) {
   function aim(world, point = middle()) {
     frame.scrollTo(left + world.x*width - point.x,top + world.y*height - point.y);
     lastCenter = position();
+    scheduleRender();
   }
   function layout() {
     viewWidth = frame.clientWidth;
@@ -61,10 +92,7 @@ export function createCamera(frame, controls, map, saved) {
     top = viewHeight/2;
     content.style.width = `${viewWidth + width}px`;
     content.style.height = `${viewHeight + height}px`;
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    canvas.style.left = `${left}px`;
-    canvas.style.top = `${top}px`;
+    Object.assign(surface.style,{width:`${width}px`,height:`${height}px`,left:`${left}px`,top:`${top}px`});
     zoomLabel.textContent = `${Math.round(zoom*100)}%`;
     zoomIn.disabled = zoom >= maxZoom;
     zoomOut.disabled = zoom <= minZoom;
@@ -83,14 +111,22 @@ export function createCamera(frame, controls, map, saved) {
   }
   layout();
   aim(lastCenter);
-  frame.addEventListener("scroll", () => {lastCenter = position();},{passive:true,signal});
+  frame.addEventListener("scroll", () => {
+    lastCenter = position();
+    scheduleRender();
+  },{passive:true,signal});
 
-  const observer = new ResizeObserver(() => {
-    if (!frame.isConnected || (frame.clientWidth === viewWidth && frame.clientHeight === viewHeight)) return;
-    const center = position();
-    layout();
-    aim(center);
-  });
+  function resize() {
+    if (!frame.isConnected) return;
+    if (frame.clientWidth !== viewWidth || frame.clientHeight !== viewHeight) {
+      const center = position();
+      layout();
+      aim(center);
+    }
+    scheduleRender();
+  }
+  window.addEventListener("resize",resize,{signal});
+  const observer = new ResizeObserver(resize);
   observer.observe(frame);
 
   frame.addEventListener("wheel", (event) => {
@@ -165,7 +201,13 @@ export function createCamera(frame, controls, map, saved) {
 
   return {
     state:() => ({zoom,center:frame.isConnected ? position() : lastCenter}),
-    destroy() {listeners.abort(); observer.disconnect();},
+    destroy() {
+      listeners.abort();
+      observer.disconnect();
+      if (animation !== undefined) cancelAnimationFrame(animation);
+      canvas.width = canvas.height = 0;
+    },
+    paint(draw) {painter = draw; render(true);},
     control(action, token) {
       if (action === "fit") scale(1,middle(),mapCenter);
       if (action === "token" && token) aim(token);

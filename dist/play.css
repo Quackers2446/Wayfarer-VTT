@@ -22,8 +22,9 @@
 .play-form,.token-settings { display:grid; gap:8px; margin-top:10px }
 .board-frame { position:relative; border:1px solid #3f5748; border-radius:9px; background:#1f2b24; overflow:auto; scrollbar-width:none; overscroll-behavior:contain; touch-action:none; cursor:grab; user-select:none }
 .board-content { position:relative }
-.board-frame canvas { position:absolute; display:block; cursor:crosshair }
-.board-frame.board-panning,.board-frame.board-panning canvas { cursor:grabbing }
+#play-grid { position:absolute; overflow:hidden; cursor:crosshair }
+.board-raster { position:absolute; display:block; pointer-events:none }
+.board-frame.board-panning,.board-frame.board-panning #play-grid { cursor:grabbing }
 .board-frame :focus-visible { outline-offset:-3px }
 .board-toolbar { align-items:end; margin-top:9px }
 .board-toolbar .play-field { flex:0 1 194px }
