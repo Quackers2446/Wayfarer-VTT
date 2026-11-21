@@ -2,6 +2,7 @@ import {setGameTokenImage, showPlay} from "./play.mjs";
 import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
 import {paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
+import {enrichCharacter, loadCharacterRules} from "./character-rules.mjs";
 import {escape, plural, text} from "./format.mjs";
 import {readCharacters} from "./characters.mjs";
 import {icon} from "./icons.mjs";
@@ -34,7 +35,7 @@ function currentRoute(hash = location.hash) {
   const character = page === "characters" && characterId
     ? state.characters.find((entry) => encodeURIComponent(entry.id) === characterId)
     : null;
-  return {page, character, section};
+  return {page, character:character ? enrichCharacter(character) : null, section};
 }
 
 let state;
@@ -96,7 +97,8 @@ function emptyParty() {
 }
 
 function partyCards(characters) {
-  return '<div class="party-grid">' + characters.map((character, index) => {
+  return '<div class="party-grid">' + characters.map((record, index) => {
+    const character = enrichCharacter(record);
     const hp = [character.hp, character.maxHp].every((value) => value == null)
       ? "—" : text(character.hp) + " / " + text(character.maxHp);
     const profile = characterProfile(character);
@@ -349,13 +351,16 @@ function showGameSheet(character, section = "overview") {
 
 document.addEventListener("wayfarer:inspect", (event) => {
   const actor = event.detail;
-  const imported = actor.sharedSheet ?? state.characters.find((character) => "party:" + character.id === actor.id);
+  const local = state.characters.find((character) => "party:" + character.id === actor.id);
+  const imported = actor.sharedSheet ?? (local ? enrichCharacter(local) : null);
   const potions = new Map((actor.potions ?? []).map(({name,quantity}) => [name,quantity]));
+  const abilities = imported?.abilities ?? [["STR","Strength"],["DEX","Dexterity"],["CON","Constitution"],
+    ["INT","Intelligence"],["WIS","Wisdom"],["CHA","Charisma"]].map(([abbr,label]) => ({abbr,label}));
   showGameSheet({
     sourceName:"Game token", characterClass:"", species:"", skills:[], items:[], spells:actor.spells ?? [], level:actor.level,
-    abilities:[["STR","Strength"],["DEX","Dexterity"],["CON","Constitution"],["INT","Intelligence"],["WIS","Wisdom"],["CHA","Charisma"]]
-      .map(([abbr,label]) => ({abbr,label,modifier:actor.ability?.[abbr.toLowerCase()],save:actor.saves?.[abbr.toLowerCase()]})),
     ...imported, id:imported?.id ?? actor.id, name:actor.name, hp:actor.hp, maxHp:actor.maxHp,
+    abilities:abilities.map((ability) => ({...ability,modifier:actor.ability?.[ability.abbr.toLowerCase()] ?? ability.modifier,
+      save:actor.saves?.[ability.abbr.toLowerCase()] ?? ability.save})),
     ac:actor.ac, speed:String(actor.speed), initiative:actor.initiative, tempHp:actor.tempHp,
     tokenImage:actor.tokenImage, tokenSession:actor.tokenSession, gameActorId:actor.side === "party" ? actor.id : undefined,
     spellDC:actor.spellDC, spellAttack:actor.spellAttack, spellSlots:actor.slots,
@@ -472,7 +477,8 @@ function storeCharacters(characters, name, sourceKey) {
       (existing.name.toLowerCase() === character.name.toLowerCase() &&
         existing.species.toLowerCase() === character.species.toLowerCase()));
     const id = index < 0 ? crypto.randomUUID() : state.characters[index].id;
-    const record = {...character, id, sourceName: name, sourceKey,tokenImage:state.characters[index]?.tokenImage};
+    const record = {...character, id, sourceName: name, sourceKey,tokenImage:state.characters[index]?.tokenImage,
+      rulesEditionOverride:state.characters[index]?.rulesEditionOverride};
     if (index < 0) state.characters.push(record);
     else state.characters[index] = record;
   }
@@ -654,6 +660,17 @@ document.addEventListener("input", (event) => {
 
 document.addEventListener("change", (event) => {
   switch (event.target.id) {
+    case "character-rules-edition": {
+      const character = state.characters.find(({id}) => id === currentRoute().character?.id);
+      if (!character) break;
+      if (event.target.value) character.rulesEditionOverride = event.target.value;
+      else delete character.rulesEditionOverride;
+      const saved = save();
+      render();
+      app.querySelector("#character-rules-edition")?.focus({preventScroll:true});
+      if (!saved) notice("Rules updated for this visit. Browser storage is unavailable.");
+      break;
+    }
     case "workbooks": importFiles(event.target.files); event.target.value = ""; break;
     case "character-token-file": {
       const file = event.target.files[0];
@@ -703,7 +720,7 @@ render();
 const requests = [fetch("catalog.json").then((response) => {
   if (!response.ok) throw new Error("Catalog unavailable");
   return response.json();
-}), loadRules()];
+}), Promise.allSettled([loadRules(),loadCharacterRules()])];
 const local = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
 if (local) {
   requests.push(fetch("local-sheets").then((response) => response.ok ? response.json() : []));

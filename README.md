@@ -12,11 +12,15 @@ Use **Import character** to select or drop one or more `.xlsx` files, including 
 
 Open a character's sheet and use **Upload token** to choose a PNG, JPEG, or WebP image for its portrait and map token. Wayfarer crops the center to a square and preserves transparency. The same controls are available by opening a party portrait during play. Shared games sync token changes to the rest of the table.
 
+The **Rules** tab shows where the character's missing values were filled in. Existing workbook values take priority. Wayfarer can derive proficiency, walking speed, certain skills and saves, Hit Dice, and spell-slot capacities. It also shows known features and fixed benefits from the character's class, species, and background. Change **Rules edition** in that tab if the automatic match picks the wrong edition. Unrecorded rolls, equipment, chosen options, and remaining spell slots still come from the sheet or the table.
+
 You can also paste a Google Sheets link with viewer access for anyone with the link. For a restricted workbook, export it using **File → Download → Microsoft Excel (.xlsx)** and upload the file. The Google Sheets link points directly to Google's export endpoint.
 
 ## Refresh the catalog
 
 Run `python3 scripts/build-catalog.py /path/to/5etools.zip` from this folder. The committed index contains bibliographic data, chapter titles, and map references from the supplied 5etools v2.41.2 ZIP. Map images live in the separate 5etools image pack. The dashboard art is original, generated for Wayfarer.
+
+Run `python3 scripts/build-character-rules.py /path/to/5etools.zip` to refresh the character mechanics index.
 
 ## Artwork
 

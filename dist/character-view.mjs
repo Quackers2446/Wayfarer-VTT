@@ -1,7 +1,7 @@
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {tokenPortrait} from "./character-token.mjs";
-import {matchSpell, spellKey} from "./rules-library.mjs";
+import {matchSpell, ruleKey, spellByKey, spellKey} from "./rules-library.mjs";
 
 export function sheetPath(character, section = "overview") {
   return "#characters/" + encodeURIComponent(character.id) + (section === "overview" ? "" : "/" + section);
@@ -21,7 +21,8 @@ function sections(character, embedded) {
     ...(character.attacks.length ? [["actions", "Actions"]] : []),
     ...(character.skills.length || character.abilities.some((ability) => ability.save != null) ? [["skills", "Skills & Saves"]] : []),
     ...(character.items.length || embedded ? [["inventory", "Inventory"]] : []),
-    ...(character.spells.length ? [["spells", "Spells"]] : []),
+    ...(character.spells.length || Object.keys(character.spellSlots ?? {}).length ? [["spells", "Spells"]] : []),
+    ...(character.rulesDetails ? [["rules", "Rules"]] : []),
   ];
 }
 
@@ -133,10 +134,49 @@ function skillContent(character) {
     </section>` : ""}
     ${character.skills.length ? `<section class="sheet-box" aria-labelledby="skills-heading">
       <header class="sheet-box-heading"><h2 id="skills-heading">Skills</h2></header>
-      <dl class="modifier-list skill-list">${character.skills.map(({name, bonus}) =>
-        `<div><dt>${escape(name)}</dt><dd>${signed(bonus)}</dd></div>`).join("")}</dl>
+      <dl class="modifier-list skill-list">${character.skills.map(({name, bonus, base}) =>
+        `<div><dt>${escape(name)}</dt><dd>${bonus == null && base != null ? `<span class="sheet-base-value">Base ${signed(base)}</span>` : signed(bonus)}</dd></div>`).join("")}</dl>
     </section>` : ""}
   </div>`;
+}
+
+function rulesContent(character, embedded) {
+  const rules = character.rulesDetails;
+  const joined = (entries) => Array.isArray(entries) ? entries.join(", ") : "";
+  const hitDice = Object.entries(rules.hitDice ?? {}).map(([die, count]) => `${count}d${die}`).join(" + ");
+  const facts = [
+    ["Size", rules.size], ["Darkvision", rules.darkvision ? `${rules.darkvision} ft` : ""],
+    ["Other movement", joined(rules.extraSpeeds)], ["Total Hit Dice", hitDice],
+    ["Base AC before gear and features", rules.baseAC], ["Base Passive Perception before training", rules.basePerception],
+    ["Damage resistances", joined(rules.resistances)], ["Trained skills", joined(rules.skillTraining)],
+    ["Languages", joined(rules.languages)], ["Tools", joined(rules.tools)],
+    ["Armor training", joined(rules.armor)], ["Weapon training", joined(rules.weapons)], ["Feats", joined(rules.feats)],
+  ].filter(([,value]) => value != null && value !== "");
+  const features = Array.isArray(rules.features) ? rules.features : [];
+  const choices = Array.isArray(rules.choices) ? rules.choices : [];
+  const speciesSpells = Array.isArray(rules.speciesSpells) ? rules.speciesSpells.filter(Array.isArray) : [];
+  return `<section class="sheet-box sheet-rules" aria-labelledby="sheet-rules-heading">
+    <header class="sheet-box-heading"><h2 id="sheet-rules-heading">Character rules</h2>
+      ${embedded ? `<span class="tag">${escape(rules.edition)} 5e</span>` : `<label class="sheet-edition">Rules edition
+        <select id="character-rules-edition">
+          <option value="">Auto (${escape(rules.edition)})</option>
+          ${["2014","2024"].map((year) => `<option value="${year}"${character.rulesEditionOverride === year ? " selected" : ""}>${year}</option>`).join("")}
+        </select>
+      </label>`}
+    </header>
+    ${rules.derived?.length ? `<p class="sheet-rules-note"><strong>Filled from the rules</strong> ${escape(joined(rules.derived))}.</p>` : ""}
+    <p class="sheet-rules-note">Blank choices and rolls can still be filled in on your workbook. Base values are shown where equipment or training could change the total.</p>
+    ${facts.length ? `<dl class="profile-facts">${facts.map(([label,value]) => `<div><dt>${label}</dt><dd>${text(value)}</dd></div>`).join("")}</dl>` : ""}
+    ${features.length ? `<div class="sheet-rule-groups">${features.map(({name,entries}) =>
+      `<div><h3>${escape(name)}</h3><p>${escape(joined(entries))}</p></div>`).join("")}</div>` : ""}
+    ${speciesSpells.length ? `<div class="sheet-rule-groups"><div><h3>Spells granted by species</h3><ul>${speciesSpells.map(([level,name,source,usage]) => {
+      const spell = source ? spellByKey(String(source).toLowerCase()+"|"+ruleKey(name)) : matchSpell(name);
+      const label = spell ? `<button type="button" class="spell-link" data-action="spell" data-id="${escape(spellKey(spell))}">${escape(spell.name)}</button>` : text(name);
+      return `<li>${label} · From level ${text(level)}${usage ? " · " + escape(usage) : ""}</li>`;
+    }).join("")}</ul></div></div>` : ""}
+    ${choices.length ? `<div class="sheet-rule-groups"><div><h3>Options in the rules</h3><ul>${choices.map((choice) => `<li>${escape(choice)}</li>`).join("")}</ul></div></div>` : ""}
+    ${rules.sources?.length ? `<p class="sheet-rules-note"><strong>Sources</strong> ${escape(joined(rules.sources))}.</p>` : ""}
+  </section>`;
 }
 
 function searchField(label) {
@@ -162,7 +202,7 @@ function spellContent(character) {
       </div>
     </header>
     ${Object.keys(character.spellSlots ?? {}).length ? `<dl class="sheet-slot-summary">${Object.entries(character.spellSlots).map(([level,{current,maximum}]) =>
-      `<div><dt>Level ${level} slots</dt><dd>${text(current)} / ${text(maximum)}</dd></div>`).join("")}</dl>` : ""}
+      `<div><dt>Level ${text(level)} ${character.rulesDetails?.pact ? "pact slots" : "slots"}</dt><dd>${text(current)} / ${text(maximum)}</dd></div>`).join("")}</dl>` : ""}
     <div class="sheet-filters">${searchField("Search spells")}
       ${canFilterPrepared ? `<label class="prepared-filter"><input id="prepared-only" type="checkbox"> Prepared only</label>` : ""}
     </div>
@@ -218,6 +258,7 @@ export function characterPage(character, requestedSection, {embedded = false, to
     skills: () => skillContent(character),
     inventory: inventoryContent,
     spells: () => spellContent(character),
+    rules: () => rulesContent(character,embedded),
   };
   const portrait = `<div class="sheet-avatar" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage,character.tokenSession)}</div>`;
   const tokenControls = tokenEditable ? `<div class="sheet-token-controls">

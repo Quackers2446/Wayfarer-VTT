@@ -2,6 +2,8 @@ const abilities = [
   ["STR", "Strength"], ["DEX", "Dexterity"], ["CON", "Constitution"],
   ["INT", "Intelligence"], ["WIS", "Wisdom"], ["CHA", "Charisma"],
 ];
+const skillNames = ["Acrobatics","Animal Handling","Arcana","Athletics","Deception","History","Insight","Intimidation",
+  "Investigation","Medicine","Nature","Perception","Performance","Persuasion","Religion","Sleight of Hand","Stealth","Survival"];
 
 const clean = (value) => typeof value === "string" ? value.trim() : value;
 const asText = (value) => value == null ? "" : String(value).trim();
@@ -145,12 +147,22 @@ const simpleLabels = {
   maxHp: ["max hp", "maximum hp", "max hit points", "hit point maximum", "maximum hit points"],
   tempHp: ["temporary hp", "temp hp", "temporary hit points"],
   proficiency: ["proficiency", "proficiency bonus"], passivePerception: ["passive perception"],
+  rulesEdition: ["rules edition", "edition", "rules version"], startingClass: ["starting class", "first class"],
+  spellcastingAbility: ["spellcasting ability"], spellDC: ["spell save dc", "spell dc"], spellAttack: ["spell attack bonus", "spell attack"],
+  languages: ["languages"], resistances: ["damage resistances", "resistances"], feats: ["feats"],
+  skillProficiencies: ["skill proficiencies", "trained skills"],
 };
 const normalizeLabel = (value) => asText(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const list = (value) => asText(value).split(/[,;\n]/).map((entry) => entry.trim()).filter(Boolean);
+
+function abilityLabels(abbr, label, suffix = "") {
+  return [abbr,label].map((name) => normalizeLabel(name + suffix));
+}
 
 function simpleCharacter(sheet, sheetName, utils) {
   const rows = utils.sheet_to_json(sheet, {header: 1, blankrows: false, raw: true, defval: null, range: 0});
-  const labels = new Set([...Object.values(simpleLabels).flat(), ...abilities.flat().map(normalizeLabel)]);
+  const labels = new Set([...Object.values(simpleLabels).flat(),...skillNames.map(normalizeLabel),
+    ...abilities.flatMap(([abbr,label]) => [""," save"," saving throw"," modifier"].flatMap((suffix) => abilityLabels(abbr,label,suffix)))]);
   const fields = new Map();
   const inline = /^([^:\n]+):\s*(.+)$/;
   const horizontal = rows.findIndex((row) => row.filter((value) => labels.has(normalizeLabel(value))).length >= 3);
@@ -175,21 +187,28 @@ function simpleCharacter(sheet, sheetName, utils) {
       !source.ac && !source.hp && !abilities.some(([abbr, label]) => read([normalizeLabel(abbr), normalizeLabel(label)])))) {
     return null;
   }
-  const classLevel = asText(source.characterClass).match(/^(.+?)\s+(?:level\s+)?(\d+)$/i);
+  const classText = asText(source.characterClass);
+  const classLevel = /[/+|,]|\sand\s/i.test(classText) ? null : classText.match(/^(.+?)\s+(?:level\s+)?(\d+)$/i);
   return {
     sheetName,
     name: asText(source.name),
-    characterClass: classLevel?.[1] ?? asText(source.characterClass),
+    characterClass: classLevel?.[1] ?? classText,
     species: asText(source.species), level: numeric(source.level ?? classLevel?.[2]),
     background: asText(source.background), player: asText(source.player), alignment: asText(source.alignment),
     speed: asText(source.speed),
-    ...Object.fromEntries(["xp","ac","initiative","hp","maxHp","tempHp","proficiency","passivePerception"]
+    rulesEdition:asText(source.rulesEdition), startingClass:asText(source.startingClass),
+    spellcastingAbility:numeric(source.spellcastingAbility) ?? asText(source.spellcastingAbility),
+    ...Object.fromEntries(["languages","resistances","feats","skillProficiencies"].map((key) => [key,list(source[key])])),
+    ...Object.fromEntries(["xp","ac","initiative","hp","maxHp","tempHp","proficiency","passivePerception","spellDC","spellAttack"]
       .map((key) => [key, numeric(source[key])])),
     abilities: abilities.map(([abbr, label]) => {
-      const score = numeric(read([normalizeLabel(abbr), normalizeLabel(label)]));
-      return {abbr, label, score, modifier: score === null ? null : Math.floor((score - 10) / 2), save: null};
+      const score = numeric(read(abilityLabels(abbr,label)));
+      const modifier = numeric(read(abilityLabels(abbr,label," modifier")));
+      const save = numeric(read([...abilityLabels(abbr,label," save"),...abilityLabels(abbr,label," saving throw")]));
+      return {abbr,label,score,modifier,save};
     }),
-    skills: [], attacks: [], items: [], spells: [],
+    skills:skillNames.map((name) => ({name,bonus:numeric(read([normalizeLabel(name)]))})).filter(({bonus}) => bonus !== null),
+    attacks: [], items: [], spells: [],
   };
 }
 

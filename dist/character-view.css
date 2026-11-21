@@ -47,6 +47,15 @@
 .sheet-token-bar { display:flex; align-items:center; gap:10px; padding:4px 0 10px }
 .sheet-token-bar .sheet-token-controls { margin:0 }
 .sheet-token-bar .sheet-avatar { flex:none; width:36px; height:36px; border-radius:50%; background:#365849; font-size:.84rem }
+.sheet-edition { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:.83rem }
+.sheet-edition select { border:1px solid var(--border); border-radius:6px; padding:5px 7px; color:var(--ink); background:#fbfaf2; font:inherit }
+.sheet-rules-note { padding:7px 14px; color:var(--muted); font-size:.86rem }
+.sheet-base-value { font-size:.78rem; font-weight:500; color:var(--muted) }
+.sheet-rule-groups { display:grid; gap:5px 20px; padding:5px 14px 11px; grid-template-columns:repeat(auto-fit,minmax(min(255px,100%),1fr)) }
+.sheet-rule-groups > div { padding:7px 0; border-top:1px solid var(--border) }
+.sheet-rule-groups h3 { margin-bottom:4px; font-size:1.05rem }
+.sheet-rule-groups p,.sheet-rule-groups li { font-size:.86rem; color:var(--muted) }
+.sheet-rule-groups ul { padding-left:19px }
 
 .level-badge {
   padding: 6px 11px;

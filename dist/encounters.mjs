@@ -1,5 +1,6 @@
 import {cellAt, cellCenter, gridGeometry, legacyGeometry, sourceGrid, validGeometry} from "./map-grid.mjs";
 import {diceTerms, makeActor, modifier} from "./combat.mjs";
+import {enrichCharacter} from "./character-rules.mjs";
 import {bestiaryTokenPath, matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey, spellKey} from "./rules-library.mjs";
 
 const types = {S:"slashing", P:"piercing", B:"bludgeoning"};
@@ -175,7 +176,8 @@ function healingItems(items) {
   });
 }
 
-export function partyActor(character) {
+export function partyActor(record) {
+  const character = enrichCharacter(record);
   const speed = /^\d+(?:\s*ft\.?)?$/i.test(character.speed) ? Number.parseInt(character.speed,10) : null;
   if (!Number.isFinite(character.maxHp) || !Number.isFinite(character.ac) || speed == null) {
     throw new Error(character.name + " needs maximum HP, AC, and walking speed in the character sheet.");
@@ -198,7 +200,7 @@ export function partyActor(character) {
     id:"party:" + character.id, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
-    speed, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),
+    speed, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),resist:character.resistances,
     spells:[...new Map(spells.map((spell) => [spell.key,spell])).values()],
     slots:{...Object.fromEntries(spells.filter((spell) => spell.level).map((spell) =>
       [spell.level,{current:null,maximum:null}])), ...structuredClone(character.spellSlots ?? {})},

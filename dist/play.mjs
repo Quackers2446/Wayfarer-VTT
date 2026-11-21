@@ -1,5 +1,6 @@
 import {drawMonsterArtwork, monsterArtwork} from "./monster-art.mjs";
 import {characterTokenArtwork, localTokenBlob, uploadSessionToken} from "./character-token.mjs";
+import {enrichCharacter} from "./character-rules.mjs";
 import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
@@ -753,7 +754,18 @@ async function launchGame() {
     if (!character) continue;
     const imported = partyActor(character);
     actor.spells = imported.spells;
-    actor.slots = {...imported.slots,...actor.slots};
+    actor.slots ??= {};
+    actor.saves ??= {};
+    for (const [rank,slot] of Object.entries(imported.slots)) {
+      const existing = actor.slots[rank];
+      if (!existing) actor.slots[rank] = slot;
+      else if (existing.maximum == null && !(existing.current > slot.maximum)) existing.maximum = slot.maximum;
+    }
+    actor.spellAbility ??= imported.spellAbility;
+    actor.spellDC ??= imported.spellDC;
+    actor.spellAttack ??= imported.spellAttack;
+    if (!actor.resist?.length) actor.resist = imported.resist;
+    for (const [ability,save] of Object.entries(imported.saves)) actor.saves[ability] ??= save;
   }
   const selected = battle.actors.find((actor) => actor.side === "party" && actor.id === selectedId && actorIsUp(actor)) ??
     battle.actors.find((actor) => actor.side === "party" && actorIsUp(actor));
@@ -870,8 +882,9 @@ async function loadFile(file, name) {
   }
 }
 
-function sharedSheet(character) {
-  const fields = ["id","species","characterClass","level","abilities","skills","items","spells","attacks","proficiency","passivePerception","background","alignment"];
+function sharedSheet(record) {
+  const character = enrichCharacter(record);
+  const fields = ["id","species","characterClass","level","abilities","skills","items","spells","attacks","proficiency","passivePerception","background","alignment","rulesDetails"];
   return Object.fromEntries(fields.filter((key) => character[key] != null).map((key) => [key,character[key]]));
 }
 
