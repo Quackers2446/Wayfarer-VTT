@@ -14,12 +14,12 @@ export function characterProfile(character) {
   return [character.species, character.characterClass].filter(Boolean).map(escape).join(" · ");
 }
 
-function sections(character) {
+function sections(character, embedded) {
   return [
     ["overview", "Overview"],
     ...(character.attacks.length ? [["actions", "Actions"]] : []),
     ...(character.skills.length || character.abilities.some((ability) => ability.save != null) ? [["skills", "Skills & Saves"]] : []),
-    ...(character.items.length ? [["inventory", "Inventory"]] : []),
+    ...(character.items.length || embedded ? [["inventory", "Inventory"]] : []),
     ...(character.spells.length ? [["spells", "Spells"]] : []),
   ];
 }
@@ -97,7 +97,7 @@ function attackList(attacks) {
   }).join("")}</ul>`;
 }
 
-function overview(character) {
+function overview(character, embedded) {
   const facts = [
     ["Background", character.background], ["Alignment", character.alignment],
     ["Player", character.player], ["Experience", character.xp == null ? null : character.xp.toLocaleString()],
@@ -106,7 +106,8 @@ function overview(character) {
     <div class="sheet-overview-row">
       ${character.attacks.length ? `<section class="sheet-box" aria-labelledby="quick-actions-heading">
         <header class="sheet-box-heading"><h2 id="quick-actions-heading">Quick actions</h2>
-          <a class="text-link" href="${sheetPath(character, "actions")}">All actions</a></header>
+          ${embedded ? '<button class="text-link sheet-tab" type="button" data-action="game-sheet-section" data-id="actions">All actions</button>' :
+             `<a class="text-link" href="${sheetPath(character, "actions")}">All actions</a>`}</header>
         ${attackList(character.attacks.slice(0, 3))}
       </section>` : ""}
       <section class="sheet-box sheet-profile" aria-labelledby="details-heading">
@@ -115,7 +116,7 @@ function overview(character) {
           `<div><dt>${label}</dt><dd>${text(value)}</dd></div>`).join("")}</dl>` : ""}
         <div class="sheet-source">
           <span>${icon("sheet", 16)} <span>${escape(character.sourceName || "Imported character")}</span></span>
-          <button type="button" class="text-link delete-link" data-action="confirm-remove" data-id="${escape(character.id)}">Remove character</button>
+          ${embedded ? "" : `<button type="button" class="text-link delete-link" data-action="confirm-remove" data-id="${escape(character.id)}">Remove character</button>`}
         </div>
       </section>
     </div>`;
@@ -203,12 +204,12 @@ export function fillSheetResults(character, section) {
     </section>`).join("")}</div>` : '<p class="sheet-empty">No matching spells.</p>');
 }
 
-export function characterPage(character, requestedSection) {
-  const nav = sections(character);
+export function characterPage(character, requestedSection, {embedded = false} = {}) {
+  const nav = sections(character,embedded);
   const profile = characterProfile(character);
   const section = nav.some(([key]) => key === requestedSection) ? requestedSection : "overview";
   const panels = {
-    overview: () => overview(character),
+    overview: () => overview(character,embedded),
     actions: () => `<section class="sheet-box" aria-labelledby="actions-heading">
       <header class="sheet-box-heading"><h2 id="actions-heading">Actions</h2></header>
       ${attackList(character.attacks)}
@@ -227,8 +228,12 @@ export function characterPage(character, requestedSection) {
     </header>
     ${vitals(character)}
     <nav class="sheet-nav" aria-label="Character sheet sections">
-      ${nav.map(([key, label]) => `<a class="sheet-tab" href="${sheetPath(character, key)}"
-        ${key === section ? ' aria-current="page"' : ""}>${label}</a>`).join("")}
+      ${nav.map(([key,label]) => {
+        const current = key === section ? ' aria-current="page"' : "";
+        return embedded
+          ? `<button class="sheet-tab" type="button" data-action="game-sheet-section" data-id="${key}"${current}>${label}</button>`
+          : `<a class="sheet-tab" href="${sheetPath(character,key)}"${current}>${label}</a>`;
+      }).join("")}
     </nav>
     <div class="sheet-panel">${panels[section]()}</div>
   </article>`;

@@ -1,5 +1,5 @@
 import {diceTerms, makeActor, modifier} from "./combat.mjs";
-import {matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey} from "./rules-library.mjs";
+import {matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey, spellKey} from "./rules-library.mjs";
 
 const types = {S:"slashing", P:"piercing", B:"bludgeoning"};
 const damageTypes = "acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|poison|psychic|radiant|slashing|thunder";
@@ -172,7 +172,14 @@ export function partyActor(character) {
   if (!Number.isFinite(character.maxHp) || !Number.isFinite(character.ac) || speed == null) {
     throw new Error(character.name + " needs maximum HP, AC, and walking speed in the character sheet.");
   }
-  const spells = character.spells.filter((spell) => spell.prepared).map(({name}) => matchSpell(name)).filter(Boolean);
+  const spells = character.spells.map(({name,level,prepared}) => {
+    const spell = matchSpell(name);
+    const note = spell && ruleKey(name) !== ruleKey(spell.name) ? name : "";
+    const customUse = !spell || /without rolling|no spell slot|charges|unlimited|on snakes|infinite cast/i.test(note);
+    return {name:spell?.name ?? name.split(" (")[0], key:ruleKey(spell?.name ?? name),
+      edition:spell?.edition, level:spell?.level ?? level, note, customUse, prepared,
+      reference:spell ? spellKey(spell) : "", timing:spell?.time?.[0]?.unit};
+  });
   const scores = Object.fromEntries(character.abilities.map(({abbr, score, modifier:mod}) => [abbr.toLowerCase(),mod ?? modifier(score)]));
   const saves = Object.fromEntries(character.abilities.map(({abbr, save}) => [abbr.toLowerCase(),save]));
   const abilityText = String(character.spellcastingAbility ?? "").slice(0,3).toLowerCase();
@@ -184,8 +191,7 @@ export function partyActor(character) {
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
     speed, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),
-    spells:[...new Map(spells.map((spell) => [ruleKey(spell.name),
-      {name:spell.name, key:ruleKey(spell.name), edition:spell.edition, level:spell.level}])).values()],
+    spells:[...new Map(spells.map((spell) => [spell.key,spell])).values()],
     slots:{...Object.fromEntries(spells.filter((spell) => spell.level).map((spell) =>
       [spell.level,{current:null,maximum:null}])), ...structuredClone(character.spellSlots ?? {})},
     spellAbility, spellDC:character.spellDC, spellAttack:character.spellAttack, level:character.level,

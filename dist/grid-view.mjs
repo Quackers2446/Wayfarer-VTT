@@ -7,7 +7,7 @@ function polygon(context, points) {
   context.closePath();
 }
 
-export function drawGrid(canvas, map, battle, {room, selected, target, cursor, art}) {
+export function drawGrid(canvas, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true}) {
   if (!canvas) return;
   const c = canvas.getContext("2d");
   const scale = Math.min(1, 1600 / Math.max(map.width,map.height));
@@ -19,7 +19,7 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
   if (art) c.drawImage(art,0,0,map.width,map.height);
   c.lineWidth = Math.max(1,map.size *.042);
 
-  for (const {id, points} of map.regions) {
+  for (const {id, points} of showRegions ? map.regions : []) {
     polygon(c,points);
     c.fillStyle = id === room?.id ? "#c9a65c51" : art ? "#dcd7b818" : "#4b6551";
     c.fill();
@@ -38,7 +38,7 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
   c.strokeStyle = art ? "#15191577" : "#ced9c329";
   c.stroke(grid);
 
-  for (const {entry, points} of map.regions) {
+  for (const {entry, points} of showRegions ? map.regions : []) {
     const label = /^([A-Za-z]?\d+[A-Za-z]?)\./.exec(entry?.name ?? "")?.[1];
     if (!label) continue;
     const [x,y] = points.reduce(([x,y],[px,py]) => [x+px/points.length,y+py/points.length],[0,0]);
@@ -57,7 +57,29 @@ export function drawGrid(canvas, map, battle, {room, selected, target, cursor, a
     c.fillRect(map.offsetX+x*map.size,map.offsetY+y*map.size,map.size,map.size);
   }
 
-  for (const actor of battle.actors.filter(occupies)) {
+  if (footprint?.size) {
+    c.fillStyle = "#d68143a0";
+    for (const key of footprint) {
+      const [x,y] = key.split(":").map(Number);
+      c.fillRect(map.offsetX+x*map.size,map.offsetY+y*map.size,map.size,map.size);
+    }
+  }
+
+  if (path?.length) {
+    c.beginPath();
+    for (const [index, cell] of path.entries()) {
+      const [x,y] = cellCenter(map,cell);
+      if (index) c.lineTo(x,y);
+      else c.moveTo(x,y);
+    }
+    c.strokeStyle = "#ffdc8a";
+    c.lineCap = "round";
+    c.lineJoin = "round";
+    c.lineWidth = map.size * .10;
+    c.stroke();
+  }
+
+  for (const actor of battle.actors.filter((actor) => occupies(actor) && (!visible || visible.has(actor.id)))) {
     const [x,y] = cellCenter(map,actor);
     const radius = map.size * .42;
     c.beginPath(); c.arc(x,y,radius,0,Math.PI*2);

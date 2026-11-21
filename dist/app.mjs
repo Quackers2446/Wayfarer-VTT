@@ -29,7 +29,7 @@ const byId = (id) => [...catalog.adventures, ...catalog.books].find((entry) => e
 
 function currentRoute(hash = location.hash) {
   const [requested, characterId, section = "overview"] = hash.slice(1).split("/");
-  const page = navItems.some(([id]) => id === requested) ? requested : "overview";
+  const page = requested === "game" || navItems.some(([id]) => id === requested) ? requested : "overview";
   const character = page === "characters" && characterId
     ? state.characters.find((entry) => encodeURIComponent(entry.id) === characterId)
     : null;
@@ -48,6 +48,7 @@ let catalogStatus = "loading";
 let localSamples = [];
 let localArchive = "";
 let spellRequest = 0;
+let gameSheet;
 let catalogKind = "adventures";
 let search = "";
 let sort = "featured";
@@ -250,6 +251,11 @@ function renderResults() {
 
 function render() {
   const {page, character, section} = currentRoute();
+  if (page === "game") {
+    app.innerHTML = '<main id="main" tabindex="-1" class="game-main"><div id="play-mount"></div></main>';
+    showPlay({characters:state.characters, adventures:catalog.adventures, activeAdventure:state.active, localArchive, game:true});
+    return;
+  }
   const pageLabel = navItems.find(([id]) => id === page)[1];
   app.innerHTML = `<div class="shell">
     <aside class="sidebar">
@@ -321,6 +327,31 @@ function table(headers, rows) {
     '</tbody></table></div>';
 }
 
+function showGameSheet(character, section = "overview") {
+  gameSheet = {character,section};
+  const subtitle = [character.species,character.characterClass,character.level == null ? "" : "Level " + character.level].filter(Boolean).join(" · ");
+  openDialog(character.name, subtitle, characterPage(character,section,{embedded:true}), "users", true);
+  dialog.classList.add("game-sheet-dialog");
+  fillSheetResults(character,section);
+  if (section !== "overview") dialog.querySelector('.sheet-tab[aria-current]')?.focus({preventScroll:true});
+}
+
+document.addEventListener("wayfarer:inspect", (event) => {
+  const actor = event.detail;
+  const imported = state.characters.find((character) => "party:" + character.id === actor.id);
+  const potions = new Map((actor.potions ?? []).map(({name,quantity}) => [name,quantity]));
+  showGameSheet({
+    sourceName:"Game token", characterClass:"", species:"", skills:[], items:[], spells:[], level:actor.level,
+    abilities:[["STR","Strength"],["DEX","Dexterity"],["CON","Constitution"],["INT","Intelligence"],["WIS","Wisdom"],["CHA","Charisma"]]
+      .map(([abbr,label]) => ({abbr,label,modifier:actor.ability?.[abbr.toLowerCase()],save:actor.saves?.[abbr.toLowerCase()]})),
+    ...imported, id:imported?.id ?? actor.id, name:actor.name, hp:actor.hp, maxHp:actor.maxHp,
+    ac:actor.ac, speed:String(actor.speed), initiative:actor.initiative, tempHp:actor.tempHp,
+    spellDC:actor.spellDC, spellAttack:actor.spellAttack, spellSlots:actor.slots,
+    attacks:imported?.attacks ?? actor.attacks,
+    items:(imported?.items ?? []).map((item) => ({...item,quantity:potions.get(item.name) ?? item.quantity})),
+  });
+});
+
 async function spellDialog(key) {
   const record = spellByKey(key);
   if (!record) return;
@@ -339,6 +370,7 @@ async function spellDialog(key) {
     ${material ? '<p class="spell-material"><strong>Materials</strong> ' + escape(material) + '</p>' : ""}
     <div class="spell-reference-text">${content}</div>
     <footer class="dialog-footer"><span>${archiveName() ? escape(archiveName()) : '5etools spell index'}</span>
+      ${gameSheet ? '<button type="button" class="button outline small" data-action="game-sheet-back">Back to character</button>' : ""}
       <a class="text-link" href="assets/srd-attribution.txt">SRD attribution</a></footer>`, "book", true);
 }
 
@@ -516,6 +548,8 @@ document.addEventListener("click", (event) => {
     case "source": sourceDialog(); break;
     case "adventure": adventureDialog(byId(id)); break;
     case "spell": spellDialog(id); break;
+    case "game-sheet-section": if (gameSheet) showGameSheet(gameSheet.character,id); break;
+    case "game-sheet-back": if (gameSheet) showGameSheet(gameSheet.character,gameSheet.section); break;
     case "select": {
       state.active = id;
       const saved = save();
@@ -558,8 +592,8 @@ document.addEventListener("input", (event) => {
     renderResults();
   }
   if (event.target.id === "sheet-search") {
-    const {character, section} = currentRoute();
-    fillSheetResults(character, section);
+    const {character, section} = gameSheet ?? currentRoute();
+    if (character) fillSheetResults(character, section);
   }
 });
 
@@ -569,8 +603,8 @@ document.addEventListener("change", (event) => {
     case "level-filter": startLevel = event.target.value; renderResults(); break;
     case "catalog-sort": sort = event.target.value; renderResults(); break;
     case "prepared-only": {
-      const {character, section} = currentRoute();
-      fillSheetResults(character, section);
+      const {character, section} = gameSheet ?? currentRoute();
+      if (character) fillSheetResults(character, section);
       break;
     }
   }
@@ -591,6 +625,7 @@ document.querySelector(".skip-link").addEventListener("click", (event) => {
   document.querySelector("#main").focus();
 });
 dialog.addEventListener("close", () => {
+  gameSheet = null;
   if (dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
 });
 window.addEventListener("hashchange", (event) => {
