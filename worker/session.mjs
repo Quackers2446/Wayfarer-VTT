@@ -42,11 +42,20 @@ function validState(state) {
       [actor.x,actor.y].every((value) => value == null || Number.isInteger(value)) &&
       [actor.attacks,actor.spells].every(Array.isArray) && record(actor.slots)) &&
     Array.isArray(battle.order) && battle.order.every((id) => typeof id === "string") &&
+    (battle.fogMemory == null || validFogMemory(battle.fogMemory)) &&
     (battle.explored == null || Array.isArray(battle.explored) && battle.explored.length <= 4096 &&
       battle.explored.every((key) => typeof key === "string" && /^\d+:\d+$/.test(key))) &&
     Array.isArray(battle.log) && battle.log.every((line) => typeof line === "string") && record(battle.terrain) &&
     Number.isInteger(battle.round) && battle.round >= 0 && Number.isInteger(battle.turn) &&
     (!alignment || alignmentShape(alignment));
+}
+
+function validFogMemory(memory) {
+  const {cols,rows,data} = memory;
+  if (![cols,rows].every((value) => Number.isInteger(value) && value > 0) || cols*rows > 90000 || typeof data !== "string") return false;
+  const bytes = Math.ceil(cols*rows/8);
+  if (data.length !== Math.ceil(bytes/3)*4 || !/^[\da-z+/]+={0,2}$/i.test(data)) return false;
+  try {return atob(data).length === bytes;} catch {return false;}
 }
 
 async function boundedBody(request, limit) {

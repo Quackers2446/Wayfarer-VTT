@@ -4,7 +4,8 @@ import {enrichCharacter} from "./character-rules.mjs";
 import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
-import {enemyInSight, engageEnemy, exploredCells, inSight, noticesEnemy, partyVision, rememberVision} from "./exploration.mjs";
+import {enemyInSight, engageEnemy, noticesEnemy, partyVision, rememberVision} from "./exploration.mjs";
+import {exploredCells, hasExplored, saveExplored} from "./fog-memory.mjs";
 import {mapFloor, mapWalls} from "./map-walls.mjs";
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
@@ -100,22 +101,14 @@ async function decodeMapImage(blob, entry) {
 }
 
 function visibleTokens(sight = context?.game ? partyVision(battle,map) : null) {
-  if (!context?.game) return null;
-  if (sight) return new Set(battle.actors.filter((actor) => actor.side === "party" ||
+  if (!sight) return null;
+  return new Set(battle.actors.filter((actor) => actor.side === "party" ||
     occupies(actor) && sight.has(keyAt(actor.x,actor.y))).map(({id}) => id));
-  const heroes = battle.actors.filter((actor) => actor.side === "party");
-  return new Set(battle.actors.filter((actor) => actor.side === "party" || battle.order.includes(actor.id) ||
-    (occupies(actor) && heroes.some((hero) => actor.side === "hostile"
-      ? noticesEnemy(battle,map,hero,actor) : inSight(battle,map,hero,actor)))).map(({id}) => id));
 }
 
 function visibleMarkers(sight = context?.game ? partyVision(battle,map) : null) {
   const entries = battle.markers ?? [];
-  if (sight) return entries.filter((marker) => (!marker.hidden || marker.revealed) && sight.has(keyAt(marker.x,marker.y)));
-  if (!context?.game || (toolsOpen && tool === "room")) return entries;
-  const heroes = battle.actors.filter((actor) => actor.side === "party");
-  return entries.filter((marker) => (!marker.hidden || marker.revealed) &&
-    heroes.some((hero) => inSight(battle,map,hero,marker)));
+  return sight ? entries.filter((marker) => (!marker.hidden || marker.revealed) && sight.has(keyAt(marker.x,marker.y))) : entries;
 }
 
 function repaintCreatureArt() {
@@ -196,7 +189,7 @@ function paintBoard() {
   const drawingMap = alignmentOpen && gridDraft ? {...map,...gridGeometry(map,gridDraft)} : map;
   const options = {
     room:context.game && tool !== "room" ? null : room,selected:actor?.id,target:targetId,cursor,art,
-    path:pathPreview,visible,fog:sight ? {visible:sight,explored:exploredCells(battle)} : null,
+    path:pathPreview,visible,fog:sight ? {visible:sight,memory:exploredCells(battle,map)} : null,
     footprint,showRegions:!context.game || !art || tool==="room",
     markers:visibleMarkers(sight),tokenImages,overlay:alignmentOpen && gridDraft ? "printed" : battle.gridOverlay ?? "artwork",
   };
@@ -696,19 +689,12 @@ function redraw() {
   const active = document.activeElement?.id;
   let cameraState = camera?.state();
   if (!context.game) focusedGameMap = null;
-  if (context.game && mapWalls(map) && focusedGameMap !== map.key) {
-    const center = cameraToken();
-    if (center) {
-      cameraState = {zoom:1.4,center};
-      focusedGameMap = map.key;
-    }
-  }
   camera?.destroy();
   const archiveOpen = element.querySelector(".play-archive")?.open;
   const gridOpen = element.querySelector("#grid-settings")?.open;
   element.innerHTML = context.game ? gameScreen({
     map,battle,selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
-    visibleInitiative:mapWalls(map) ? visibleTokens() : null,
+    visibleInitiative:visibleTokens(),
     category,actions:playOptions(selectedActor()), tacticalTools:tableTools(), room,status,artworkNote,
     logOpen,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
     tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage,needsHostSignIn) : "",shared:Boolean(table),
@@ -716,7 +702,17 @@ function redraw() {
   }) : playPage();
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
   if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open","");
-  camera = createCamera(element.querySelector(".board-frame"),element.querySelector(".map-controls"),map,cameraState);
+  const frame = element.querySelector(".board-frame");
+  if (context.game && focusedGameMap !== map.key) {
+    const center = cameraToken();
+    if (center) {
+      const fittedCell = map.size*Math.min(frame.clientWidth/map.width,frame.clientHeight/map.height);
+      if (fittedCell > 0 && fittedCell < 14) cameraState = {zoom:Math.min(8,Math.max(30/fittedCell,cameraState?.zoom ?? 1)),center};
+      else if (mapWalls(map)) cameraState = {zoom:1.4,center};
+      focusedGameMap = map.key;
+    }
+  }
+  camera = createCamera(frame,element.querySelector(".map-controls"),map,cameraState);
   paintBoard();
   if (active) element.querySelector("#"+CSS.escape(active))?.focus({preventScroll:true});
 }
@@ -823,6 +819,7 @@ async function launchGame() {
   category = "move"; tool = "move"; status = ""; resetActionSelection();
   if (!battle.round) battle.actors.filter((entry) => entry.side === "party").some(detectNearby);
   rememberVision(battle,map);
+  saveExplored(battle,map);
   preferredGame = {module:moduleId,map:map.key};
   try {localStorage.setItem(activeMapKey,JSON.stringify(preferredGame));} catch {}
   saveBattle();
@@ -903,9 +900,8 @@ function add(actor, area = room) {
 }
 
 function canUseMapSquare(x,y) {
-  if (!context.game || !mapWalls(map)) return true;
-  const key = keyAt(x,y);
-  if (exploredCells(battle).includes(key) || partyVision(battle,map).has(key)) return true;
+  if (!context.game) return true;
+  if (hasExplored(exploredCells(battle,map),x,y) || partyVision(battle,map).has(keyAt(x,y))) return true;
   const actor = selectedActor();
   return tool === "move" && category === "move" && actor?.side === "party" && occupies(actor) &&
     mapFloor(map,x,y) && distanceFt(actor,{x,y}) <= 5;
@@ -972,6 +968,8 @@ async function hostTable() {
   pending = true;
   setTableMessage("Starting shared session…");
   try {
+    rememberVision(battle,map);
+    saveExplored(battle,map);
     const state = tableState();
     state.battle = structuredClone(battle);
     state.battle.sheets = Object.fromEntries(context.characters
@@ -1153,7 +1151,10 @@ async function interact(run, {cosmetic = false} = {}) {
         if (heroes.some((hero) => noticesEnemy(battle,map,hero,enemy))) joinInitiative(battle,enemy);
       }
     }
-    if (!cosmetic && context?.game) rememberVision(battle,map);
+    if (!cosmetic && context?.game) {
+      rememberVision(battle,map);
+      saveExplored(battle,map);
+    }
     saveBattle();
   } catch (failure) {
     status = failure instanceof Error ? failure.message : "The action could not be completed.";

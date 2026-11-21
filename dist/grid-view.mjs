@@ -1,10 +1,13 @@
 import {drawMonsterArtwork} from "./monster-art.mjs";
 import {keyAt, occupies} from "./combat.mjs";
 import {regionAt} from "./encounters.mjs";
+import {hasExplored} from "./fog-memory.mjs";
 import {cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
 
 const maxRasterEdge = 4096;
 const maxRasterPixels = 8 * 1024 * 1024;
+const fogTextures = new WeakMap();
+const fogDark = "#101a19";
 
 export function rasterPixelRatio(width, height, ratio) {
   return Math.min(ratio,maxRasterEdge/Math.max(width,height),Math.sqrt(maxRasterPixels/(width*height)));
@@ -16,22 +19,49 @@ function polygon(context, points) {
   context.closePath();
 }
 
-function drawFog(context,map,{visible,explored}) {
-  function shade(open, color) {
-    const mask = new Path2D();
-    mask.rect(0,0,map.width,map.height);
-    for (const cell of open) {
-      const [x,y] = cell.split(":").map(Number);
-      const [left,top,width,height] = cellBounds(map,{x,y});
-      const clippedX = Math.max(0,left), clippedY = Math.max(0,top);
-      const right = Math.min(map.width,left+width), bottom = Math.min(map.height,top+height);
-      if (right > clippedX && bottom > clippedY) mask.rect(clippedX,clippedY,right-clippedX,bottom-clippedY);
-    }
-    context.fillStyle = color;
-    context.fill(mask,"evenodd");
+function fogTexture(visible,memory) {
+  const previous = fogTextures.get(memory);
+  if (previous?.visible === visible && previous.revision === memory.revision) return previous.texture;
+  const {cols,rows} = memory;
+  const texture = previous?.texture ?? document.createElement("canvas");
+  // A few samples per cell make the interpolated edge softer than a tile without blurring the artwork.
+  const width = Math.min(cols*3,maxRasterEdge), height = Math.min(rows*3,maxRasterEdge);
+  if (texture.width !== width) texture.width = width;
+  if (texture.height !== height) texture.height = height;
+  const fog = texture.getContext("2d");
+  const stepX = width/cols, stepY = height/rows;
+  fog.fillStyle = fogDark;
+  fog.fillRect(0,0,width,height);
+  fog.fillStyle = "#101a19a8";
+  for (let y=0;y<rows;y++) for (let x=0;x<cols;x++) {
+    if (!hasExplored(memory,x,y)) continue;
+    fog.clearRect(x*stepX,y*stepY,stepX,stepY);
+    fog.fillRect(x*stepX,y*stepY,stepX,stepY);
   }
-  shade(visible,"#0b1413a8");
-  shade(new Set([...explored,...visible]),"#101a19");
+  for (const cell of visible) {
+    const [x,y] = cell.split(":").map(Number);
+    fog.clearRect(x*stepX,y*stepY,stepX,stepY);
+  }
+  fogTextures.set(memory,{visible,revision:memory.revision,texture});
+  return texture;
+}
+
+function drawFog(context,map,{visible,memory}) {
+  const texture = fogTexture(visible,memory);
+  const [x,y,cellWidth,cellHeight] = cellBounds(map,{x:0,y:0});
+  const width = cellWidth*map.cols, height = cellHeight*map.rows;
+  const border = new Path2D();
+  border.rect(0,0,map.width,map.height);
+  const left = Math.max(0,x), top = Math.max(0,y);
+  const right = Math.min(map.width,x+width), bottom = Math.min(map.height,y+height);
+  if (right > left && bottom > top) border.rect(left,top,right-left,bottom-top);
+  context.save();
+  context.fillStyle = fogDark;
+  context.fill(border,"evenodd");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "low";
+  context.drawImage(texture,x,y,width,height);
+  context.restore();
 }
 
 export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {

@@ -464,7 +464,7 @@ function attackMode(battle, attacker, target, options, ranged, distance) {
 }
 
 export function lineClear(battle, from, to, board, {vision = false} = {}) {
-  if (mapWalls(board)) return mapLineClear(board,from,to,(x,y) => battle.terrain[keyAt(x,y)] === "wall",vision);
+  if (vision || mapWalls(board)) return mapLineClear(board,from,to,(x,y) => battle.terrain[keyAt(x,y)] === "wall",vision);
   let {x,y} = from;
   const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
   const signX = x < to.x ? 1 : -1, signY = y < to.y ? 1 : -1;

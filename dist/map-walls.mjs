@@ -46,7 +46,6 @@ export function crossesMapWall(map, from, to) {
 
 export function mapLineClear(map, from, to, wallAt, vision) {
   const walls = mapWalls(map);
-  if (!walls) return true;
   const dx = Math.abs(to.x-from.x), dy = Math.abs(to.y-from.y);
   const stepX = Math.sign(to.x-from.x), stepY = Math.sign(to.y-from.y);
   let xSteps = 0, ySteps = 0;
@@ -57,7 +56,7 @@ export function mapLineClear(map, from, to, wallAt, vision) {
     const next = {...here};
     if (nextX <= nextY) {next.x += stepX; xSteps++;}
     if (nextY <= nextX) {next.y += stepY; ySteps++;}
-    if (wallAt(next.x,next.y) || crossesMapWall(map,here,next) || vision && crossesScreen(walls,here,next)) return false;
+    if (wallAt(next.x,next.y) || walls && (crossesMapWall(map,here,next) || vision && crossesScreen(walls,here,next))) return false;
     if (next.x !== here.x && next.y !== here.y && (wallAt(next.x,here.y) || wallAt(here.x,next.y))) return false;
     here = next;
   }
