@@ -130,6 +130,27 @@ export function mapImage(path) {
   return file?.async("blob") ?? Promise.resolve(null);
 }
 
+export async function hostedMapImage(path, signal) {
+  const parts = typeof path === "string" ? path.split("/") : [];
+  if (!parts.length || parts.some((part) => !part || part === "." || part === ".." || part.includes("\\"))) return null;
+  const encodedPath = parts.map(encodeURIComponent).join("/");
+  const providers = [
+    "https://cdn.5e.tools/2024/img/",
+    "https://raw.githubusercontent.com/5etools-mirror-3/5etools-img/main/",
+  ];
+  for (const root of providers) {
+    if (signal.aborted) break;
+    try {
+      const response = await fetch(root + encodedPath, {signal, credentials:"omit", referrerPolicy:"no-referrer"});
+      if (response.ok && response.headers.get("Content-Type")?.startsWith("image/")) return await response.blob();
+      await response.body?.cancel();
+    } catch {
+      // Try the next image host if a network request fails.
+    }
+  }
+  return null;
+}
+
 async function sourcedRecord(kind, recordType, source, name) {
   const index = await readArchive(kind + "/index.json");
   const code = Object.keys(index ?? {}).find((entry) => entry.toLowerCase() === source.toLowerCase());

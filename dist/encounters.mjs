@@ -48,7 +48,7 @@ export async function moduleMaps(id) {
         key, module:id, id:image.id ?? parent?.id, width, height, size, offsetX, offsetY,
         cols:Math.ceil((width-offsetX)/size), rows:Math.ceil((height-offsetY)/size), regions,
         title:image.title === "Player Version" && parent?.title ? parent.title + " (Player)" : image.title ?? key,
-        caption:chapter.name ?? "", asset:image.href?.path,
+        caption:chapter.name ?? "", asset:image.href?.path, artist:image.credit,
       });
     }
   }

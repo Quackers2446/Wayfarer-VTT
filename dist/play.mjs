@@ -1,6 +1,6 @@
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
-import {attachArchive, archiveName, formatEntries, hasArchive, mapImage, monsterRecord} from "./rules-library.mjs";
+import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord} from "./rules-library.mjs";
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
 import {drawGrid, gridPosition, terrainAt} from "./grid-view.mjs";
 import {
@@ -36,7 +36,8 @@ let customWeapon = {name:"Custom strike", bonus:"", damage:"", type:"", normalRa
 let selectedCreature = 0;
 let selectedParty = "";
 let zoom = "100";
-let artUrl;
+let artworkRequest;
+let artworkNote = "";
 
 function root() {return document.querySelector("#play-mount");}
 function saveBattle() {
@@ -46,41 +47,90 @@ function saveBattle() {
   }
 }
 
-function showImage(blob, entry = map, announce = true) {
+async function decodeMapImage(blob, entry) {
   const url = URL.createObjectURL(blob);
-  const image = new Image();
-  image.onload = () => {
-    if (map !== entry || (!announce && art)) {URL.revokeObjectURL(url); return;}
-    if (Math.abs(image.naturalWidth / image.naturalHeight / (map.width / map.height) - 1) > .03) {
-      URL.revokeObjectURL(url);
-      if (announce) {
-        status = "This image does not match the map’s aspect ratio. Choose the image for this map variant.";
-        redraw();
-      }
-      return;
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    if (Math.abs(image.naturalWidth / image.naturalHeight / (entry.width / entry.height) - 1) > .03) {
+      throw new Error("This image does not match the map’s aspect ratio. Choose the image for this map variant.");
     }
-    if (artUrl) URL.revokeObjectURL(artUrl);
-    art = image; artUrl = url; redraw();
-  };
-  image.onerror = () => {
+    return image;
+  } finally {
     URL.revokeObjectURL(url);
-    if (announce) {status = "The map image could not be read."; redraw();}
-  };
-  image.src = url;
+  }
+}
+
+function paintBoard() {
+  drawGrid(root()?.querySelector("#play-grid"),map,battle,{
+    room,selected:currentActor(battle)?.id ?? selectedId,target:targetId,cursor,art,
+  });
+}
+
+function updateArtwork() {
+  const note = root()?.querySelector("#map-art-note");
+  const picker = root()?.querySelector('[data-play="art"]');
+  if (note) note.textContent = artworkNote;
+  if (picker) picker.textContent = art ? "Change map image" : "Choose map image";
+  paintBoard();
+}
+
+async function loadArtwork(entry, file) {
+  artworkRequest?.abort();
+  const request = new AbortController();
+  artworkRequest = request;
+  const current = () => artworkRequest === request && map === entry;
+  if (!entry.asset && !file) {
+    artworkNote = "Showing the schematic. Choose a map image to add artwork.";
+    return;
+  }
+  artworkNote = "Loading map artwork…";
+  updateArtwork();
+  const timeout = setTimeout(() => request.abort(), 12000);
+  try {
+    let image;
+    if (file) {
+      image = await decodeMapImage(file, entry);
+    } else {
+      const embedded = await mapImage(entry.asset).catch(() => null);
+      if (!current()) return;
+      if (embedded) image = await decodeMapImage(embedded, entry).catch(() => null);
+      if (!image && current()) {
+        const hosted = await hostedMapImage(entry.asset, request.signal);
+        if (hosted) image = await decodeMapImage(hosted, entry);
+      }
+    }
+    if (!current()) return;
+    if (image) {
+      art = image;
+      artworkNote = file ? "Using your map image." : entry.artist ? "Map artwork by " + entry.artist + "." : "Map artwork loaded from 5etools.";
+    } else {
+      artworkNote = "Map artwork is unavailable. Showing the schematic.";
+    }
+  } catch (error) {
+    if (!current()) return;
+    artworkNote = file
+      ? (error instanceof Error && error.message.includes("aspect ratio") ? error.message : "The map image could not be read.")
+      : "Map artwork is unavailable. Showing the schematic.";
+  } finally {
+    clearTimeout(timeout);
+    if (current()) updateArtwork();
+  }
 }
 
 function useMap(entry) {
-  if (artUrl) URL.revokeObjectURL(artUrl);
+  artworkRequest?.abort();
+  artworkRequest = null;
+  artworkNote = "";
   map = entry;
   battle = battles[map.key] ?? newBattle();
   if (map.module === "training" && !battles[map.key]) battle.actors = trainingActors();
-  art = null; artUrl = null; selectedId = ""; targetId = ""; combatChoice = ""; cursor = null;
+  art = null; selectedId = ""; targetId = ""; combatChoice = ""; cursor = null;
   const initialRoom = map.module === "LMoP" && map.id === "1ab" ? "01b" : map.regions[0]?.id;
   room = map.regions.find(({id}) => id === initialRoom) ?? null;
   selectedCreature = 0; tool = "room"; status = ""; zoom = "100";
-  mapImage(entry.asset).then((blob) => {
-    if (blob && map === entry && !art) showImage(blob,entry,false);
-  }).catch(() => {});
+  if (map.module !== "training") loadArtwork(entry);
 }
 
 function currentTarget() {return battle.actors.find((actor) => actor.id === targetId && occupies(actor));}
@@ -285,7 +335,7 @@ function playPage() {
             ${!isTraining ? field("Map","play-map",maps.map((entry) => option(entry.key,entry.title,map.key===entry.key))) : ""}
           </div>
           <div class="play-heading board-title"><h2>${escape(map.title)}</h2>
-            ${!isTraining ? actionButton(art ? "Change map image" : "Add map image","art") : ""}
+            ${!isTraining ? actionButton(art ? "Change map image" : "Choose map image","art") : ""}
           </div>
           <input type="file" id="play-art" accept="image/png,image/jpeg,image/webp" hidden>
           <div class="board-frame">
@@ -297,7 +347,7 @@ function playPage() {
             ${field("Zoom","grid-zoom",["100","150","200","300"].map((value) => option(value,value+"%",zoom===value)))}
             <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span></div>
           </div>
-          ${!isTraining && !art ? '<p class="play-hint">The schematic marks sourced room areas. Attach the matching map image and mark obstacles to enforce movement boundaries.</p>' : ""}
+          ${!isTraining ? `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` : ""}
           <p class="play-status" role="status">${escape(status)}</p>
         </section>
         <section class="play-panel">
@@ -325,8 +375,7 @@ function redraw() {
   const archiveOpen = element.querySelector(".play-archive")?.open;
   element.innerHTML = playPage();
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive").open = true;
-  const current = currentActor(battle);
-  drawGrid(element.querySelector("#play-grid"),map,battle,{room,selected:current?.id ?? selectedId,target:targetId,cursor,art});
+  paintBoard();
   element.querySelector(".board-frame").scrollTo(scrollX,scrollY);
   if (active) element.querySelector("#"+CSS.escape(active))?.focus({preventScroll:true});
 }
@@ -550,7 +599,7 @@ document.addEventListener("change", (event) => {
     case "cover": cover = value; break;
     case "play-art": {
       const file = event.target.files[0];
-      if (file) showImage(file);
+      if (file) loadArtwork(map, file);
       return;
     }
     case "custom-bonus": customWeapon.bonus = value; return;
