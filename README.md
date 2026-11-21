@@ -45,7 +45,7 @@ Under **Grid alignment** in Setup or Table tools, choose **Artwork only**, **Art
 
 **Enter game** opens the play screen. Select a party portrait for its live sheet, inventory, and remaining slots. Pick a square to explore. Wayfarer rolls initiative when a party member reaches an enemy’s sight or engages it. In combat, point at a square to see what it costs to reach and how much movement will remain. On touch screens, select a square and confirm **Move here**.
 
-Hostile NPCs take their turns automatically using imported weapon attacks and the 2014 5e combat engine. They respect movement limits, walls, weapon ranges, and action economy. The game resolves hostile opportunity attacks and prompts the appropriate player for a party opportunity attack. Roll results appear in **Log**.
+Hostile NPCs take their turns automatically in both the game screen and combat started from Setup. They use imported weapon attacks and follow the 2014 5e movement limits, walls, weapon ranges, and action economy. The game resolves hostile opportunity attacks and prompts the appropriate player for a party opportunity attack. Roll results appear in the combat log.
 
 The **Story** journal opens with the area objective and adds the first player-facing read-aloud passage as the party enters each mapped room that has one. In Cragmaw Hideout, clear Sildar’s room and move beside him to free him and learn where Gundren may have been taken. Branching dialogues, scripted encounters, and quest transitions elsewhere require adventure-specific game logic.
 

@@ -17,7 +17,7 @@ export function enemyTurnPending(battle) {
 }
 
 function attackTarget(battle, map, actor, targets, weapons, normalRangeOnly = false) {
-  for (const weapon of weapons.toSorted((a,b) => Number(Boolean(a.normalRange)) - Number(Boolean(b.normalRange)))) {
+  for (const weapon of weapons) {
     for (const target of targets) {
       const range = normalRangeOnly ? weaponRange(weapon) : attackRange(weapon);
       if (distanceFt(actor,target) <= range && lineClear(battle,actor,target,map)) return {target,weapon};
@@ -37,7 +37,7 @@ function approach(battle, map, actor, targets, weapons) {
   if (path.cost > moveLeft(battle,actor) && canDash && !attackTarget(battle,map,actor,targets,weapons)) {
     turnAction(battle,actor,"dash");
   }
-  const step = path.path.findLast((cell) => cell.cost <= moveLeft(battle,actor) &&
+  const step = path.path.slice().reverse().find((cell) => cell.cost <= moveLeft(battle,actor) &&
     !battle.actors.some((other) => occupies(other) && other.x === cell.x && other.y === cell.y));
   if (!step) return;
   if (actor.nimbleEscape && !battle.bonusUsed && targets.some((target) =>
@@ -51,7 +51,8 @@ function enemyTurn(battle, map, actor, heroes, random) {
     turnAction(battle,actor,"stand");
   }
   const weapons = actor.attacks.filter((weapon) => Number.isFinite(weapon.bonus) && diceTerms(weapon.damage))
-    .flatMap((weapon) => weapon.thrown ? [weapon,{...weapon,...weapon.thrown,name:weapon.name+" (thrown)"}] : [weapon]);
+    .flatMap((weapon) => weapon.thrown ? [weapon,{...weapon,...weapon.thrown,name:weapon.name+" (thrown)"}] : [weapon])
+    .sort((a,b) => Number(Boolean(a.normalRange)) - Number(Boolean(b.normalRange)));
   const targets = heroes.filter(canAct).sort((a,b) => distanceFt(actor,a)-distanceFt(actor,b));
   if (!battle.action && !attackTarget(battle,map,actor,targets,weapons,true)) {
     approach(battle,map,actor,targets,weapons);
@@ -85,10 +86,11 @@ export function runEnemyTurns(battle, map, random = Math.random) {
       continue;
     }
     const heroes = battle.actors.filter(({side}) => side === "party");
-    if (heroes.length && !heroes.some((actor) => actorIsUp(actor) || waitingForSave(actor))) {
+    if (!heroes.some((actor) => occupies(actor) && (actorIsUp(actor) || waitingForSave(actor)))) {
       endInitiative(battle);
-      log(battle,"The party can no longer continue.");
-      return "The party can no longer continue.";
+      const message = heroes.length ? "The party can no longer continue." : "Add a party member to start combat.";
+      log(battle,message);
+      return message;
     }
     if (!battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && canAct(actor))) break;
     const actor = currentActor(battle);

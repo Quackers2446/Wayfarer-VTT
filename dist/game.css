@@ -84,6 +84,7 @@ body:has(.game-main){overflow:hidden;background:#17231d}
 .game-hud-body{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;padding:8px 12px;max-height:31vh;overflow:auto}
 .game-categories{display:flex;gap:4px;flex-wrap:wrap;align-items:flex-start}
 .game-action-content{min-width:0;color:var(--game-muted)}
+.game-action-content:only-child{grid-column:1/-1}
 .game-action-content .play-form{margin-top:0}
 .game-action-content .play-field{color:#eaf0dc}
 .game-action-content .play-field .select-field,.game-action-content .play-field input{background:#f7f4e9}

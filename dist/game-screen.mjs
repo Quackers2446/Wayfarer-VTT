@@ -38,6 +38,7 @@ export function gameScreen({
   destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative,
 }) {
   const active = battle.round > 0;
+  const enemyTurn = active && selected?.side === "hostile";
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
   const total = selected && active ? speedOf(selected) + battle.dash : 0;
   const categoryList = [
@@ -90,22 +91,22 @@ export function gameScreen({
     <footer class="game-hud">
       <div class="game-hud-top">
         <div class="game-active">
-          <span class="game-label">${active ? "Current turn" : "Selected character"}</span>
+          <span class="game-label">${enemyTurn ? "Enemy turn · game controlled" : active ? "Current turn" : "Selected character"}</span>
           <strong>${escape(selected?.name ?? "Choose a party member")}</strong>
         </div>
-        <div class="game-move" ${active ? 'aria-label="Movement budget"' : ""}>
+        ${enemyTurn ? "" : `<div class="game-move" ${active ? 'aria-label="Movement budget"' : ""}>
           ${active ? `<span><strong>${remaining} ft</strong> left / ${total} ft</span>
           <progress value="${Math.min(Math.max(1,total), remaining)}" max="${Math.max(1,total)}" aria-label="Movement remaining"></progress>` :
             '<strong>Free movement</strong>'}
-        </div>
-        ${active ? `<div class="game-economy"><span class="${battle.action ? "used" : ""}">Action ${battle.action ? "used" : "ready"}</span>
+        </div>`}
+        ${active && !enemyTurn ? `<div class="game-economy"><span class="${battle.action ? "used" : ""}">Action ${battle.action ? "used" : "ready"}</span>
           <span class="${battle.bonusUsed ? "used" : ""}">Bonus ${battle.bonusUsed ? "used" : "ready"}</span></div>` : ""}
-        ${active ? button("End turn","check","end",battle.movement || !canAct ? "disabled" : "") : ""}
+        ${active && !enemyTurn ? button("End turn","check","end",battle.movement || !canAct ? "disabled" : "") : ""}
       </div>
       <div class="game-hud-body">
-        <nav class="game-categories" aria-label="Actions">
+        ${canAct && !battle.movement ? `<nav class="game-categories" aria-label="Actions">
           ${categoryList.map(([key,label,symbol]) => button(label,symbol,"game-category",`data-id="${key}" aria-pressed="${category === key}"`)).join("")}
-        </nav>
+        </nav>` : ""}
         <div class="game-action-content">
           <p class="game-move-preview" id="game-move-preview">${escape(canAct && (destination || (category === "move" ? "Select a square to move." : "")) || "")}</p>
           ${rescueAvailable ? button("Free Sildar","users","rescue-sildar") : ""}

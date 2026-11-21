@@ -77,7 +77,6 @@ export const roomNotes = {
   "025":"The passage’s hazards are resolved manually.",
   "029":"The lookout can raise the alarm. Flood triggers are resolved manually.",
   "02f":"Sildar starts bound, unarmed, and at 1 hit point.",
-  "034":"A goblin can flee to warn Klarg. Move that token manually if it happens.",
 };
 
 export function authoredRoster(map, region) {

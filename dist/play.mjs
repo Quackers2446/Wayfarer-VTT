@@ -356,12 +356,12 @@ function repairWallPlacement(entry,state) {
 function currentTarget() {return battle.actors.find((actor) => actor.id === targetId && occupies(actor));}
 function selectedActor() {return currentActor(battle) ?? battle.actors.find(({id}) => id === selectedId);}
 function canControl(actor) {
-  if (!context?.game) return Boolean(actor);
   if (actor?.side !== "party") return false;
   const owner = table && battle.controllers?.[actor.id];
   return !owner || owner === controller;
 }
 function requireControl(actor) {
+  if (actor?.side === "hostile") throw new Error("The game controls " + actor.name + ".");
   if (!canControl(actor)) throw new Error("Wait for " + (actor?.name ?? "the active character") + " to act.");
 }
 function revealStory(previous) {
@@ -414,12 +414,14 @@ function choices(actor) {
 function playOptions(actor) {
   if (!actor || (!battle.round && !context.game)) return "";
   const reaction = opportunity(battle);
+  if (reaction?.foe.side === "hostile") return "<p>The game is resolving " + escape(reaction.foe.name) + "’s reaction.</p>";
   if (reaction && !canControl(reaction.foe)) return "<p>Waiting for " + escape(reaction.foe.name) + "’s reaction.</p>";
   if (reaction) return `<form id="reaction-form" class="play-form">
-    <p>${escape(reaction.foe.name)} can make an opportunity attack before ${escape(reaction.actor.name)} leaves reach.</p>
+    <p>${escape(reaction.foe.name)} can use their reaction to attack ${escape(reaction.actor.name)} as it leaves reach.</p>
     ${field("Opportunity attack","reaction-attack",reaction.attacks.map((attack,index) => option(index,attack.name)))}
     <div class="play-action-row"><button class="button primary small" type="submit">Roll reaction</button>${actionButton("Pass","pass-reaction")}</div>
   </form>`;
+  if (actor.side === "hostile") return "<p>The game is running " + escape(actor.name) + "’s turn.</p>";
   if (!canControl(actor)) return "<p>Waiting for " + escape(actor.name) + ".</p>";
   if (actor.hp === 0) return battle.round && actor.resolveDeath
     ? `<p>${actor.stable ? "Stable at 0 HP" : "Unconscious · " + actor.successes + " successes, " + actor.failures + " failures"}</p>
@@ -558,6 +560,7 @@ function manualHP() {
 function tokenPanel() {
   const ordered = battle.round ? battle.order.map((id) => battle.actors.find((record) => record.id === id)).filter(Boolean) : battle.actors;
   const actor = selectedActor();
+  const canStart = !sceneJobs.has(battle) && canRollInitiative();
   return `<section class="play-panel token-panel">
     <div class="play-heading"><h2>${battle.round ? "Initiative" : "Tokens"}</h2>
       ${battle.round ? `<span class="tag">Round ${battle.round}</span>` : ""}
@@ -570,7 +573,7 @@ function tokenPanel() {
           <canvas data-creature-portrait="${escape(entry.id)}" hidden></canvas>
         </span>
         <span><strong>${escape(entry.name)}</strong><small>${entry.hp} / ${entry.maxHp} HP · AC ${entry.ac}
-          ${entry.side === "neutral" ? " · Neutral" : ""}${entry.tempHp ? " · +" + entry.tempHp + " temp" : ""}${entry.prone ? " · Prone" : ""}${entry.dead ? " · Defeated" : ""}</small></span>
+          ${entry.side === "hostile" ? " · Game controlled" : entry.side === "neutral" ? " · Neutral" : ""}${entry.tempHp ? " · +" + entry.tempHp + " temp" : ""}${entry.prone ? " · Prone" : ""}${entry.dead ? " · Defeated" : ""}</small></span>
         ${battle.round ? `<span class="initiative-value" title="Initiative">${entry.initiativeRoll ?? index + 1}</span>` : ""}
       </button>`).join("")}</div>` : sceneJobs.has(battle) ? '<p role="status">Placing room tokens…</p>' : '<p>Add a party member or a creature from the room entries.</p>'}
     ${setupControls()}
@@ -594,11 +597,12 @@ function tokenPanel() {
     </form>` : ""}
     ${battle.round && actor ? `<div class="turn-info">
       <h3>${escape(actor.name)}’s turn</h3>
-      <p>${moveLeft(battle,actor)} ft left · ${battle.action ? (battle.action === "attack" && battle.attacksMade < actor.swings ? (actor.swings-battle.attacksMade)+" attacks left" : "Action used") : "Action ready"} · ${battle.bonusUsed ? "Bonus action used" : "Bonus action ready"}</p>
+      ${canControl(actor) ? `<p>${moveLeft(battle,actor)} ft left · ${battle.action ? (battle.action === "attack" && battle.attacksMade < actor.swings ? (actor.swings-battle.attacksMade)+" attacks left" : "Action used") : "Action ready"} · ${battle.bonusUsed ? "Bonus action used" : "Bonus action ready"}</p>` : ""}
       ${playOptions(actor)}
     </div>` : ""}
     <div class="play-action-row">
-      ${battle.round ? actionButton("End turn","end",{primary:true,disabled:Boolean(battle.movement)}) : actionButton("Roll initiative","start",{primary:true,disabled:sceneJobs.has(battle) || battle.actors.filter((actor) => occupies(actor) && actor.side !== "neutral").length < 2})}
+      ${battle.round ? canControl(actor) ? actionButton("End turn","end",{primary:true,disabled:Boolean(battle.movement)}) : ""
+        : actionButton("Roll initiative","start",{primary:true,disabled:!canStart})}
       ${battle.round ? actionButton("End initiative","end-initiative",{disabled:Boolean(battle.movement)}) : ""}
       ${battle.round || battle.actors.length ? actionButton("Reset encounter","reset") : ""}
     </div>
@@ -753,12 +757,12 @@ function redraw() {
   camera = createCamera(frame,element.querySelector(".map-controls"),map,cameraState);
   paintBoard();
   if (active) element.querySelector("#"+CSS.escape(active))?.focus({preventScroll:true});
-  if (context.game && enemyTurnPending(battle) && scheduledEnemyBattle !== battle && (!table || table.online && !table.writing)) {
+  if (enemyTurnPending(battle) && scheduledEnemyBattle !== battle && (!table || table.online && !table.writing)) {
     const queued = battle;
     scheduledEnemyBattle = queued;
     setTimeout(() => {
       if (scheduledEnemyBattle === queued) scheduledEnemyBattle = null;
-      if (context?.game && battle === queued && enemyTurnPending(battle)) interact(() => {});
+      if (context && root() && battle === queued && enemyTurnPending(battle)) interact(() => {});
     },0);
   }
 }
@@ -774,6 +778,22 @@ function tableTools() {
 function resetActionSelection() {
   combatChoice = ""; castSlot = ""; targetId = ""; spellSquare = null; extraTargets.clear();
   pathPreview = null; previewMessage = ""; pendingSquare = null;
+}
+
+function canRollInitiative() {
+  const available = (side) => battle.actors.some((actor) => actor.side === side && actorIsUp(actor) && occupies(actor));
+  return available("party") && available("hostile");
+}
+
+function advanceCombat() {
+  if (!battle.round) return;
+  const message = runEnemyTurns(battle,map);
+  if (message && !status) status = message;
+  if (battle.round && !battle.movement &&
+      !battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && actorIsUp(actor) && occupies(actor))) {
+    endInitiative(battle);
+    status = context.game ? "Encounter cleared. Free movement restored." : "Encounter cleared.";
+  }
 }
 
 function beginCombat(actor, enemy, noticed) {
@@ -872,7 +892,7 @@ async function launchGame() {
     revealStory(0);
   }
   if (!battle.round) battle.actors.filter((entry) => entry.side === "party").some(detectNearby);
-  runEnemyTurns(battle,map);
+  advanceCombat();
   rememberVision(battle,map);
   saveExplored(battle,map);
   preferredGame = {module:moduleId,map:map.key};
@@ -985,8 +1005,12 @@ function checkCell(x,y,region) {
     if (token) {
       if (battle.round) targetId = token.id;
       else selectedId = token.id;
-    } else if (selectedActor()) moveToken(battle, selectedActor(), x,y,map);
-    else throw new Error("Select a token to place first.");
+    } else {
+      const actor = selectedActor();
+      if (!actor) throw new Error("Select a token to place first.");
+      if (battle.round) requireControl(actor);
+      moveToken(battle,actor,x,y,map);
+    }
     status = token ? "Selected " + token.name + "." : "Square " + (x+1) + ", " + (y+1) + ".";
   } else {
     if (tool === "wall" && token) throw new Error("Move the token before blocking this square.");
@@ -1106,6 +1130,7 @@ async function pollTable(connection) {
     } else if (!connection.online) {
       connection.online = true;
       setTableMessage("Connected");
+      if (enemyTurnPending(battle)) redraw();
     }
   } catch {
     if (table === connection) {
@@ -1222,13 +1247,14 @@ async function interact(run, {cosmetic = false} = {}) {
         if (heroes.some((hero) => noticesEnemy(battle,map,hero,enemy))) joinInitiative(battle,enemy);
       }
     }
-    if (!cosmetic && context?.game) {
-      const enemyResult = runEnemyTurns(battle,map);
-      if (enemyResult && !status) status = enemyResult;
+    if (!cosmetic && context) {
+      advanceCombat();
       if (turnBefore !== currentActor(battle)?.id || roundBefore !== battle.round) {
         resetActionSelection();
         category = "move";
       }
+    }
+    if (!cosmetic && context?.game) {
       for (const actor of battle.actors) discoverStory(battle,map,actor);
       rememberVision(battle,map);
       saveExplored(battle,map);
@@ -1245,14 +1271,6 @@ async function interact(run, {cosmetic = false} = {}) {
     }
   }
   if (connection !== table) return;
-  if (!cosmetic && context?.game && battle.round && !battle.movement &&
-      !battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && actorIsUp(actor))) {
-    endInitiative(battle);
-    category = "move";
-    resetActionSelection();
-    status = "Encounter cleared. Free movement restored.";
-    saveBattle();
-  }
   if (succeeded && !cosmetic && context?.game) revealStory(storyBefore);
   if (connection) {
     const next = tableState();
@@ -1459,7 +1477,9 @@ document.addEventListener("click", (event) => {
         if (!battle.round) battle.actors = battle.actors.filter((actor) => actor.id !== selectedId);
         selectedId = "";
         break;
-      case "start": startInitiative(battle); combatChoice = ""; targetId = ""; tool = "move"; break;
+      case "start":
+        if (!canRollInitiative()) throw new Error("Place a party member and a hostile creature to roll initiative.");
+        startInitiative(battle); resetActionSelection(); tool = "move"; break;
       case "end-initiative": endInitiative(battle); combatChoice = ""; targetId = ""; tool = "move"; break;
       case "end": requireControl(selectedActor()); endTurn(battle); resetActionSelection(); category = "move"; break;
       case "death": requireControl(selectedActor()); deathSave(battle,selectedActor()); break;
