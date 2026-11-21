@@ -30,7 +30,7 @@ function portraits(party, selected, inCombat) {
 
 export function gameScreen({
   map, battle, selected, party, category, actions, tacticalTools, room, status, artworkNote,
-  logOpen, toolsOpen, destination, cursor, adventureName, hasToken, tableOpen, tableContent, shared,
+  logOpen, toolsOpen, destination, cursor, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative,
 }) {
   const active = battle.round > 0;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
@@ -59,7 +59,7 @@ export function gameScreen({
         <div class="game-roster">${portraits(party,selected,active)}</div>
       </aside>
       <div class="game-stage">
-        ${active ? `<div class="game-initiative" aria-label="Initiative order">${battle.order.map((id) => {
+        ${active ? `<div class="game-initiative" aria-label="Initiative order">${battle.order.filter((id) => !visibleInitiative || visibleInitiative.has(id)).map((id) => {
           const actor = battle.actors.find((entry) => entry.id === id);
           return actor ? `<span class="game-turn ${actor.id === selected?.id ? "game-turn-current" : ""} ${actor.side === "hostile" ? "game-turn-hostile" : ""}"
             title="${escape(actor.name)}"><span class="game-turn-portrait" aria-hidden="true">

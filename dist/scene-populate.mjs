@@ -1,5 +1,6 @@
 import {keyAt, occupies, placeToken} from "./combat.mjs";
 import {authoredRoster, creatureActor, regionAt, regionCells, cellCenter} from "./encounters.mjs";
+import {mapFloor} from "./map-walls.mjs";
 import {automaticRoom, startingCount} from "./scene-data.mjs";
 import {ruleKey} from "./rules-library.mjs";
 
@@ -94,7 +95,7 @@ export async function populateScene(map, battle, random = Math.random) {
   battle.markers ??= [];
   for (const {region,actors,markers} of prepared) {
     if (!actors.length && !markers.length) continue;
-    const cells = regionCells(map,region).filter(({x,y}) => battle.terrain[keyAt(x,y)]!=="wall");
+    const cells = regionCells(map,region).filter(({x,y}) => mapFloor(map,x,y) && battle.terrain[keyAt(x,y)]!=="wall");
     for (const actor of actors) {
       const cell = cells.find(({x,y}) => !occupied.has(keyAt(x,y)));
       if (!cell) {

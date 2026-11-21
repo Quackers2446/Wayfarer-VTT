@@ -200,7 +200,7 @@ export function partyActor(record) {
     id:"party:" + character.id, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
-    speed, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),resist:character.resistances,
+    speed, darkvision:character.rulesDetails.darkvision, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),resist:character.resistances,
     spells:[...new Map(spells.map((spell) => [spell.key,spell])).values()],
     slots:{...Object.fromEntries(spells.filter((spell) => spell.level).map((spell) =>
       [spell.level,{current:null,maximum:null}])), ...structuredClone(character.spellSlots ?? {})},

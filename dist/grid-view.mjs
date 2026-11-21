@@ -16,7 +16,25 @@ function polygon(context, points) {
   context.closePath();
 }
 
-export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
+function drawFog(context,map,{visible,explored}) {
+  function shade(open, color) {
+    const mask = new Path2D();
+    mask.rect(0,0,map.width,map.height);
+    for (const cell of open) {
+      const [x,y] = cell.split(":").map(Number);
+      const [left,top,width,height] = cellBounds(map,{x,y});
+      const clippedX = Math.max(0,left), clippedY = Math.max(0,top);
+      const right = Math.min(map.width,left+width), bottom = Math.min(map.height,top+height);
+      if (right > clippedX && bottom > clippedY) mask.rect(clippedX,clippedY,right-clippedX,bottom-clippedY);
+    }
+    context.fillStyle = color;
+    context.fill(mask,"evenodd");
+  }
+  shade(visible,"#0b1413a8");
+  shade(new Set([...explored,...visible]),"#101a19");
+}
+
+export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
   // Match the display density while keeping the backing buffer bounded by the visible area.
   const ratio = rasterPixelRatio(view.width,view.height,view.ratio);
   const pixelsWide = Math.max(1,Math.floor(view.width*ratio));
@@ -104,6 +122,8 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
     c.lineWidth = map.size * .10;
     c.stroke();
   }
+
+  if (fog) drawFog(c,map,fog);
 
   for (const marker of markers) {
     const [x,y] = cellCenter(map,marker);

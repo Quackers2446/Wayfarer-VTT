@@ -1,3 +1,5 @@
+import {crossesMapWall, mapFloor, mapLineClear, mapWalls} from "./map-walls.mjs";
+
 const storedDamageTypes = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 const error = (message) => {throw new Error(message);};
 
@@ -194,7 +196,7 @@ export const moveLeft = (battle, actor) => Math.max(0, speedOf(actor) + battle.d
 export function placeToken(battle, actor, x, y, board) {
   if (actor.dead) error("This token is defeated.");
   if (x < 0 || y < 0 || x >= board.cols || y >= board.rows) error("Choose a square inside the grid.");
-  if (battle.terrain[keyAt(x,y)] === "wall") error("This square is blocked.");
+  if (!mapFloor(board,x,y) || battle.terrain[keyAt(x,y)] === "wall") error("This square is blocked.");
   if (battle.actors.some((entry) => entry.id !== actor.id && occupies(entry) && entry.x === x && entry.y === y)) {
     error("Another token occupies that square.");
   }
@@ -212,7 +214,7 @@ function findPath(battle, actor, x, y, board, exploration = false) {
   const known = new Map([[origin, 0]]);
   const pending = [{x:actor.x, y:actor.y, cost:0, previous:null}];
   let nextUnvisited = 0;
-  const blocked = (col,row) => battle.terrain[keyAt(col,row)] === "wall";
+  const blocked = (col,row) => !mapFloor(board,col,row) || battle.terrain[keyAt(col,row)] === "wall";
   while (exploration ? nextUnvisited < pending.length : pending.length) {
     if (!exploration) pending.sort((a,b) => b.cost - a.cost);
     const cell = exploration ? pending[nextUnvisited++] : pending.pop();
@@ -229,6 +231,7 @@ function findPath(battle, actor, x, y, board, exploration = false) {
         const row = cell.y + dy;
         const next = keyAt(col,row);
         if ((!dx && !dy) || col < 0 || row < 0 || col >= board.cols || row >= board.rows || blocked(col,row)) continue;
+        if (crossesMapWall(board,cell,{x:col,y:row})) continue;
         if (dx && dy && (blocked(cell.x + dx, cell.y) || blocked(cell.x, cell.y + dy))) continue;
         if (blockers.has(next) && blockers.get(next).side !== actor.side) continue;
         const difficult = battle.terrain[next] === "difficult" || blockers.has(next);
@@ -270,7 +273,7 @@ function reactionWeapons(actor) {
   return actor.attacks.filter((attack) => !attack.normalRange && Number.isFinite(attack.bonus) && Boolean(diceTerms(attack.damage)));
 }
 
-function walkRemaining(battle, actor) {
+function walkRemaining(battle, actor, board) {
   const walk = battle.movement;
   while (walk.index < walk.path.length && actorIsUp(actor)) {
     const next = walk.path[walk.index];
@@ -278,7 +281,7 @@ function walkRemaining(battle, actor) {
       other.side !== actor.side && other.side !== "neutral" && !other.reactionUsed && !walk.passed.includes(other.id) &&
       reactionWeapons(other).some((weapon) => {
         const reach = weapon.reach || 5;
-        return distanceFt(actor,other) <= reach && distanceFt(next,other) > reach && lineClear(battle,other,actor);
+        return distanceFt(actor,other) <= reach && distanceFt(next,other) > reach && lineClear(battle,other,actor,board,{vision:true});
       }));
     if (foe) {
       walk.foe = foe.id;
@@ -302,7 +305,7 @@ export function moveToken(battle, actor, x, y, board) {
   if (!result) error("That square is blocked or beyond the token’s remaining movement.");
   if (!result.cost) return;
   battle.movement = {actor:actor.id,path:result.path,index:0,passed:[]};
-  walkRemaining(battle,actor);
+  walkRemaining(battle,actor,board);
 }
 
 export function opportunity(battle) {
@@ -317,7 +320,7 @@ export function opportunity(battle) {
   return {actor, foe, attacks};
 }
 
-export function resolveOpportunity(battle, attackIndex, random = Math.random) {
+export function resolveOpportunity(battle, attackIndex, random = Math.random, board) {
   const offer = opportunity(battle);
   if (!offer) error("There is no opportunity attack to resolve.");
   const {actor, foe, attacks} = offer;
@@ -329,7 +332,7 @@ export function resolveOpportunity(battle, attackIndex, random = Math.random) {
   } else log(battle, foe.name + " passes the opportunity attack.");
   battle.movement.passed.push(foe.id);
   battle.movement.foe = null;
-  walkRemaining(battle,actor);
+  walkRemaining(battle,actor,board);
 }
 
 export function turnAction(battle, actor, action) {
@@ -460,7 +463,8 @@ function attackMode(battle, attacker, target, options, ranged, distance) {
   };
 }
 
-export function lineClear(battle, from, to) {
+export function lineClear(battle, from, to, board, {vision = false} = {}) {
+  if (mapWalls(board)) return mapLineClear(board,from,to,(x,y) => battle.terrain[keyAt(x,y)] === "wall",vision);
   let {x,y} = from;
   const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
   const signX = x < to.x ? 1 : -1, signY = y < to.y ? 1 : -1;
@@ -484,7 +488,7 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
   const distance = distanceFt(attacker, target);
   const ranged = !!weapon.normalRange;
   if (distance > (ranged ? weapon.longRange || weapon.normalRange : weapon.reach || 5)) error("The target is out of range.");
-  if (options.cover === "full" || !lineClear(battle,attacker,target)) error("Full cover blocks the attack.");
+  if (options.cover === "full" || !lineClear(battle,attacker,target,options.map)) error("Full cover blocks the attack.");
   battle.action = "attack";
   battle.attacksMade += 1;
   return resolveWeaponRoll(battle,attacker,target,weapon,options,random);
@@ -608,7 +612,7 @@ function rangedSpellAttack(battle,caster,target,effect,expression,options,random
 export function areaCells(battle, origin, radius, board) {
   const queue = [{...origin,cost:0}];
   const visited = new Set([keyAt(origin.x,origin.y)]);
-  const wall = (x,y) => battle.terrain[keyAt(x,y)] === "wall";
+  const wall = (x,y) => !mapFloor(board,x,y) || battle.terrain[keyAt(x,y)] === "wall";
   for (let i=0;i<queue.length;i++) {
     const {x,y,cost} = queue[i];
     if (cost >= radius) continue;
@@ -616,6 +620,7 @@ export function areaCells(battle, origin, radius, board) {
       for (let dy=-1;dy<=1;dy++) {
         const col=x+dx, row=y+dy, key=keyAt(col,row);
         if (visited.has(key) || col<0 || row<0 || col>=board.cols || row>=board.rows || wall(col,row)) continue;
+        if (crossesMapWall(board,{x,y},{x:col,y:row})) continue;
         if (dx && dy && wall(col,y) && wall(x,row)) continue;
         visited.add(key);
         queue.push({x:col,y:row,cost:cost+5});
@@ -642,13 +647,13 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
     }
     if (effect.teleport && battle.actors.some((actor) => occupies(actor) && actor.x===square.x && actor.y===square.y)) error("Choose an unoccupied destination.");
     if (distanceFt(caster,square) > effect.range) error("The selected square is out of range.");
-    if (!lineClear(battle,caster,square)) error("Full cover blocks the spell.");
+    if (!lineClear(battle,caster,square,options.map)) error("Full cover blocks the spell.");
   } else {
     if (!targets.length) error("Choose at least one target.");
     for (const creature of targets) {
       validTarget(caster,creature);
       if (!effect.self && distanceFt(caster,creature) > effect.range) error(creature.name+" is out of range.");
-      if (!effect.self && (options.cover === "full" || !lineClear(battle,caster,creature))) error("Full cover blocks the spell.");
+      if (!effect.self && (options.cover === "full" || !lineClear(battle,caster,creature,options.map))) error("Full cover blocks the spell.");
       if (healing && ["undead","construct"].includes(creature.creatureType)) error("This spell cannot heal that target.");
     }
   }
