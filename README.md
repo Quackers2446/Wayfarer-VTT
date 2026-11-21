@@ -45,6 +45,8 @@ Under **Grid alignment** in Setup or Table tools, choose **Artwork only**, **Art
 
 **Enter game** opens the play screen. Select a party portrait for its live sheet, inventory, and remaining slots. Pick a square to explore. Wayfarer rolls initiative when a party member reaches an enemy’s sight or engages it. In combat, point at a square to see what it costs to reach and how much movement will remain. On touch screens, select a square and confirm **Move here**.
 
+Party members tied on initiative can each move while their consecutive group is active. Each character has their own movement budget, and spend from early movement carries into their action turn. A monster between two characters breaks the group. Attacks, spells, and End turn follow the displayed order.
+
 Hostile NPCs take their turns automatically in both the game screen and combat started from Setup. They use imported weapon attacks and follow the 2014 5e movement limits, walls, weapon ranges, and action economy. The game resolves hostile opportunity attacks and prompts the appropriate player for a party opportunity attack. During play, callouts over the monster show its action, attack roll, and result. The combat log keeps the full record.
 
 The **Story** journal opens with the area objective and adds the first player-facing read-aloud passage as the party enters each mapped room that has one. In Cragmaw Hideout, clear Sildar’s room and move beside him to free him and learn where Gundren may have been taken. Branching dialogues, scripted encounters, and quest transitions elsewhere require adventure-specific game logic.
@@ -55,7 +57,7 @@ Defeated monsters leave dimmed tokens with an × at the spot where they fell. Th
 
 Fog of war is on when you enter a game. A soft gradient blends visible, explored, and uncharted ground. Creatures follow actual line of sight. Cragmaw Hideout and its player map load prepared walls and sight blockers, with the camera starting near the party. Other maps use sight range, tagged rooms where available, and blocked squares. The party shares visibility across browsers, and the encounter saves explored squares with the party’s positions.
 
-Weapons, spells, and items appear in the action bar. Select a spell, choose an appropriate slot and targets, and cast. The automated effects cover Sacred Flame, Poison Spray, Fire Bolt, Ray of Frost, Vicious Mockery, Eldritch Blast, Mind Sliver, Healing Word, Cure Wounds, the standard False Life, Armor of Agathys, Misty Step, Aid, and Fireball. For other spells, open **Spell rules**, resolve the effect at the table, and use **Record manual cast** when available. Workbook-specific charges and free casts follow table rulings. In Setup, edit token slots and spell modifiers. Re-import a workbook to capture its slot values on newly added tokens.
+Weapons, spells, and items appear in the action bar. Choose a spell, slot and targets before casting. Automated effects include attack cantrips, healing, temporary HP, Misty Step, Aid, Fireball, Burning Hands, Magic Missile, Dissonant Whispers, Sleep, Hold Person, Charm Person, Invisibility, Witch Bolt, Fog Cloud, Darkness, and Dragon’s Breath. Spell zones can obscure sight, and sustained spells track concentration and duration. **Spell rules** shows the matched reference. Spells marked manual, including workbook-specific charges and free casts, still need a table ruling. Edit remaining slots or modifiers in Setup when the workbook leaves them blank.
 
 The rules layer runs locally in the browser. [SRD attribution](dist/assets/srd-attribution.txt).
 

@@ -1,5 +1,5 @@
 import {
-  actorIsUp, approachPath, currentActor, diceTerms, distanceFt, endInitiative, endTurn, lineClear,
+  actorIsUp, approachPath, charmedBy, currentActor, diceTerms, distanceFt, endInitiative, endTurn, incapacitated, lineClear,
   log, moveLeft, moveToken, occupies, opportunity, resolveOpportunity, rollStrike, speedOf, turnAction,
 } from "./combat.mjs";
 
@@ -13,7 +13,8 @@ export function enemyTurnPending(battle) {
   const reaction = opportunity(battle);
   if (reaction) return reaction.foe.side === "hostile";
   const actor = currentActor(battle);
-  return actor?.side === "hostile" || (actor?.side === "party" && actor.stable && !actorIsUp(actor));
+  return actor?.side === "hostile" || (actor?.side === "party" &&
+    (incapacitated(actor) && (!waitingForSave(actor) || battle.deathRolled) || actor.stable && !actorIsUp(actor)));
 }
 
 function attackTarget(battle, map, actor, targets, weapons, normalRangeOnly = false) {
@@ -46,14 +47,14 @@ function approach(battle, map, actor, targets, weapons) {
 }
 
 function enemyTurn(battle, map, actor, heroes, random) {
-  if (!canAct(actor)) return;
+  if (!canAct(actor) || incapacitated(actor)) return;
   if (actor.prone && speedOf(actor) && moveLeft(battle,actor) >= speedOf(actor)/2) {
     turnAction(battle,actor,"stand");
   }
   const weapons = actor.attacks.filter((weapon) => Number.isFinite(weapon.bonus) && diceTerms(weapon.damage))
     .flatMap((weapon) => weapon.thrown ? [weapon,{...weapon,...weapon.thrown,name:weapon.name+" (thrown)"}] : [weapon])
     .sort((a,b) => Number(Boolean(a.normalRange)) - Number(Boolean(b.normalRange)));
-  const targets = heroes.filter(canAct).sort((a,b) => distanceFt(actor,a)-distanceFt(actor,b));
+  const targets = heroes.filter((target) => canAct(target) && !charmedBy(actor,target)).sort((a,b) => distanceFt(actor,a)-distanceFt(actor,b));
   if (!battle.action && !attackTarget(battle,map,actor,targets,weapons,true)) {
     approach(battle,map,actor,targets,weapons);
     if (battle.movement) return;
@@ -98,8 +99,9 @@ export function runEnemyTurns(battle, map, random = Math.random) {
       enemyTurn(battle,map,actor,heroes,random);
       lastEnemy = actor.name;
       if (battle.movement) break;
-    } else if (!actor?.stable || actorIsUp(actor)) break;
-    endTurn(battle);
+    } else if (!incapacitated(actor) && (!actor?.stable || actorIsUp(actor))) break;
+    if (waitingForSave(actor) && !battle.deathRolled) break;
+    endTurn(battle,random);
   }
   return lastEnemy && battle.log.at(-1) !== before ? lastEnemy + " acted. See the combat log for rolls." : "";
 }

@@ -200,6 +200,7 @@ export function partyActor(record) {
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
     speed, darkvision:character.rulesDetails.darkvision, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),resist:character.resistances,
+    creatureType:"humanoid",sleepImmune:/\b(?:elf|half-elf|eladrin|shadar-kai|drow)\b/i.test(character.species ?? ""),
     spells:[...new Map(spells.map((spell) => [spell.key,spell])).values()],
     slots:{...Object.fromEntries(spells.filter((spell) => spell.level).map((spell) =>
       [spell.level,{current:null,maximum:null}])), ...structuredClone(character.spellSlots ?? {})},
@@ -263,7 +264,7 @@ export async function creatureActor({name, source, nickname, hp, side, currentHp
     packTactics:data.trait?.some((trait) => trait.name === "Pack Tactics"),
     nimbleEscape:data.trait?.some((trait) => trait.name === "Nimble Escape"),
     attacks, multiattack, swings:multiattack?.length ?? 1,
-    resist:data.resist, immune:data.immune, vulnerable:data.vulnerable,
+    resist:data.resist, immune:data.immune, vulnerable:data.vulnerable, conditionImmune:data.conditionImmune,
   });
 }
 
@@ -279,9 +280,9 @@ export const trainingMap = {
 
 export function trainingActors() {
   return [
-    makeActor({name:"Rowan", side:"party", resolveDeath:true, hp:21, maxHp:21, ac:16, initiative:2, dex:14, x:3,y:4,
+    makeActor({name:"Rowan", side:"party", creatureType:"humanoid", resolveDeath:true, hp:21, maxHp:21, ac:16, initiative:2, dex:14, x:3,y:4,
       attacks:[{name:"Longsword", bonus:4, damage:"1d8+2", type:"slashing", reach:5}]}),
-    makeActor({name:"Practice guard", hp:11, maxHp:11, ac:13, initiative:1, dex:12, x:8,y:4,
+    makeActor({name:"Practice guard", creatureType:"humanoid", hp:11, maxHp:11, ac:13, initiative:1, dex:12, x:8,y:4,
       statName:"Guard",source:"MM",tokenArt:bestiaryTokenPath({name:"Guard",source:"MM"}),
       attacks:[{name:"Spear", bonus:3, damage:"1d6+1", type:"piercing", reach:5,
         thrown:{normalRange:20,longRange:60}}]}),

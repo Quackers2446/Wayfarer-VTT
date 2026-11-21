@@ -70,6 +70,7 @@ body:has(.game-main){overflow:hidden;background:#17231d}
 .game-turn small{font-size:.75rem;color:#dae6cf}
 .game-turn-hostile{background:#603b34;border-color:#925e50}
 .game-turn-current{border-color:#ead199;box-shadow:0 0 0 1px #b9a274}
+.game-turn-shared{border-color:#ad966d}
 .combat-cues{position:absolute;inset:0;z-index:3;pointer-events:none}
 .combat-cue{
   position:absolute;max-width:min(238px,calc(100% - 16px));padding:7px 10px;border:1px solid #a68b68;border-radius:7px;

@@ -212,6 +212,14 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
 
   if (fog) drawFog(c,map,fog);
 
+  for (const zone of battle.spellZones ?? []) {
+    c.fillStyle = zone.name === "Darkness" ? "#160e28a8" : "#b3cad252";
+    for (const key of zone.cells) {
+      const [x,y] = key.split(":").map(Number);
+      if (!fog || fog.visible.has(key) || hasExplored(fog.memory,x,y)) c.fillRect(...cellBounds(map,{x,y}));
+    }
+  }
+
   for (const marker of markers) {
     const [x,y] = cellCenter(map,marker);
     const length = map.size * .30;

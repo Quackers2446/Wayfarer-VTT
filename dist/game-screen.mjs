@@ -1,4 +1,4 @@
-import {actorIsUp, moveLeft, speedOf} from "./combat.mjs";
+import {actorIsUp, currentActor, movementBudget, movementGroup, moveLeft} from "./combat.mjs";
 import {escape} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {mapControls, mapHint, mapViewport} from "./map-camera.mjs";
@@ -7,7 +7,7 @@ function button(label, symbol, action, extra = "") {
   return `<button class="game-button" type="button" data-play="${action}" ${extra}>${symbol ? icon(symbol,17) : ""}${escape(label)}</button>`;
 }
 
-function portraits(party, selected, inCombat, controllers, controller, players) {
+function portraits(party, selected, inCombat, controllers, controller, players, movers) {
   const names = new Map(players.map(({id,username}) => [id,username]));
   return party.length ? party.map((character, index) => {
     const name = escape(character.name);
@@ -26,8 +26,8 @@ function portraits(party, selected, inCombat, controllers, controller, players) 
           ${owner ? `<small>${mine ? "Your character" : escape(names.get(owner) ?? "Claimed")}</small>` : ""}
         </span>
       </button>
-      ${!inCombat && (!owner || mine) && actorIsUp(character) && selected?.id !== character.id
-        ? button("Control","", "control-party", `data-id="${id}"`) : ""}
+      ${(!inCombat || movers.includes(character)) && (!owner || mine) && actorIsUp(character) && selected?.id !== character.id
+        ? button(inCombat ? "Move" : "Control","", "control-party", `data-id="${id}" aria-label="${inCombat ? "Select to move " + name : "Control"}"`) : ""}
       ${controllers && (!owner || mine) ? button(mine ? "Release" : "Claim","","claim-party",`data-id="${id}" aria-label="${mine ? "Release" : "Claim"} ${name}"`) : ""}
     </div>`;
   }).join("") : '<a class="game-link" href="#play">Add a party member</a>';
@@ -39,10 +39,13 @@ export function gameScreen({
   destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative, players = [],
 }) {
   const active = battle.round > 0;
+  const turn = currentActor(battle);
+  const movers = movementGroup(battle);
+  const movingEarly = active && selected && selected !== turn;
   const enemyTurn = active && selected?.side === "hostile";
   const online = players.filter((player) => player.online).length;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
-  const total = selected && active ? speedOf(selected) + battle.dash : 0;
+  const total = selected && active ? movementBudget(battle,selected) : 0;
   const categoryList = [
     ["move","Move","footprints"],["weapon","Weapons","shield"],["spell","Spells","sparkles"],
     ["potion","Items","sheet"],
@@ -66,12 +69,12 @@ export function gameScreen({
     <div class="game-middle">
       <aside class="game-party" aria-label="Party">
         <h2>Party</h2>
-        <div class="game-roster">${portraits(party,selected,active,controllers,controller,players)}</div>
+        <div class="game-roster">${portraits(party,selected,active,controllers,controller,players,movers)}</div>
       </aside>
       <div class="game-stage">
         ${active ? `<div class="game-initiative" aria-label="Initiative order">${battle.order.filter((id) => !visibleInitiative || visibleInitiative.has(id)).map((id) => {
           const actor = battle.actors.find((entry) => entry.id === id);
-          return actor ? `<span class="game-turn ${actor.id === selected?.id ? "game-turn-current" : ""} ${actor.side === "hostile" ? "game-turn-hostile" : ""}"
+          return actor ? `<span class="game-turn ${actor.id === turn?.id ? "game-turn-current" : movers.includes(actor) ? "game-turn-shared" : ""} ${actor.side === "hostile" ? "game-turn-hostile" : ""}"
             title="${escape(actor.name)}"><span class="game-turn-portrait" aria-hidden="true">
               <span data-token-initial>${escape(actor.marker ?? actor.name.charAt(0))}</span>
               <canvas data-creature-portrait="${escape(actor.id)}" hidden></canvas>
@@ -95,20 +98,21 @@ export function gameScreen({
     <footer class="game-hud">
       <div class="game-hud-top">
         <div class="game-active">
-          <span class="game-label">${enemyTurn ? "Enemy turn · game controlled" : active ? "Current turn" : "Selected character"}</span>
+          <span class="game-label">${enemyTurn ? "Enemy turn · game controlled" : movingEarly ? "Shared initiative · move" : active ? "Current turn" : "Selected character"}</span>
           <strong>${escape(selected?.name ?? "Choose a party member")}</strong>
+          ${selected?.concentration ? `<span class="game-label">Concentrating · ${escape(selected.concentration.name)}</span>` : ""}
         </div>
         ${enemyTurn ? "" : `<div class="game-move" ${active ? 'aria-label="Movement budget"' : ""}>
           ${active ? `<span><strong>${remaining} ft</strong> left / ${total} ft</span>
           <progress value="${Math.min(Math.max(1,total), remaining)}" max="${Math.max(1,total)}" aria-label="Movement remaining"></progress>` :
             '<strong>Free movement</strong>'}
         </div>`}
-        ${active && !enemyTurn ? `<div class="game-economy"><span class="${battle.action ? "used" : ""}">Action ${battle.action ? "used" : "ready"}</span>
+        ${active && !enemyTurn && !movingEarly ? `<div class="game-economy"><span class="${battle.action ? "used" : ""}">Action ${battle.action ? "used" : "ready"}</span>
           <span class="${battle.bonusUsed ? "used" : ""}">Bonus ${battle.bonusUsed ? "used" : "ready"}</span></div>` : ""}
-        ${active && !enemyTurn ? button("End turn","check","end",battle.movement || !canAct ? "disabled" : "") : ""}
+        ${active && !enemyTurn && !movingEarly ? button("End turn","check","end",battle.movement || !canAct ? "disabled" : "") : ""}
       </div>
       <div class="game-hud-body">
-        ${canAct && !battle.movement ? `<nav class="game-categories" aria-label="Actions">
+        ${canAct && !battle.movement && !movingEarly ? `<nav class="game-categories" aria-label="Actions">
           ${categoryList.map(([key,label,symbol]) => button(label,symbol,"game-category",`data-id="${key}" aria-pressed="${category === key}"`)).join("")}
         </nav>` : ""}
         <div class="game-action-content">

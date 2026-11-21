@@ -47,6 +47,22 @@ export const currentActor = (battle) => battle.actors.find(({id}) => id === batt
 export const actorIsUp = (actor) => Boolean(actor && actor.hp > 0 && !actor.dead);
 export const occupies = (actor) => !actor.dead && actor.x != null && actor.y != null;
 export const modifier = (score) => score == null ? null : Math.floor((score - 10) / 2);
+export const condition = (actor,name) => actor?.conditions?.find((effect) => effect.name === name);
+export const incapacitated = (actor) => Boolean(condition(actor,"Paralyzed") || condition(actor,"Asleep"));
+
+export function movementGroup(battle) {
+  const first = currentActor(battle);
+  if (!battle.round || !first) return [];
+  const group = [first];
+  if (first.side === "party" && Number.isFinite(first.initiativeRoll)) {
+    for (const id of battle.order.slice(battle.turn+1)) {
+      const actor = battle.actors.find((entry) => entry.id === id);
+      if (actor?.side !== "party" || actor.initiativeRoll !== first.initiativeRoll) break;
+      if (actorIsUp(actor) && occupies(actor) && !incapacitated(actor)) group.push(actor);
+    }
+  }
+  return group;
+}
 
 export function newBattle() {
   return {actors:[], order:[], turn:0, round:0, spent:0, dash:0, action:null, attacksMade:0, bonusUsed:false, log:[], terrain:{}, elapsed:0};
@@ -73,9 +89,41 @@ export function makeActor(record) {
   };
 }
 
+function removeCondition(actor,effect) {
+  if (actor.conditions) actor.conditions = actor.conditions.filter((entry) => entry !== effect);
+}
+
+function endConcentration(battle,caster) {
+  if (!caster.concentration) return;
+  log(battle,caster.name + " loses concentration on " + caster.concentration.name + ".");
+  for (const actor of battle.actors) {
+    if (actor.conditions) actor.conditions = actor.conditions.filter((effect) => effect.concentration !== caster.id);
+  }
+  if (battle.spellZones) battle.spellZones = battle.spellZones.filter((zone) => zone.caster !== caster.id);
+  delete caster.concentration;
+}
+
+function startConcentration(battle,caster,name,duration) {
+  endConcentration(battle,caster);
+  caster.concentration = {name,expires:(battle.elapsed ?? 0)+duration};
+}
+
+function addCondition(battle,actor,name,duration,properties = {}) {
+  if (storedDamageTypes(actor.conditionImmune).includes(name.toLowerCase())) {
+    log(battle,actor.name + " is immune to " + name.toLowerCase() + ".");
+    return;
+  }
+  const effects = actor.conditions ??= [];
+  effects.push({name,expires:(battle.elapsed ?? 0)+duration,...properties});
+  log(battle,actor.name + (name === "Dragon’s Breath" ? " gains Dragon’s Breath." : " is " + name.toLowerCase() + "."));
+  if (incapacitated(actor)) endConcentration(battle,actor);
+}
+
 function advanceTime(battle, seconds) {
   battle.elapsed = (battle.elapsed ?? 0) + seconds;
   for (const creature of battle.actors) {
+    if (creature.concentration?.expires <= battle.elapsed) endConcentration(battle,creature);
+    if (creature.conditions) creature.conditions = creature.conditions.filter((effect) => effect.expires > battle.elapsed);
     if (creature.tempExpires && creature.tempExpires <= battle.elapsed) {
       creature.tempHp = 0;
       creature.agathys = null;
@@ -89,6 +137,7 @@ function advanceTime(battle, seconds) {
       if (!creature.hp) {
         creature.prone = true;
         if (!creature.resolveDeath) creature.dead = true;
+        endConcentration(battle,creature);
       }
       log(battle,"Aid expires for "+creature.name+".");
     }
@@ -104,7 +153,8 @@ function resetTurn(battle) {
   for (const creature of battle.actors) {
     if (creature.slowedBy === actor.id) creature.slowedBy = null;
   }
-  battle.spent = 0;
+  battle.spent = battle.earlyMovement?.[actor.id] ?? 0;
+  if (battle.earlyMovement) delete battle.earlyMovement[actor.id];
   battle.dash = 0;
   battle.action = null;
   battle.attacksMade = 0;
@@ -129,6 +179,7 @@ export function startInitiative(battle, random = Math.random, participantIds = n
   battle.round = 1;
   battle.turn = 0;
   battle.deathRolled = false;
+  delete battle.earlyMovement;
   resetTurn(battle);
   log(battle, "Initiative — " + scores.map((actor) => actor.name + " " + actor.initiativeRoll).join(", ") + ".");
   return currentActor(battle);
@@ -150,7 +201,7 @@ export function joinInitiative(battle, actor, random = Math.random) {
   log(battle,actor.name+" joins initiative with "+actor.initiativeRoll+".");
 }
 
-export function endTurn(battle) {
+export function endTurn(battle, random = Math.random) {
   if (!battle.round) error("Start initiative first.");
   if (battle.movement) error("Resolve the opportunity attack before ending the turn.");
   const actor = currentActor(battle);
@@ -158,6 +209,15 @@ export function endTurn(battle) {
     error("Roll this character's death save before ending the turn.");
   }
   if (actor) {
+    for (const effect of actor.conditions ?? []) {
+      if (!effect.repeatSave || !actorIsUp(actor)) continue;
+      const save = savingThrow(actor,effect.repeatSave,{random});
+      const passed = save.total >= effect.dc;
+      log(battle,actor.name + " repeats the save against " + effect.name + " — " + save.total + " vs DC " +
+        effect.dc + (passed ? ", succeeds." : ", fails."));
+      if (passed) removeCondition(actor,effect);
+    }
+    if (actor.concentration?.bolt && battle.action && battle.action !== "witch-bolt") endConcentration(battle,actor);
     actor.mocked = false;
     for (const creature of battle.actors) {
       if (creature.sliver?.caster === actor.id && creature.sliver.round <= battle.round) creature.sliver = null;
@@ -168,6 +228,7 @@ export function endTurn(battle) {
     if (battle.turn === battle.order.length) {
       battle.turn = 0;
       battle.round += 1;
+      delete battle.earlyMovement;
       advanceTime(battle,6);
     }
     const next = currentActor(battle);
@@ -194,11 +255,14 @@ export function endInitiative(battle) {
   battle.order = [];
   battle.round = 0;
   battle.turn = 0;
+  delete battle.earlyMovement;
   log(battle, "Initiative ended.");
 }
 
-export const speedOf = (actor) => Math.max(0, actor.speed - (actor.slowedBy ? 10 : 0));
-export const moveLeft = (battle, actor) => Math.max(0, speedOf(actor) + battle.dash - battle.spent);
+export const speedOf = (actor) => incapacitated(actor) ? 0 : Math.max(0, actor.speed - (actor.slowedBy ? 10 : 0));
+export const movementBudget = (battle,actor) => speedOf(actor) + (currentActor(battle)?.id === actor.id ? battle.dash : 0);
+export const moveLeft = (battle, actor) => Math.max(0, movementBudget(battle,actor) -
+  (currentActor(battle)?.id === actor.id ? battle.spent : (battle.earlyMovement?.[actor.id] ?? 0)));
 
 export function placeToken(battle, actor, x, y, board) {
   if (actor.dead) error("This token is defeated.");
@@ -211,7 +275,7 @@ export function placeToken(battle, actor, x, y, board) {
   actor.y = y;
 }
 
-function findPath(battle, actor, x, y, board, exploration = false, {goal, budget = exploration ? Infinity : moveLeft(battle,actor)} = {}) {
+function findPath(battle, actor, x, y, board, exploration = false, {goal, score, budget = exploration ? Infinity : moveLeft(battle,actor)} = {}) {
   const origin = keyAt(actor.x, actor.y);
   const destination = keyAt(x, y);
   const blockers = new Map(battle.actors.filter((entry) => entry.id !== actor.id && occupies(entry)).map((entry) =>
@@ -219,6 +283,12 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, budget
   if (blockers.has(destination)) error("Another token occupies that square.");
   const known = new Map([[origin, 0]]);
   const pending = [{x:actor.x, y:actor.y, cost:0, previous:null}];
+  let best = pending[0];
+  const trace = (cell) => {
+    const path = [];
+    for (let step = cell; step.previous; step = step.previous) path.push({x:step.x,y:step.y,cost:step.cost});
+    return {cost:cell.cost,path:path.reverse()};
+  };
   let nextUnvisited = 0;
   const blocked = (col,row) => !mapFloor(board,col,row) || battle.terrain[keyAt(col,row)] === "wall";
   while (exploration ? nextUnvisited < pending.length : pending.length) {
@@ -226,11 +296,8 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, budget
     const cell = exploration ? pending[nextUnvisited++] : pending.pop();
     const here = keyAt(cell.x, cell.y);
     if (cell.cost !== known.get(here)) continue;
-    if (here === destination || (goal && !blockers.has(here) && goal(cell))) {
-      const path = [];
-      for (let step = cell; step.previous; step = step.previous) path.push({x:step.x,y:step.y,cost:step.cost});
-      return {cost:cell.cost,path:path.reverse()};
-    }
+    if (here === destination || (goal && !blockers.has(here) && goal(cell))) return trace(cell);
+    if (score && !blockers.has(here) && score(cell) > score(best)) best = cell;
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
         const col = cell.x + dx;
@@ -248,7 +315,7 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, budget
       }
     }
   }
-  return null;
+  return score ? trace(best) : null;
 }
 
 export function approachPath(battle, actor, board, goal) {
@@ -256,7 +323,8 @@ export function approachPath(battle, actor, board, goal) {
 }
 
 export function previewMovement(battle, actor, x, y, board) {
-  if (!actorIsUp(actor) || !occupies(actor) || battle.movement || x < 0 || y < 0 || x >= board.cols || y >= board.rows) return null;
+  if (!actorIsUp(actor) || !occupies(actor) || incapacitated(actor) || battle.movement || x < 0 || y < 0 || x >= board.cols || y >= board.rows) return null;
+  if (battle.round && !movementGroup(battle).includes(actor)) return null;
   try {return findPath(battle, actor, x, y, board, battle.round === 0);} catch {return null;}
 }
 
@@ -277,7 +345,11 @@ function assertTurn(battle, actor) {
   if (battle.movement) error("Resolve the opportunity attack before continuing.");
   if (!battle.round || currentActor(battle)?.id !== actor.id) error("It is not this token’s turn.");
   if (!actorIsUp(actor)) error("This token cannot take actions at 0 hit points.");
+  if (incapacitated(actor)) error("This character is incapacitated.");
 }
+
+export const charmedBy = (actor,target) => Boolean(target && actor.conditions?.some((effect) =>
+  effect.name === "Charmed" && effect.source === target.id));
 
 function reactionWeapons(actor) {
   return actor.attacks.filter((attack) => !attack.normalRange && Number.isFinite(attack.bonus) && Boolean(diceTerms(attack.damage)));
@@ -287,11 +359,13 @@ function walkRemaining(battle, actor, board) {
   const walk = battle.movement;
   while (walk.index < walk.path.length && actorIsUp(actor)) {
     const next = walk.path[walk.index];
-    const foe = !actor.disengaged && battle.actors.find((other) => actorIsUp(other) && occupies(other) &&
+    const disengaged = currentActor(battle)?.id === actor.id && actor.disengaged;
+    const foe = !disengaged && !walk.noOpportunity && battle.actors.find((other) => actorIsUp(other) && occupies(other) &&
+      !incapacitated(other) && !charmedBy(other,actor) && !condition(actor,"Invisible") &&
       other.side !== actor.side && other.side !== "neutral" && !other.reactionUsed && !walk.passed.includes(other.id) &&
       reactionWeapons(other).some((weapon) => {
         const reach = weapon.reach || 5;
-        return distanceFt(actor,other) <= reach && distanceFt(next,other) > reach && lineClear(battle,other,actor,board,{vision:true});
+        return distanceFt(actor,other) <= reach && distanceFt(next,other) > reach && canSee(battle,other,actor,board);
       }));
     if (foe) {
       walk.foe = foe.id;
@@ -301,10 +375,15 @@ function walkRemaining(battle, actor, board) {
     actor.y = next.y;
     walk.index += 1;
     walk.passed = [];
+    checkSpellTethers(battle,board);
   }
   const distance = walk.path[walk.index-1]?.cost ?? 0;
-  battle.spent += distance;
   if (distance) {
+    if (!walk.forced && currentActor(battle)?.id === actor.id) battle.spent += distance;
+    else if (!walk.forced) {
+      const movement = battle.earlyMovement ??= {};
+      movement[actor.id] = (movement[actor.id] ?? 0)+distance;
+    }
     log(battle, actor.name + " moves " + distance + " ft.");
     monsterEvent(battle,actor,{action:"Moved " + distance + " ft"});
   }
@@ -313,7 +392,9 @@ function walkRemaining(battle, actor, board) {
 
 export function moveToken(battle, actor, x, y, board) {
   if (!battle.round) return placeToken(battle, actor, x, y, board);
-  assertTurn(battle, actor);
+  if (battle.movement) error("Resolve the opportunity attack before continuing.");
+  if (!movementGroup(battle).includes(actor)) error("This character cannot move at the current initiative.");
+  if (!actorIsUp(actor) || !occupies(actor)) error("This character cannot move.");
   const result = findPath(battle, actor, x, y, board);
   if (!result) error("That square is blocked or beyond the token’s remaining movement.");
   if (!result.cost) return;
@@ -341,7 +422,7 @@ export function resolveOpportunity(battle, attackIndex, random = Math.random, bo
     const attack = attacks[attackIndex];
     if (!attack) error("Select a melee attack.");
     foe.reactionUsed = true;
-    resolveWeaponRoll(battle,foe,actor,attack,{reaction:true},random);
+    resolveWeaponRoll(battle,foe,actor,attack,{reaction:true,map:board},random);
   } else log(battle, foe.name + " passes the opportunity attack.");
   battle.movement.passed.push(foe.id);
   battle.movement.foe = null;
@@ -379,7 +460,7 @@ export function turnAction(battle, actor, action) {
   monsterEvent(battle,actor,{action:label});
 }
 
-export function applyDamage(battle, actor, rawDamage, type, critical = false) {
+export function applyDamage(battle, actor, rawDamage, type, critical = false, random = Math.random, source) {
   let damage = Math.max(0, rawDamage);
   if (type && storedDamageTypes(actor.immune).includes(type)) damage = 0;
   else if (type) {
@@ -400,6 +481,26 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false) {
       actor.dead = actor.failures >= 3;
     } else {
       actor.prone = true;
+    }
+  }
+  if (damage) {
+    const asleep = condition(actor,"Asleep");
+    if (asleep) removeCondition(actor,asleep);
+    if (source) {
+      for (const effect of actor.conditions ?? []) {
+        if (effect.name === "Charmed" && battle.actors.find(({id}) => id === effect.source)?.side === source.side) {
+          removeCondition(actor,effect);
+        }
+      }
+    }
+    if (actor.concentration) {
+      if (!actorIsUp(actor) || incapacitated(actor)) endConcentration(battle,actor);
+      else {
+        const dc = Math.max(10,Math.floor(damage/2));
+        const save = savingThrow(actor,"con",{random});
+        log(battle,actor.name + " concentration save — " + save.total + " vs DC " + dc + ".");
+        if (save.total < dc) endConcentration(battle,actor);
+      }
     }
   }
   return {damage, absorbed, defeated:actor.dead, unconscious:!actor.dead && actor.hp === 0 && before > 0};
@@ -443,17 +544,17 @@ function validTarget(attacker, target, allowDown = true) {
   }
 }
 
-function recordDamage(battle, target, amount, type, breakdown, critical = false) {
-  const outcome = applyDamage(battle,target,amount,type,critical);
+function recordDamage(battle, target, amount, type, breakdown, critical = false, random = Math.random, source) {
+  const outcome = applyDamage(battle,target,amount,type,critical,random,source);
   log(battle, target.name + " takes " + outcome.damage + (type ? " " + type : "") + " damage" +
     " (" + breakdown + (outcome.absorbed ? "; " + outcome.absorbed + " absorbed by temp HP" : "") + ")" +
     (outcome.defeated ? " and is defeated." : outcome.unconscious ? " and falls unconscious." : "."));
   return outcome;
 }
 
-function damageLog(battle, target, expression, type, critical, random) {
+function damageLog(battle, target, expression, type, critical, random, source) {
   const roll = rollDice(expression,{doubleDice:critical,random});
-  return recordDamage(battle,target,roll.total,type,roll.breakdown,critical);
+  return recordDamage(battle,target,roll.total,type,roll.breakdown,critical,random,source);
 }
 
 function savingThrow(actor, ability, {extra = 0, advantage = false, random = Math.random} = {}) {
@@ -468,15 +569,20 @@ function savingThrow(actor, ability, {extra = 0, advantage = false, random = Mat
 }
 
 function attackMode(battle, attacker, target, options, ranged, distance) {
+  const obscured = battle.spellZones?.length > 0 && options.map;
   const nearby = ranged && battle.actors.some((other) => other.side !== attacker.side && other.side !== "neutral" &&
-    actorIsUp(other) && occupies(other) && distanceFt(attacker, other) <= 5);
+    actorIsUp(other) && !incapacitated(other) && !condition(attacker,"Invisible") && occupies(other) && distanceFt(attacker, other) <= 5 &&
+    (!obscured || canSee(battle,other,attacker,options.map)));
   return {
-    advantage: options.mode === "advantage" || (target.prone && distance <= 5) || target.hp === 0 ||
+    advantage: Boolean(options.mode === "advantage" || condition(attacker,"Invisible") || incapacitated(target) || target.hp === 0 ||
+      (obscured && !canSee(battle,target,attacker,options.map)) ||
+      ((target.prone || target.hp === 0) && distance <= 5) ||
       (attacker.packTactics && battle.actors.some((other) => other.id !== attacker.id && other.side === attacker.side &&
-        actorIsUp(other) && occupies(other) && distanceFt(target, other) <= 5)),
-    disadvantage: options.mode === "disadvantage" || nearby || attacker.mocked ||
+        actorIsUp(other) && !incapacitated(other) && occupies(other) && distanceFt(target, other) <= 5))),
+    disadvantage: Boolean(options.mode === "disadvantage" || nearby || attacker.mocked || condition(target,"Invisible") ||
+      (obscured && !canSee(battle,attacker,target,options.map)) ||
       (target.dodging && actorIsUp(target) && speedOf(target) > 0) ||
-      (target.prone && distance > 5) || attacker.prone,
+      ((target.prone || target.hp === 0 || condition(target,"Asleep")) && distance > 5) || attacker.prone),
   };
 }
 
@@ -495,10 +601,36 @@ export function lineClear(battle, from, to, board, {vision = false} = {}) {
   return true;
 }
 
+const obscuredSets = new WeakMap();
+
+function obscuredCells(zones) {
+  if (!obscuredSets.has(zones)) obscuredSets.set(zones,new Set(zones.flatMap((zone) => zone.cells)));
+  return obscuredSets.get(zones);
+}
+
+export function canSee(battle,from,to,map) {
+  if (from.id !== to.id && condition(to,"Invisible")) return false;
+  if (!lineClear(battle,from,to,map,{vision:true})) return false;
+  if (!battle.spellZones?.length || from.x === to.x && from.y === to.y) return true;
+  const obscured = obscuredCells(battle.spellZones);
+  let {x,y} = from;
+  const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
+  const sx = Math.sign(to.x-x), sy = Math.sign(to.y-y);
+  let error = dx+dy;
+  while (!obscured.has(keyAt(x,y))) {
+    if (x === to.x && y === to.y) return true;
+    const next = 2*error;
+    if (next >= dy) {error += dy; x += sx;}
+    if (next <= dx) {error += dx; y += sy;}
+  }
+  return false;
+}
+
 export function rollStrike(battle, attacker, target, weapon, options = {}, random = Math.random) {
   assertTurn(battle, attacker);
   validTarget(attacker, target);
   if (attacker.id === target.id) error("Choose a different target.");
+  if (charmedBy(attacker,target)) error("This character is charmed by the target.");
   if (!Number.isFinite(weapon.bonus) || !diceTerms(weapon.damage)) error("This action needs a numeric attack bonus and a damage formula.");
   if (battle.action && battle.action !== "attack") error("This token has used its action.");
   if (battle.attacksMade >= attacker.swings) error("This token has used its attacks.");
@@ -518,17 +650,18 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
   const mode = attackMode(battle, attacker, target, options, ranged, distance);
   mode.disadvantage ||= ranged && distance > weapon.normalRange;
   const roll = d20(weapon.bonus, {...mode, random});
+  breakInvisibility(battle,attacker);
   attacker.mocked = false;
   const hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= target.ac + (Number(options.cover) || 0));
-  const critical = hit && (roll.kept === 20 || (target.hp === 0 && distance <= 5));
+  const critical = hit && (roll.kept === 20 || ((target.hp === 0 || incapacitated(target)) && distance <= 5));
   let damage;
   let prone;
   log(battle, attacker.name + " · " + weapon.name + " vs " + target.name + " — " + roll.breakdown + " = " + roll.total +
     (critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   if (hit) {
     const retaliation = !ranged && target.tempHp > 0 ? target.agathys : null;
-    damage = damageLog(battle, target, weapon.damage, weapon.type, critical, random);
-    if (retaliation) recordDamage(battle,attacker,retaliation,"cold","Armor of Agathys");
+    damage = damageLog(battle, target, weapon.damage, weapon.type, critical, random, attacker);
+    if (retaliation) recordDamage(battle,attacker,retaliation,"cold","Armor of Agathys",false,random,target);
     if (weapon.proneDC && actorIsUp(target)) {
       const save = savingThrow(target,"str",{random});
       if (save.total < weapon.proneDC) {
@@ -546,8 +679,8 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
 }
 
 const spellEffects = {
-  "vicious mockery": {range:60, save:"wis", type:"psychic", faces:4, mock:true},
-  "sacred flame": {range:60, save:"dex", type:"radiant", faces:8, ignoresCover:true},
+  "vicious mockery": {range:60, save:"wis", type:"psychic", faces:4, mock:true, sight:true},
+  "sacred flame": {range:60, save:"dex", type:"radiant", faces:8, ignoresCover:true, sight:true},
   "poison spray": {range:10, save:"con", type:"poison", faces:12},
   "fire bolt": {range:120, attack:true, type:"fire", faces:10},
   "ray of frost": {range:60, attack:true, type:"cold", faces:8, slow:true},
@@ -560,12 +693,37 @@ const spellEffects = {
   "misty step": {level:2, range:30, bonus:true, teleport:true, exploration:true},
   "aid": {level:2, range:30, aid:true, exploration:true},
   "fireball": {level:3, range:150, area:20, save:"dex", type:"fire", faces:6},
+  "burning hands": {level:1, cone:15, save:"dex", type:"fire", faces:6, dice:3},
+  "dissonant whispers": {level:1, range:60, save:"wis", type:"psychic", faces:6, dice:3, half:true, flee:true},
+  "sleep": {level:1, range:90, area:20, sleep:true, exploration:true},
+  "hold person": {level:2, range:60, save:"wis", humanoid:true, condition:"Paralyzed", concentration:60, repeat:true, moreTargets:true, sight:true, cluster:30},
+  "charm person": {level:1, range:30, save:"wis", humanoid:true, condition:"Charmed", duration:3600, moreTargets:true, exploration:true, sight:true, cluster:30},
+  "invisibility": {level:2, range:5, condition:"Invisible", concentration:3600, moreTargets:true, exploration:true},
+  "witch bolt": {level:1, range:30, attack:true, type:"lightning", faces:12, concentration:60, bolt:true},
+  "magic missile": {level:1, range:120, missiles:true, type:"force", sight:true},
+  "fog cloud": {level:1, range:120, area:20, areaPerSlot:20, zone:"Fog", concentration:3600, exploration:true},
+  "darkness": {level:2, range:60, area:15, zone:"Darkness", concentration:600, exploration:true},
+  "dragons breath": {level:2, range:5, breath:true, bonus:true, concentration:60, exploration:true},
+  "exhale dragons breath": {cone:15, exhale:true},
 };
 
-export const supportedSpell = (key) => spellEffects[key];
+export const breathTypes = ["acid","cold","fire","lightning","poison"];
+export const supportedSpell = (key) => Object.hasOwn(spellEffects,key) ? spellEffects[key] : undefined;
+export const spellTargetCount = (effect,casterLevel,rank) => effect.moreTargets ? 1+Math.max(0,rank-effect.level) :
+  effect.missiles ? 2+rank : effect.beams ? 1+[5,11,17].filter((limit) => casterLevel >= limit).length : effect.aid ? 3 : 1;
+
+function breakInvisibility(battle,actor) {
+  const effect = condition(actor,"Invisible");
+  if (!effect) return;
+  removeCondition(actor,effect);
+  const caster = battle.actors.find(({id}) => id === effect.concentration);
+  if (caster && !battle.actors.some((entry) => entry.conditions?.some((other) =>
+      other.name === "Invisible" && other.concentration === caster.id))) endConcentration(battle,caster);
+}
 
 function checkCast(battle,caster,level,slotLevel,timing) {
   if (!actorIsUp(caster)) error("This token cannot cast at 0 hit points.");
+  if (incapacitated(caster)) error("This character is incapacitated.");
   if (!occupies(caster)) error("Place the caster on the grid first.");
   if (battle.round) {
     if (timing === "reaction") {
@@ -607,14 +765,16 @@ export function recordSpell(battle,caster,spell,slotLevel) {
   if (!["action","bonus","reaction"].includes(spell.timing)) error("Resolve the longer casting time at the table.");
   checkCast(battle,caster,spell.level,slotLevel,spell.timing);
   spendCast(battle,caster,spell.level,slotLevel,spell.timing);
+  breakInvisibility(battle,caster);
   log(battle,caster.name+" casts "+spell.name+(spell.level ? " with a level "+slotLevel+" slot" : "")+" · manual effect.");
 }
 
 function spellSave(battle, caster, target, effect, options, random) {
   const dex = effect.save === "dex";
   const cover = dex && !effect.ignoresCover ? Number(options.cover) || 0 : 0;
-  const result = target.hp === 0 && ["str","dex"].includes(effect.save) ? null : savingThrow(target,effect.save,{
-    extra:cover, advantage:dex && target.dodging && actorIsUp(target) && speedOf(target)>0, random,
+  const result = (target.hp === 0 || incapacitated(target)) && ["str","dex"].includes(effect.save) ? null : savingThrow(target,effect.save,{
+    extra:cover, advantage:effect.condition === "Charmed" && battle.round > 0 && target.side !== caster.side ||
+      dex && target.dodging && actorIsUp(target) && speedOf(target)>0, random,
   });
   const passed = Boolean(result && result.total >= caster.spellDC);
   log(battle,target.name+" save — "+(result ? result.breakdown+" = "+result.total : "automatic failure")+
@@ -625,14 +785,16 @@ function spellSave(battle, caster, target, effect, options, random) {
 function rangedSpellAttack(battle,caster,target,effect,expression,options,random) {
   const distance = distanceFt(caster,target);
   const result = d20(caster.spellAttack,{...attackMode(battle,caster,target,options,true,distance),random});
+  breakInvisibility(battle,caster);
   caster.mocked = false;
   const hit = result.kept === 20 || (result.kept !== 1 && result.total >= target.ac + (Number(options.cover) || 0));
-  const critical = hit && (result.kept === 20 || (target.hp === 0 && distance <= 5));
+  const critical = hit && (result.kept === 20 || ((target.hp === 0 || incapacitated(target)) && distance <= 5));
   log(battle,"Spell attack on "+target.name+" — "+result.breakdown+" = "+result.total+(critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   if (hit) {
-    damageLog(battle,target,expression,effect.type,critical,random);
+    damageLog(battle,target,expression,effect.type,critical,random,caster);
     if (effect.slow && actorIsUp(target)) target.slowedBy = caster.id;
   }
+  return hit;
 }
 
 export function areaCells(battle, origin, radius, board) {
@@ -656,42 +818,160 @@ export function areaCells(battle, origin, radius, board) {
   return visited;
 }
 
+export function spellCells(battle,caster,square,effect,board,rank = effect.level) {
+  if (!effect.cone) return areaCells(battle,square,effect.area+(effect.areaPerSlot ?? 0)*Math.max(0,rank-effect.level),board);
+  const dx = square.x-caster.x, dy = square.y-caster.y;
+  const length = Math.hypot(dx,dy);
+  const cells = new Set();
+  if (!length) return cells;
+  const reach = Math.ceil(effect.cone/5);
+  for (let y = Math.max(0,caster.y-reach); y <= Math.min(board.rows-1,caster.y+reach); y++) {
+    for (let x = Math.max(0,caster.x-reach); x <= Math.min(board.cols-1,caster.x+reach); x++) {
+      const u = x-caster.x, v = y-caster.y;
+      const forward = (u*dx+v*dy)/length;
+      const side = Math.abs(u*dy-v*dx)/length;
+      if (forward > 0 && forward*5 <= effect.cone && side <= forward/2 &&
+          mapFloor(board,x,y) && lineClear(battle,caster,{x,y},board)) cells.add(keyAt(x,y));
+    }
+  }
+  return cells;
+}
+
+function fleeFrom(battle,caster,target,board) {
+  if (!board || !actorIsUp(target) || incapacitated(target) || target.reactionUsed) return;
+  target.reactionUsed = true;
+  const path = findPath(battle,target,null,null,board,false,{budget:speedOf(target),score:(cell) => distanceFt(cell,caster)});
+  if (!path.cost) return;
+  battle.movement = {actor:target.id,path:path.path,index:0,passed:[],forced:true};
+  log(battle,target.name+" uses its reaction to flee.");
+  walkRemaining(battle,target,board);
+}
+
+function boltTarget(battle,caster,map) {
+  const target = battle.actors.find(({id}) => id === caster.concentration?.bolt);
+  return target && occupies(target) && distanceFt(caster,target) <= 30 && lineClear(battle,caster,target,map) ? target : null;
+}
+
+export function checkSpellTethers(battle,map) {
+  for (const caster of battle.actors) {
+    if (caster.concentration?.bolt &&
+        (!boltTarget(battle,caster,map) || currentActor(battle) === caster && battle.action && battle.action !== "witch-bolt")) {
+      endConcentration(battle,caster);
+    }
+  }
+}
+
+export function sustainWitchBolt(battle,caster,map,random = Math.random) {
+  assertTurn(battle,caster);
+  const target = boltTarget(battle,caster,map);
+  if (!target || battle.action) error("Witch Bolt’s action is unavailable.");
+  battle.action = "witch-bolt";
+  log(battle,caster.name+" sustains Witch Bolt on "+target.name+".");
+  damageLog(battle,target,"1d12","lightning",false,random,caster);
+}
+
+export function wakeCreature(battle,actor,target) {
+  assertTurn(battle,actor);
+  const sleep = condition(target,"Asleep");
+  if (!sleep || !occupies(target) || distanceFt(actor,target) > 5 || battle.action) error("Choose a sleeping creature within reach and use your action.");
+  battle.action = "wake";
+  removeCondition(target,sleep);
+  log(battle,actor.name+" wakes "+target.name+".");
+}
+
+function areaDamage(battle,caster,source,square,effect,map,dice,random) {
+  const area = spellCells(battle,caster,square,effect,map);
+  const roll = rollDice(dice+"d"+effect.faces,{random});
+  log(battle,effect.name+" damage roll — "+roll.breakdown+" = "+roll.total+".");
+  for (const creature of battle.actors.filter((actor) => occupies(actor) && area.has(keyAt(actor.x,actor.y)))) {
+    const passed = spellSave(battle,source,creature,effect,{cover:0},random);
+    recordDamage(battle,creature,passed ? Math.floor(roll.total/2) : roll.total,effect.type,passed ? "half on save" : "failed save",false,random,caster);
+    if (creature.side === "hostile" && creature.side !== caster.side) joinInitiative(battle,creature,random);
+  }
+}
+
+function exhaleBreath(battle,caster,options,random) {
+  assertTurn(battle,caster);
+  const breath = condition(caster,"Dragon’s Breath");
+  const {square,map} = options;
+  if (!breath || battle.action) error("The Dragon’s Breath action is unavailable.");
+  if (!square || !map || !Number.isInteger(square.x) || !Number.isInteger(square.y) ||
+      square.x < 0 || square.y < 0 || square.x >= map.cols || square.y >= map.rows || !distanceFt(caster,square)) {
+    error("Choose the direction of the cone.");
+  }
+  battle.action = "breath";
+  log(battle,caster.name+" exhales "+breath.type+" with Dragon’s Breath.");
+  areaDamage(battle,caster,{spellDC:breath.dc},square,{name:"Dragon’s Breath",cone:15,save:"dex",faces:6,type:breath.type},map,breath.dice,random);
+}
+
 export function castSpell(battle,caster,target,spell,slotLevel,options = {},random = Math.random) {
   const effect = supportedSpell(spell.key);
   if (!effect || spell.edition !== "2014" || spell.customUse) error("This spell needs manual adjudication.");
+  if (effect.exhale) return exhaleBreath(battle,caster,options,random);
   const {level = 0, heal:healing} = effect;
   const timing = effect.bonus ? "bonus" : "action";
   if (!battle.round && !effect.exploration) error("Enter combat to cast this spell.");
   checkCast(battle,caster,level,slotLevel,timing);
   const tier = 1 + [5,11,17].filter((threshold) => caster.level >= threshold).length;
   const square = options.square;
-  const targets = effect.self ? [caster] : effect.aid ? [...new Set([target,...(options.targets ?? [])].filter(Boolean))].slice(0,3) :
-    effect.beams ? Array.from({length:tier},(_,index) => index ? (options.targets?.[index-1] ?? target) : target) : [target];
-  if (effect.area || effect.teleport) {
-    if (!square || !options.map || square.x < 0 || square.y < 0 || square.x >= options.map.cols || square.y >= options.map.rows) {
+  const aimed = effect.area || effect.cone || effect.teleport;
+  const count = spellTargetCount(effect,caster.level,slotLevel);
+  const individual = [target,...(options.targets ?? [])];
+  const targets = effect.self ? [caster] : effect.aid || effect.moreTargets ? [...new Set(individual.filter(Boolean))].slice(0,count) :
+    effect.beams || effect.missiles ? Array.from({length:count},(_,index) => individual[index] ?? target) : [target];
+  if (aimed) {
+    if (!square || !options.map || !Number.isInteger(square.x) || !Number.isInteger(square.y) ||
+        square.x < 0 || square.y < 0 || square.x >= options.map.cols || square.y >= options.map.rows) {
       error("Choose a square on the map.");
     }
-    if (effect.teleport && battle.actors.some((actor) => occupies(actor) && actor.x===square.x && actor.y===square.y)) error("Choose an unoccupied destination.");
-    if (distanceFt(caster,square) > effect.range) error("The selected square is out of range.");
-    if (!lineClear(battle,caster,square,options.map,{vision:Boolean(effect.teleport)})) error("The spell cannot reach that square.");
+    if (effect.teleport && (!mapFloor(options.map,square.x,square.y) || battle.terrain[keyAt(square.x,square.y)] === "wall" ||
+        battle.actors.some((actor) => occupies(actor) && actor.x===square.x && actor.y===square.y))) error("Choose an unoccupied destination.");
+    if (effect.cone) {
+      if (!distanceFt(caster,square)) error("Choose the direction of the cone.");
+    } else {
+      if (distanceFt(caster,square) > effect.range) error("The selected square is out of range.");
+      if (effect.teleport ? !canSee(battle,caster,square,options.map) : !lineClear(battle,caster,square,options.map)) {
+        error("The spell cannot reach that square.");
+      }
+    }
   } else {
     if (!targets.length) error("Choose at least one target.");
     for (const creature of targets) {
       validTarget(caster,creature);
+      if (effect.humanoid && creature.creatureType && creature.creatureType !== "humanoid") error(creature.name+" is not a humanoid.");
+      if ((effect.attack || effect.save || effect.missiles) && charmedBy(caster,creature)) error("This character is charmed by "+creature.name+".");
       if (!effect.self && distanceFt(caster,creature) > effect.range) error(creature.name+" is out of range.");
       if (!effect.self && (options.cover === "full" || !lineClear(battle,caster,creature,options.map))) error("Full cover blocks the spell.");
+      if (effect.sight && !canSee(battle,caster,creature,options.map)) error("You must be able to see " + creature.name + ".");
       if (healing && ["undead","construct"].includes(creature.creatureType)) error("This spell cannot heal that target.");
+    }
+    if (effect.cluster && targets.some((creature) => targets.some((other) => distanceFt(creature,other) > effect.cluster))) {
+      error("The targets must be within "+effect.cluster+" ft of each other.");
     }
   }
   if (healing && !Number.isFinite(caster.spellAbility)) error("Set the spellcasting ability modifier.");
   if (effect.attack && !Number.isFinite(caster.spellAttack)) error("Set the spell attack bonus.");
   if (effect.save && !Number.isFinite(caster.spellDC)) error("Set the spell save DC.");
+  if (effect.breath) {
+    if (target.side !== caster.side || !actorIsUp(target) || incapacitated(target)) error("Choose a willing, conscious ally.");
+    if (!breathTypes.includes(options.damageType)) error("Choose a damage type for Dragon’s Breath.");
+    if (!Number.isFinite(caster.spellDC)) error("Set the spell save DC.");
+  }
   spendCast(battle,caster,level,slotLevel,timing);
-  const destination = effect.area || effect.teleport ? " at square "+(square.x+1)+", "+(square.y+1) :
+  if (!effect.attack) breakInvisibility(battle,caster);
+  if (effect.concentration) startConcentration(battle,caster,spell.name,effect.concentration);
+  const destination = aimed ? " at square "+(square.x+1)+", "+(square.y+1) :
     effect.self ? "" : " on "+[...new Set(targets)].map(({name})=>name).join(", ");
   log(battle,caster.name+" casts "+spell.name+destination+(level ? " · level "+slotLevel+" slot." : "."));
   if (effect.teleport) {
     caster.x=square.x; caster.y=square.y;
+    checkSpellTethers(battle,options.map);
+  } else if (effect.zone) {
+    const cells = [...spellCells(battle,caster,square,effect,options.map,slotLevel)];
+    battle.spellZones = [...(battle.spellZones ?? []),{caster:caster.id,name:effect.zone,cells}];
+  } else if (effect.breath) {
+    addCondition(battle,target,"Dragon’s Breath",effect.concentration,
+      {concentration:caster.id,type:options.damageType,dc:caster.spellDC,dice:3+slotLevel-level});
   } else if (effect.temporary) {
     const amount = effect.retaliation ? slotLevel*5 : rollDice("1d4+"+(4+5*(slotLevel-1)),{random}).total;
     if (!caster.tempHp || !options.keepTemp) {
@@ -709,29 +989,67 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
       if (creature.aid === 5*(slotLevel-1)) creature.aidExpires=(battle.elapsed ?? 0)+28800;
       log(battle,creature.name+" gains "+bonus+" current and maximum HP from Aid.");
     }
-  } else if (effect.area) {
-    const area = areaCells(battle,square,effect.area,options.map);
-    const roll = rollDice((8+slotLevel-level)+"d6",{random});
-    log(battle,spell.name+" damage roll — "+roll.breakdown+" = "+roll.total+".");
-    for (const creature of battle.actors.filter((actor) => occupies(actor) && area.has(keyAt(actor.x,actor.y)))) {
-      const passed = spellSave(battle,caster,creature,effect,{cover:0},random);
-      recordDamage(battle,creature,passed ? Math.floor(roll.total/2) : roll.total,effect.type,passed ? "half on save" : "failed save");
-      if (creature.side === "hostile" && creature.side !== caster.side) joinInitiative(battle,creature,random);
+  } else if (effect.area || effect.cone) {
+    if (effect.sleep) {
+      const area = spellCells(battle,caster,square,effect,options.map);
+      const caught = battle.actors.filter((actor) => occupies(actor) && area.has(keyAt(actor.x,actor.y)));
+      const roll = rollDice((5+2*(slotLevel-level))+"d8",{random});
+      let pool = roll.total;
+      log(battle,spell.name+" HP pool — "+roll.breakdown+" = "+pool+".");
+      for (const creature of caught.filter((actor) => actorIsUp(actor) && !condition(actor,"Asleep") && !actor.sleepImmune &&
+          actor.creatureType !== "undead" && !storedDamageTypes(actor.conditionImmune).includes("charmed")).sort((a,b) => a.hp-b.hp)) {
+        if (creature.hp > pool) break;
+        pool -= creature.hp;
+        addCondition(battle,creature,"Asleep",60);
+      }
+    } else {
+      areaDamage(battle,caster,caster,square,{...effect,name:spell.name},options.map,(effect.dice ?? 8)+slotLevel-level,random);
     }
   } else if (healing) {
     const amount = rollDice(slotLevel+"d"+effect.faces,{random});
     const restored = heal(target,amount.total+caster.spellAbility);
     log(battle,target.name+" regains "+restored+" HP ("+amount.breakdown+", modifier "+caster.spellAbility+").");
+  } else if (effect.condition) {
+    for (const creature of targets) {
+      if (effect.save && spellSave(battle,caster,creature,effect,options,random)) continue;
+      addCondition(battle,creature,effect.condition,effect.duration ?? effect.concentration,
+        {source:caster.id,concentration:effect.concentration ? caster.id : null,
+          repeatSave:effect.repeat ? effect.save : null,dc:caster.spellDC});
+    }
+    if (effect.concentration && !battle.actors.some((actor) => actor.conditions?.some((entry) => entry.concentration === caster.id))) {
+      endConcentration(battle,caster);
+    }
+  } else if (effect.missiles) {
+    const roll = rollDice("1d4+1",{random});
+    // Darts strike together, so group the damage by target.
+    for (const creature of new Set(targets)) {
+      const darts = targets.filter((entry) => entry === creature).length;
+      recordDamage(battle,creature,darts*roll.total,effect.type,darts+" darts × "+roll.total,false,random,caster);
+    }
+  } else if (effect.half) {
+    const passed = condition(target,"Deafened") || spellSave(battle,caster,target,effect,options,random);
+    const roll = rollDice((effect.dice+slotLevel-level)+"d"+effect.faces,{random});
+    recordDamage(battle,target,passed ? Math.floor(roll.total/2) : roll.total,effect.type,roll.breakdown,false,random,caster);
+    if (effect.flee && !passed) fleeFrom(battle,caster,target,options.map);
   } else if (effect.save) {
+    if (effect.mock && condition(target,"Deafened")) return;
     if (!spellSave(battle,caster,target,effect,options,random)) {
-      damageLog(battle,target,tier+"d"+effect.faces,effect.type,false,random);
+      damageLog(battle,target,tier+"d"+effect.faces,effect.type,false,random,caster);
       if (effect.mock && actorIsUp(target)) target.mocked = true;
       if (effect.sliver && actorIsUp(target)) target.sliver = {caster:caster.id,round:battle.round+1};
     }
   } else {
     if (effect.attack) {
       for (const creature of targets) {
-        if (!creature.dead) rangedSpellAttack(battle,caster,creature,effect,(effect.beams ? 1 : tier)+"d"+effect.faces,options,random);
+        if (creature.dead) continue;
+        const dice = effect.bolt ? slotLevel : effect.beams ? 1 : tier;
+        const hit = rangedSpellAttack(battle,caster,creature,effect,dice+"d"+effect.faces,options,random);
+        if (effect.bolt && caster.concentration) {
+          if (hit && occupies(creature)) {
+            caster.concentration.bolt = creature.id;
+            battle.action = "witch-bolt";
+          } else endConcentration(battle,caster);
+        }
       }
     }
   }
