@@ -9,6 +9,9 @@ const maxRasterPixels = 8 * 1024 * 1024;
 const fogTextures = new WeakMap();
 const fogDark = "#101a19";
 
+export const defeatedCreature = (actor) => actor.dead && actor.side !== "party" &&
+  Number.isInteger(actor.x) && Number.isInteger(actor.y);
+
 export function rasterPixelRatio(width, height, ratio) {
   return Math.min(ratio,maxRasterEdge/Math.max(width,height),Math.sqrt(maxRasterPixels/(width*height)));
 }
@@ -62,6 +65,60 @@ function drawFog(context,map,{visible,memory}) {
   context.imageSmoothingQuality = "low";
   context.drawImage(texture,x,y,width,height);
   context.restore();
+}
+
+function drawToken(c,map,actor,portrait,highlight) {
+  const [x,y] = cellCenter(map,actor);
+  const radius = map.size * .42;
+  c.beginPath();
+  c.arc(x,y,radius,0,Math.PI*2);
+  c.fillStyle = actor.dead ? "#565c59" : actor.hp === 0 ? "#828584" :
+    actor.side === "party" ? "#356b61" : actor.side === "neutral" ? "#6e6653" : "#9a453a";
+  c.strokeStyle = actor.dead ? "#a6aea7" : highlight || "#f6f4de";
+  c.lineWidth = map.size * (highlight ? .075 : .031);
+  c.fill();
+  if (portrait) {
+    c.save();
+    c.clip();
+    if (actor.dead) {
+      c.filter = "grayscale(1)";
+      c.globalAlpha = .58;
+    }
+    drawMonsterArtwork(c,portrait,x,y,2*radius);
+    c.restore();
+  }
+  c.stroke();
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  if (!portrait) {
+    c.font = "700 " + map.size*.42 + "px system-ui";
+    c.fillStyle = actor.dead ? "#c4c9c4" : "#fff9e8";
+    c.fillText(actor.marker || actor.name.charAt(0).toUpperCase(),x,y);
+  }
+  if (actor.dead || portrait && actor.marker) {
+    const bx = x+radius*.72, by = y+radius*.72;
+    c.beginPath();
+    c.arc(bx,by,map.size*(actor.dead ? .20 : .16),0,Math.PI*2);
+    c.fillStyle = "#292e2a";
+    c.fill();
+    c.lineWidth = map.size*(actor.dead ? .023 : .019);
+    c.strokeStyle = actor.dead ? "#efe6d1" : "#efe6c7";
+    c.stroke();
+    if (actor.dead) {
+      const half = map.size*.077;
+      c.beginPath();
+      c.moveTo(bx-half,by-half);
+      c.lineTo(bx+half,by+half);
+      c.moveTo(bx+half,by-half);
+      c.lineTo(bx-half,by+half);
+      c.lineWidth = map.size*.046;
+      c.stroke();
+    } else {
+      c.font = "700 " + map.size*.19 + "px system-ui";
+      c.fillStyle = "#fff9e8";
+      c.fillText(actor.marker,bx,by);
+    }
+  }
 }
 
 export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
@@ -171,34 +228,11 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
     c.fillText({treasure:"◆",object:"◈",hazard:"!",trap:"!",creature:"?"}[marker.type] ?? "·",x,y);
   }
 
-  for (const actor of battle.actors.filter((actor) => occupies(actor) && (!visible || visible.has(actor.id)))) {
-    const [x,y] = cellCenter(map,actor);
-    const radius = map.size * .42;
-    c.beginPath(); c.arc(x,y,radius,0,Math.PI*2);
-    c.fillStyle = actor.hp === 0 ? "#828584" : actor.side === "party" ? "#356b61" : actor.side === "neutral" ? "#6e6653" : "#9a453a";
-    c.strokeStyle = actor.id === selected ? "#ffeead" : actor.id === target ? "#ffd3c8" : "#f6f4de";
-    c.lineWidth = map.size * (actor.id === selected || actor.id === target ? .075 : .031);
-    c.fill();
-    const portrait = tokenImages?.get(actor.id);
-    if (portrait) {
-      c.save();
-      c.clip();
-      drawMonsterArtwork(c,portrait,x,y,2*radius);
-      c.restore();
-    }
-    c.stroke();
-    c.font = "700 " + map.size*.42 + "px system-ui";
-    c.fillStyle = "#fff9e8";
-    c.textAlign = "center"; c.textBaseline = "middle";
-    if (!portrait) c.fillText(actor.marker || actor.name.charAt(0).toUpperCase(),x,y);
-    else if (actor.marker) {
-      const bx=x+radius*.72, by=y+radius*.72;
-      c.beginPath(); c.arc(bx,by,map.size*.16,0,Math.PI*2);
-      c.fillStyle="#2b3027"; c.fill(); c.lineWidth=map.size*.019; c.strokeStyle="#efe6c7"; c.stroke();
-      c.font="700 "+map.size*.19+"px system-ui"; c.fillStyle="#fff9e8";
-      c.fillText(actor.marker,bx,by);
-    }
-  }
+  const tokens = visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors;
+  // Living tokens appear on top when they move through a defeated creature's square.
+  for (const actor of tokens.filter(defeatedCreature)) drawToken(c,map,actor,tokenImages?.get(actor.id));
+  for (const actor of tokens.filter(occupies)) drawToken(c,map,actor,tokenImages?.get(actor.id),
+    actor.id === selected ? "#ffeead" : actor.id === target ? "#ffd3c8" : "");
 
   if (cursor) {
     c.strokeStyle = "#ffedaa";

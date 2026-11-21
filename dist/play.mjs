@@ -15,7 +15,7 @@ import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord} from "./rules-library.mjs";
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
-import {drawGrid, gridPosition, terrainAt} from "./grid-view.mjs";
+import {defeatedCreature, drawGrid, gridPosition, terrainAt} from "./grid-view.mjs";
 import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
 import {artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
   syncSessionPlayers, tablePanel, writeSession} from "./multiplayer.mjs";
@@ -114,10 +114,10 @@ async function decodeMapImage(blob, entry) {
   }
 }
 
-function visibleTokens(sight = context?.game ? partyVision(battle,map) : null) {
+function visibleTokens(sight = context?.game ? partyVision(battle,map) : null, {includeDefeated = false} = {}) {
   if (!sight) return null;
   return new Set(battle.actors.filter((actor) => actor.side === "party" ||
-    occupies(actor) && sight.has(keyAt(actor.x,actor.y))).map(({id}) => id));
+    (occupies(actor) || includeDefeated && defeatedCreature(actor)) && sight.has(keyAt(actor.x,actor.y))).map(({id}) => id));
 }
 
 function visibleMarkers(sight = context?.game ? partyVision(battle,map) : null) {
@@ -196,7 +196,7 @@ function paintBoard() {
   const footprint = spellSquare ? effect?.area ? areaCells(battle,spellSquare,effect.area,map) :
     new Set([keyAt(spellSquare.x,spellSquare.y)]) : null;
   const sight = context.game ? partyVision(battle,map) : null;
-  const visible = visibleTokens(sight);
+  const visible = visibleTokens(sight,{includeDefeated:true});
   const selectedTarget = context.game && category === "weapon" && canControl(actor)
     ? combatSelection(actor,visible).target?.id : targetId;
   const tokenImages = collectArtwork(visible);

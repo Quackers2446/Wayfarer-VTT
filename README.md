@@ -51,6 +51,8 @@ The **Story** journal opens with the area objective and adds the first player-fa
 
 **Weapons** opens with the first usable weapon and selects the nearest visible enemy it can reach. Choose a different weapon or target from the menus.
 
+Defeated monsters leave dimmed tokens with an × at the spot where they fell. The party can move through those squares.
+
 Fog of war is on when you enter a game. A soft gradient blends visible, explored, and uncharted ground. Creatures follow actual line of sight. Cragmaw Hideout and its player map load prepared walls and sight blockers, with the camera starting near the party. Other maps use sight range, tagged rooms where available, and blocked squares. The party shares visibility across browsers, and the encounter saves explored squares with the party’s positions.
 
 Weapons, spells, and items appear in the action bar. Select a spell, choose an appropriate slot and targets, and cast. The automated effects cover Sacred Flame, Poison Spray, Fire Bolt, Ray of Frost, Vicious Mockery, Eldritch Blast, Mind Sliver, Healing Word, Cure Wounds, the standard False Life, Armor of Agathys, Misty Step, Aid, and Fireball. For other spells, open **Spell rules**, resolve the effect at the table, and use **Record manual cast** when available. Workbook-specific charges and free casts follow table rulings. In Setup, edit token slots and spell modifiers. Re-import a workbook to capture its slot values on newly added tokens.
