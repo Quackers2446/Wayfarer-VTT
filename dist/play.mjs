@@ -8,6 +8,7 @@ import {icon} from "./icons.mjs";
 import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord} from "./rules-library.mjs";
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
 import {drawGrid, gridPosition, terrainAt} from "./grid-view.mjs";
+import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
 import {
   actorIsUp, applyDamage, areaCells, castSpell, currentActor, deathSave, diceTerms, drinkPotion, endInitiative, endTurn, joinInitiative, keyAt, moveLeft,
   exploreToken, heal, log, moveToken, newBattle, occupies, opportunity, placeToken, previewMovement, recordSpell, resolveOpportunity, rollDice,
@@ -40,7 +41,7 @@ let rollMode = "";
 let customWeapon = {name:"Custom strike", bonus:"", damage:"", type:"", normalRange:"", reach:""};
 let selectedCreature = 0;
 let selectedParty = "";
-let zoom = "100";
+let camera;
 let artworkRequest;
 let artworkNote = "";
 let category = "move";
@@ -52,7 +53,6 @@ let spellSquare;
 let castSlot = "";
 const extraTargets = new Map();
 let pendingSquare;
-let centerBoard = false;
 const sceneJobs = new WeakMap();
 let repaintScheduled = false;
 let detectedGrid;
@@ -155,13 +155,6 @@ function ensureScene(entry = map, state = battle) {
 function paintBoard() {
   const canvas = root()?.querySelector("#play-grid");
   if (!canvas) return;
-  if (context.game) {
-    const board = canvas.parentElement;
-    const fitted = Math.min(board.clientWidth,board.clientHeight * map.width / map.height);
-    const width = Math.max(1,fitted*Number(zoom)/100);
-    canvas.style.width = width + "px";
-    canvas.style.marginTop = Math.max(0,(board.clientHeight-width*map.height/map.width)/2) + "px";
-  }
   const actor = selectedActor();
   const choice = combatChoice === "" ? null : choices(actor)[Number(combatChoice)];
   const effect = choice?.usable && choice.mode === "spell" ? supportedSpell(choice.data.key) : null;
@@ -267,6 +260,8 @@ async function loadArtwork(entry, file) {
 function useMap(entry) {
   artworkRequest?.abort();
   artworkRequest = null;
+  camera?.destroy();
+  camera = null;
   artworkNote = "";
   detectedGrid = null; gridDraft = null;
   map = entry;
@@ -282,8 +277,8 @@ function useMap(entry) {
   art = null; selectedId = ""; targetId = ""; combatChoice = ""; cursor = null;
   const initialRoom = map.module === "LMoP" && map.id === "1ab" ? "01b" : map.regions[0]?.id;
   room = map.regions.find(({id}) => id === initialRoom) ?? null;
-  selectedCreature = 0; tool = context?.game ? "move" : "room"; status = ""; zoom = "100";
-  pathPreview = null; previewMessage = ""; spellSquare = null; pendingSquare = null; centerBoard = true;
+  selectedCreature = 0; tool = context?.game ? "move" : "room"; status = "";
+  pathPreview = null; previewMessage = ""; spellSquare = null; pendingSquare = null;
   battles[map.key] = battle;
   if (migrated) saveBattle();
   if (map.module !== "training") {
@@ -294,6 +289,14 @@ function useMap(entry) {
 
 function currentTarget() {return battle.actors.find((actor) => actor.id === targetId && occupies(actor));}
 function selectedActor() {return currentActor(battle) ?? battle.actors.find(({id}) => id === selectedId);}
+function mapPoint(square) {
+  const [x,y] = cellCenter(map,square);
+  return {x:x/map.width,y:y/map.height};
+}
+function cameraToken() {
+  const actor = selectedActor();
+  return actor && occupies(actor) ? mapPoint(actor) : null;
+}
 function actionButton(label, action, options = {}) {
   return `<button class="button ${options.primary ? "primary" : "outline"} small"
     type="button" data-play="${action}"${options.id ? ' data-id="' + escape(options.id) + '"' : ""}
@@ -590,13 +593,11 @@ function playPage() {
             ${!isTraining ? actionButton(art ? "Change map image" : "Choose map image","art") : ""}
           </div>
           <input type="file" id="play-art" accept="image/png,image/jpeg,image/webp" hidden>
-          <div class="board-frame">
-            <canvas style="width:${zoom}%" id="play-grid" tabindex="0" role="application"
-              aria-label="${escape(map.title)} grid. Use arrow keys to choose a square. Press Enter to use the selected tool."></canvas>
-          </div>
+          ${mapViewport(map)}
           <div class="board-toolbar">
             ${field("Grid tool","grid-tool",tools.map(([id,label]) => option(id,label,tool===id)))}
-            ${field("Zoom","grid-zoom",["100","150","200","300"].map((value) => option(value,value+"%",zoom===value)))}
+            ${mapControls(Boolean(cameraToken()))}
+            ${mapHint()}
             <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span><span><i class="map-marker-key"></i> Room marker</span></div>
           </div>
           ${!isTraining ? `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` : ""}
@@ -623,29 +624,20 @@ function redraw() {
   const element = root();
   if (!element) return;
   const active = document.activeElement?.id;
-  const board = element.querySelector(".board-frame");
-  const scrollX = board?.scrollLeft ?? 0, scrollY = board?.scrollTop ?? 0;
+  const cameraState = camera?.state();
+  camera?.destroy();
   const archiveOpen = element.querySelector(".play-archive")?.open;
   const gridOpen = element.querySelector("#grid-settings")?.open;
   element.innerHTML = context.game ? gameScreen({
     map,battle,selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
     category,actions:playOptions(selectedActor()), tacticalTools:tableTools(), room,status,artworkNote,
-    zoom,logOpen,toolsOpen,destination:previewMessage,cursor,
+    logOpen,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
     adventureName:context.adventures.find(({id}) => id === map.module)?.name,
   }) : playPage();
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
   if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open","");
+  camera = createCamera(element.querySelector(".board-frame"),element.querySelector(".map-controls"),map,cameraState);
   paintBoard();
-  const frame = element.querySelector(".board-frame");
-  if (context.game && centerBoard) {
-    const actor = selectedActor();
-    const canvas = frame.querySelector("canvas");
-    if (actor && occupies(actor)) {
-      const [x,y] = cellCenter(map,actor);
-      frame.scrollTo(x/map.width*canvas.clientWidth-frame.clientWidth/2, y/map.height*canvas.clientHeight-frame.clientHeight/2);
-    }
-    centerBoard = false;
-  } else frame.scrollTo(scrollX,scrollY);
   if (active) element.querySelector("#"+CSS.escape(active))?.focus({preventScroll:true});
 }
 
@@ -735,7 +727,6 @@ async function launchGame() {
   selectedId = selected?.id ?? "";
   category = "move"; tool = "move"; status = ""; resetActionSelection();
   if (!battle.round) battle.actors.filter((entry) => entry.side === "party").some(detectNearby);
-  centerBoard = true;
   preferredGame = {module:moduleId,map:map.key};
   try {localStorage.setItem(activeMapKey,JSON.stringify(preferredGame));} catch {}
   saveBattle();
@@ -892,6 +883,11 @@ async function interact(run) {
 
 document.addEventListener("click", (event) => {
   if (!root()?.contains(event.target)) return;
+  const cameraControl = event.target.closest("[data-camera]");
+  if (cameraControl) {
+    camera?.control(cameraControl.dataset.camera,cameraToken());
+    return;
+  }
   if (event.target.id === "play-grid") {
     const {x,y,region} = gridPosition(map,event.target,event);
     if (context.game && battle.round && category === "move" && tool === "move" && matchMedia("(pointer: coarse)").matches &&
@@ -965,8 +961,6 @@ document.addEventListener("click", (event) => {
       }
       case "game-log": logOpen = !logOpen; toolsOpen = false; break;
       case "game-tools": toolsOpen = !toolsOpen; logOpen = false; if (!toolsOpen) {tool="move"; gridDraft=null;} break;
-      case "zoom-in": zoom = String(Math.min(300,Number(zoom)+50)); centerBoard = true; break;
-      case "zoom-out": zoom = String(Math.max(75,Number(zoom)-50)); centerBoard = true; break;
       case "archive-local": {
         pending = true;
         status = "Opening the supplied archive…";
@@ -1017,14 +1011,22 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.target.id !== "play-grid") return;
   const keys = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+  const viewKey = {"+":"in","=":"in","-":"out","0":"fit"}[event.key];
+  if (viewKey && !event.ctrlKey && !event.metaKey) {
+    event.preventDefault();
+    camera?.control(viewKey);
+    return;
+  }
   if (!keys[event.key] && event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   const initial = selectedActor();
   cursor ||= initial?.x != null ? {x:initial.x,y:initial.y} : {x:0,y:0};
   if (keys[event.key]) {
     const [dx,dy] = keys[event.key];
+    if (event.shiftKey) {camera?.pan(dx,dy); return;}
     cursor.x = Math.max(0,Math.min(map.cols-1,cursor.x+dx));
     cursor.y = Math.max(0,Math.min(map.rows-1,cursor.y+dy));
+    camera?.reveal(mapPoint(cursor));
     if (context.game && battle.round && category === "move" && tool === "move") movePreview(cursor.x,cursor.y);
     else paintBoard();
     event.target.setAttribute("aria-label","Square " + (cursor.x+1) + ", " + (cursor.y+1));
@@ -1051,7 +1053,6 @@ document.addEventListener("pointermove", (event) => {
   const {x,y} = gridPosition(map,event.target,event);
   if (cursor?.x !== x || cursor?.y !== y) movePreview(x,y);
 });
-window.addEventListener("resize", () => {if (context?.game && root()) paintBoard();});
 
 document.addEventListener("input", (event) => {
   if (!root()?.contains(event.target) || !event.target.id.startsWith("grid-align-")) return;
@@ -1087,7 +1088,6 @@ document.addEventListener("change", (event) => {
     case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
     case "grid-tool": tool = value; break;
     case "grid-overlay": battle.gridOverlay = value; saveBattle(); break;
-    case "grid-zoom": zoom = value; break;
     case "room-creature": selectedCreature = Number(value); break;
     case "play-party": selectedParty = value; break;
     case "combat-choice": combatChoice = value; spellSquare = null; castSlot = ""; extraTargets.clear(); break;

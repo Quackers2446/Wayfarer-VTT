@@ -1,6 +1,7 @@
 import {actorIsUp, moveLeft, speedOf} from "./combat.mjs";
 import {escape} from "./format.mjs";
 import {icon} from "./icons.mjs";
+import {mapControls, mapHint, mapViewport} from "./map-camera.mjs";
 
 function button(label, symbol, action, extra = "") {
   return `<button class="game-button" type="button" data-play="${action}" ${extra}>${symbol ? icon(symbol,17) : ""}${escape(label)}</button>`;
@@ -27,7 +28,7 @@ function portraits(party, selected, inCombat) {
 
 export function gameScreen({
   map, battle, selected, party, category, actions, tacticalTools, room, status, artworkNote,
-  zoom, logOpen, toolsOpen, destination, cursor, adventureName,
+  logOpen, toolsOpen, destination, cursor, adventureName, hasToken,
 }) {
   const active = battle.round > 0;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
@@ -63,17 +64,10 @@ export function gameScreen({
               <canvas data-creature-portrait="${escape(actor.id)}" hidden></canvas>
             </span><small>${actor.initiativeRoll}</small></span>` : "";
         }).join("")}</div>` : ""}
-        <div class="board-frame game-board">
-          <canvas style="width:${zoom}%" id="play-grid" tabindex="0" role="application"
-            aria-label="${escape(map.title)} grid. Click a square to move or use the arrow keys and Enter."></canvas>
-        </div>
+        ${mapViewport(map,true)}
         <div class="game-board-meta">
-          <p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>
-          <div class="game-zoom">
-            <button type="button" class="game-button" aria-label="Zoom out" data-play="zoom-out">−</button>
-            <span>${zoom}%</span>
-            <button type="button" class="game-button" aria-label="Zoom in" data-play="zoom-in">+</button>
-          </div>
+          <div><p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>${mapHint()}</div>
+          ${mapControls(hasToken)}
         </div>
         ${logOpen ? `<aside class="game-flyout play-panel" aria-label="Combat log"><h2>Combat log</h2>
           ${battle.log.length ? `<ol class="play-log">${battle.log.slice(-25).reverse().map((entry) => "<li>"+escape(entry)+"</li>").join("")}</ol>` : '<p>No rolls recorded.</p>'}

@@ -14,6 +14,8 @@ const paths = {
   shieldCheck: '<path d="m12 2 8 4v6c0 5-8 10-8 10s-8-5-8-10V6zM9 12l2 2 4-4"/>',
   heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0l-1 1-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>',
   map: '<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6zm6-3v15m6-12v15"/>',
+  fit: '<path d="M9 3H3v6m12-6h6v6M3 15v6h6m6 0h6v-6"/><rect x="7" y="8" width="10" height="8" rx="1"/>',
+  target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
   mountain: '<path d="m2 19 8-12 4 6 2-3 6 9H2zm6-9 2 2 2-2"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
