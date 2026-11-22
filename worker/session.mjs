@@ -77,6 +77,50 @@ async function boundedBody(request, limit) {
 
 const tokenKey = (session,id) => `tokens/${session}/${id}`;
 
+// Pages can share images through D1 when no R2 bucket is configured.
+// Chunking keeps each row below D1's limit and bounds download memory.
+function imageStore(env) {
+  if(env.BUCKET) return env.BUCKET;
+  const db=env.DB,chunkSize=512*1024;
+  return {
+    async put(key,data,{httpMetadata}) {
+      if(await db.prepare('SELECT asset_id FROM session_images WHERE asset_key=?').bind(key).first()) return;
+      const blob=new Blob([data]),id=crypto.randomUUID(),count=Math.ceil(blob.size/chunkSize);
+      try {
+        for(let start=0;start<count;start+=4) {
+          const statements=[];
+          for(let part=start;part<Math.min(count,start+4);part++) statements.push(db.prepare('INSERT INTO session_image_chunks (asset_id,part,body) VALUES (?,?,?)')
+            .bind(id,part,await blob.slice(part*chunkSize,(part+1)*chunkSize).arrayBuffer()));
+          await db.batch(statements);
+        }
+        await db.prepare('INSERT INTO session_images (asset_key,asset_id,content_type,chunk_count) VALUES (?,?,?,?) ON CONFLICT (asset_key) DO NOTHING').bind(key,id,httpMetadata.contentType,count).run();
+        const stored=await db.prepare('SELECT asset_id FROM session_images WHERE asset_key=?').bind(key).first();
+        if(stored.asset_id!==id) await db.prepare('DELETE FROM session_image_chunks WHERE asset_id=?').bind(id).run();
+      } catch(error) {await db.prepare('DELETE FROM session_image_chunks WHERE asset_id=?').bind(id).run();throw error;}
+    },
+    async get(key) {
+      const row=await db.prepare('SELECT asset_id,content_type,chunk_count FROM session_images WHERE asset_key=?').bind(key).first();
+      if(!row) return null;
+      let part=0;
+      const body=new ReadableStream({async pull(controller) {
+        try {
+          if(part>=row.chunk_count) {controller.close();return;}
+          const bytes=await db.prepare('SELECT body FROM session_image_chunks WHERE asset_id=? AND part=?').bind(row.asset_id,part++).first('body');
+          if(bytes==null) throw new Error('Shared image chunk missing.');
+          controller.enqueue(new Uint8Array(bytes));
+        } catch(error) {controller.error(error);}
+      }});
+      return {body,httpMetadata:{contentType:row.content_type}};
+    },
+    async delete(key) {
+      await db.batch([
+        db.prepare('DELETE FROM session_image_chunks WHERE asset_id IN (SELECT asset_id FROM session_images WHERE asset_key=?)').bind(key),
+        db.prepare('DELETE FROM session_images WHERE asset_key=?').bind(key),
+      ]);
+    },
+  };
+}
+
 async function validToken(blob, id) {
   if (!(blob instanceof Blob) || !imageTypes.has(blob.type) || !blob.size || blob.size > maxTokenBytes) return false;
   const data = new Uint8Array(await blob.arrayBuffer());
@@ -91,7 +135,7 @@ async function validToken(blob, id) {
 async function sessionToken(request, env, session, id) {
   const key = tokenKey(session,id);
   if (request.method === "GET") {
-    const image = await env.BUCKET.get(key);
+    const image = await imageStore(env).get(key);
     return image ? new Response(image.body,{headers:{...headers,"Content-Type":image.httpMetadata.contentType}}) : fail(404,"No shared token image.");
   }
   if (request.method !== "PUT") return fail(405,"This action is unavailable.");
@@ -101,7 +145,7 @@ async function sessionToken(request, env, session, id) {
   const body = await boundedBody(request,maxTokenBytes);
   const blob = body?.slice(0,body.size,request.headers.get("Content-Type") ?? "");
   if (!await validToken(blob,id)) return fail(400,"Choose a valid PNG, JPEG, or WebP token image.");
-  await env.BUCKET.put(key,blob.stream(),{httpMetadata:{contentType:blob.type}});
+  await imageStore(env).put(key,await blob.arrayBuffer(),{httpMetadata:{contentType:blob.type}});
   return new Response(null,{status:204,headers});
 }
 
@@ -137,18 +181,18 @@ async function create(request, env) {
   const uploaded = [];
   try {
     if (artwork) {
-      await env.BUCKET.put(id,artwork.stream(),{httpMetadata:{contentType:artwork.type}});
+      await imageStore(env).put(id,await artwork.arrayBuffer(),{httpMetadata:{contentType:artwork.type}});
       uploaded.push(id);
     }
     for (const [hash,blob] of tokens) {
       const key = tokenKey(id,hash);
-      await env.BUCKET.put(key,blob.stream(),{httpMetadata:{contentType:blob.type}});
+      await imageStore(env).put(key,await blob.arrayBuffer(),{httpMetadata:{contentType:blob.type}});
       uploaded.push(key);
     }
     await env.DB.prepare("INSERT INTO game_sessions (id,map,state,artwork_type) VALUES (?,?,?,?)")
       .bind(id,map,state,artwork?.type ?? null).run();
   } catch (error) {
-    await Promise.allSettled(uploaded.map((key) => env.BUCKET.delete(key)));
+    await Promise.allSettled(uploaded.map((key) => imageStore(env).delete(key)));
     throw error;
   }
   return reply({id,revision:0},201);
@@ -277,7 +321,7 @@ export async function sessionRequest(request, env) {
     if (match?.[2] && request.method === "GET") {
       const id = match[1];
       const row = await env.DB.prepare("SELECT artwork_type FROM game_sessions WHERE id=?").bind(id).first();
-      const artwork = row?.artwork_type && await env.BUCKET.get(id);
+      const artwork = row?.artwork_type && await imageStore(env).get(id);
       return artwork ? new Response(artwork.body,{headers:{...headers,"Content-Type":row.artwork_type}}) : fail(404,"No shared map artwork.");
     }
     if (match && !match[2] && request.method === "GET") return await get(env,match[1],url.searchParams.get("after"));

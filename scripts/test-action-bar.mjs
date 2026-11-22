@@ -1,0 +1,68 @@
+import assert from "node:assert/strict";
+import {buildActionBar,filterActionBar,renderActionBar,renderActionResources} from "../dist/action-bar.mjs";
+import {makeActor,newBattle} from "../dist/combat.mjs";
+
+const monk=makeActor({side:"party",name:"Monk",hp:50,swings:2,resources:{ki:{name:"Ki",current:9,maximum:9}},
+  classRules:{edition:"2014",unarmoredMonk:true,traits:["Flurry of Blows","Martial Arts","Patient Defense","Stunning Strike"]}});
+const battle={...newBattle(),actors:[monk],round:1,order:[monk.id]};
+const weapon={mode:"weapon",usable:true,data:{name:"Unarmed Strike",damage:"1d6+4",bonus:7}};
+let entries=buildActionBar(monk,battle,[weapon]);
+const find=id=>entries.find(entry=>entry.id===id);
+assert.match(find("feature:flurry").reason,/Attack action first/);
+assert.equal(find("feature:patient-defense").reason,"");
+assert.equal(find("passive:stunning-strike").timing,"hit");
+assert.ok(!filterActionBar(entries,"all","bonus").some(entry=>entry.mode==="weapon"));
+assert.ok(filterActionBar(entries,"all","resource:ki").some(entry=>entry.actionId==="arm-stun"));
+
+Object.assign(battle,{action:"attack",attacksMade:1,martialAttack:true});
+entries=buildActionBar(monk,battle,[weapon]);
+assert.equal(find("feature:flurry").reason,"");
+assert.equal(find("weapon:Unarmed Strike").reason,"","Extra Attack remains available after the first attack");
+assert.match(find("common:dash").reason,/action has already/);
+Object.assign(battle,{bonusUsed:true,flurry:2});
+entries=buildActionBar(monk,battle,[weapon]);
+assert.match(find("feature:patient-defense").reason,/bonus action/);
+assert.equal(find("feature:flurry-strike").reason,"");
+const filtered=renderActionBar(entries,monk,{tab:"spell",filter:"slot:3"});
+assert.ok(filtered.includes("Follow-up strikes"),"Flurry strikes remain accessible across tabs and filters");
+assert.ok(filtered.includes('data-id="feature:flurry-strike"'));
+monk.resources.ki.current=0;
+Object.assign(battle,{bonusUsed:false});
+entries=buildActionBar(monk,battle,[weapon]);
+assert.match(find("feature:patient-defense").reason,/Not enough Ki/);
+assert.match(find("passive:stunning-strike").reason,/Not enough Ki/);
+monk.stunArmed=true;
+entries=buildActionBar(monk,battle,[weapon]);
+assert.equal(find("passive:stunning-strike").reason,"","A depleted toggle can still be turned off");
+entries=buildActionBar(monk,battle,[weapon],{canAct:false});
+assert.match(find("weapon:Unarmed Strike").reason,/another player/);
+assert.equal(find("reference:features").reason,"");
+
+const caster=makeActor({side:"party",name:"Caster",hp:20,slots:{1:{current:0,maximum:4},2:{current:1,maximum:2}},
+  resources:{pactMagic:{name:"Pact Magic",current:1,maximum:2,slotLevel:3}}});
+Object.assign(battle,{actors:[caster],order:[caster.id],action:null,attacksMade:0,flurry:0});
+const spell=(name,level,extra={})=>({mode:"spell",usable:true,data:{name,key:name.toLowerCase(),level,timing:"action",...extra}});
+const spells=[spell("Cantrip",0),spell("Magic Missile",1),spell("Fireball",3),spell("Unprepared",1,{prepared:false}),
+  {...spell("Unimplemented",1),usable:false,manual:true}];
+entries=buildActionBar(caster,battle,spells);
+assert.equal(find("spell:fireball").reason,"","A Pact slot can cover a spell without an ordinary slot");
+assert.match(find("spell:unprepared").reason,/not prepared/);
+assert.match(find("spell:unimplemented").reason,/manual ruling/);
+assert.deepEqual(filterActionBar(entries,"spell","slot:2").map(entry=>entry.level),[1,1,1]);
+assert.ok(filterActionBar(entries,"spell","pact:3").some(entry=>entry.level===3));
+caster.resources.pactMagic.current=0;
+entries=buildActionBar(caster,battle,spells);
+assert.match(find("spell:fireball").reason,/No spell slot/);
+assert.equal(find("spell:magic missile").reason,"","Upcasting remains possible with only a higher slot");
+entries=buildActionBar(caster,battle,spells,{filter:"pact:3"});
+assert.match(find("spell:magic missile").reason,/No Pact Magic slots/,'An exhausted selected pool must not silently switch to ordinary slots');
+entries=buildActionBar(caster,battle,spells,{filter:"slot:1"});
+assert.match(find("spell:magic missile").reason,/No level 1 spell slots/,'An exhausted selected level must not silently upcast');
+battle.cast={bonus:true};
+entries=buildActionBar(caster,battle,spells);
+assert.match(find("spell:magic missile").reason,/only cast a cantrip/);
+assert.equal(find("spell:cantrip").reason,"");
+const resources=renderActionResources(caster,battle);
+assert.ok(resources.includes('data-id="pact:3"'));
+assert.ok(resources.includes('data-id="slot:2"'));
+console.log("Hotbar budgets, Extra Attack, Ki requirements, persistent Flurry follow-ups, ownership, casting restrictions and slot filters verified.");

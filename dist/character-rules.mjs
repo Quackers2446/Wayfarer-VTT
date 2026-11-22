@@ -70,14 +70,16 @@ function parseClasses(character, edition) {
     const name = normalize(part);
     const options = [...library.classes.entries()].filter(([key]) => ` ${name} `.includes(` ${key} `));
     if (options.length !== 1) return null;
-    const rules = pick(options[0][1],edition);
+    const sourceTag=[...part.matchAll(/[([]([^\])]+)[)\]]/g)].map(match=>match[1]).find(tag=>options[0][1].some(record=>record.source===tag));
+    const rules = pick(sourceTag ? options[0][1].filter(record=>record.source===sourceTag) : options[0][1],edition);
     if (!rules) return null;
     const selectedSubclass = character.sheetEdits?.subclasses?.[classKey(rules)];
-    const subclass = rules.subclasses.find((entry) => selectedSubclass ? subclassKey(entry) === selectedSubclass : [entry.name,entry.shortName].some((value) => {
+    const hasSubclassChoice=Object.hasOwn(character.sheetEdits?.subclasses ?? {},classKey(rules));
+    const subclass = rules.subclasses.find((entry) => hasSubclassChoice ? subclassKey(entry) === selectedSubclass : [entry.name,entry.shortName].some((value) => {
         const key = normalize(value);
         return key.length > 2 && ` ${name} `.includes(` ${key} `);
     }));
-    const explicit = Number(name.match(/(?:^| )(\d+)$/)?.[1]);
+    const explicit = Number(name.match(/(?:^| )(\d+)(?: [a-z][a-z\d]+)?$/)?.[1]);
     const chosenLevel = character.sheetEdits?.classLevels?.[classKey(rules)];
     const level = chosenLevel ?? (parts.length === 1 && levelNumber(character.level) ? character.level : levelNumber(explicit) ? explicit : null);
     return {rules,subclass,level};
@@ -115,6 +117,10 @@ function displayName(value) {
 
 function standardPools(classes, verified, edition) {
   if (!verified) return {};
+  const pactClass=classes.find(({rules})=>rules.casterProgression==="pact");
+  if(pactClass && classes.length>1) {
+    return {...standardPools(classes.filter(entry=>entry!==pactClass),true,edition),pact:pactClass.rules.slots[pactClass.level-1]?.pact};
+  }
   if (classes.length === 1) {
     const [first] = classes;
     const row = (first.subclass?.slots?.length ? first.subclass.slots : first.rules.slots)[first.level-1];
@@ -214,13 +220,19 @@ export function enrichCharacter(record) {
   if (Number.isFinite(perception)) fill("passivePerception",10+perception,"Passive Perception");
 
   const {slots = [],pact} = standardPools(classes,verified,edition);
-  const spellLevels = pact ? {[pact[0]]:pact[1]} : Object.fromEntries(slots.map((count,i) => [i+1,count]).filter(([,count]) => count > 0));
+  const spellLevels = Object.fromEntries(slots.map((count,i) => [i+1,count]).filter(([,count]) => count > 0));
   const spellSlots = {...raw.spellSlots};
+  const pactOnly=Boolean(pact && qualified.every(({rules})=>rules.casterProgression==="pact"));
+  const importedPactRemaining=pactOnly ? raw.spellSlots?.[pact[0]]?.current : undefined;
+  if(pactOnly) for(const rank of Object.keys(spellSlots)) if(Number(rank)===pact[0] || !raw.sheetEdits?.slots?.[rank]) delete spellSlots[rank];
   for (const [rank,maximum] of Object.entries(spellLevels)) {
     const imported = spellSlots[rank] ?? {};
     if (imported.maximum == null && (raw.sheetEdits?.slots?.[rank]?.current != null || !Number.isFinite(imported.current) || imported.current <= maximum)) {
-      spellSlots[rank] = {current:imported.current ?? null,maximum};
-      derived.add(pact ? "Pact slot capacity" : "Spell slot capacity");
+      spellSlots[rank] = {current:imported.current ?? maximum,maximum};
+      derived.add("Spell slot capacity");
+    } else if(imported.current==null && Number.isFinite(imported.maximum)) {
+      spellSlots[rank]={...imported,current:imported.maximum};
+      derived.add("Starting spell slots");
     }
   }
   character.spellSlots = spellSlots;
@@ -292,7 +304,7 @@ export function enrichCharacter(record) {
   character.rulesDetails.classDetails = classDetails;
   character.classRules = classDetails.mechanics;
   character.resources = Object.fromEntries(Object.entries(classDetails.pools).map(([key,pool]) =>
-    [key,{...pool,current:Math.min(pool.maximum,raw.sheetEdits?.resources?.[key] ?? pool.maximum)}]));
+    [key,{...pool,current:Math.min(pool.maximum,raw.sheetEdits?.resources?.[key] ?? (key==="pactMagic" ? importedPactRemaining : undefined) ?? pool.maximum)}]));
   const unarmoredMonk = classDetails.traits.includes("Unarmored Defense") && classDetails.mechanics.levels.Monk &&
     (!raw.sheetEdits?.armor || raw.sheetEdits.armor === "unarmored") && !raw.sheetEdits?.shield;
   if (unarmoredMonk && Number.isFinite(mod.dex) && Number.isFinite(mod.wis)) {
@@ -305,7 +317,20 @@ export function enrichCharacter(record) {
   character.classRules.unarmoredMonk = Boolean(unarmoredMonk);
   character.classRules.bladesongAllowed = !raw.sheetEdits?.shield && !["hide","chain-shirt","scale-mail","breastplate","half-plate","ring-mail","chain-mail","splint","plate"].includes(raw.sheetEdits?.armor);
   character.rulesDetails.derived = [...derived];
+  for (const [field,values] of Object.entries(classDetails.fixedProficiencies ?? {})) {
+    if (field !== "skills") character.rulesDetails[field]=unique([...(character.rulesDetails[field] ?? []),...values.map(displayName)]);
+  }
+  const fixedClassSkills=new Set(classDetails.fixedProficiencies?.skills ?? []);
+  for (const skill of character.skills) {
+    const name=normalize(skill.name);
+    if (fixedClassSkills.has(name) && Number.isFinite(mod[skills[name]]) && Number.isFinite(pb)) {
+      skill.bonus=Math.max(skill.bonus ?? -Infinity,mod[skills[name]]+pb);skill.base=null;
+    }
+  }
   for (const choice of classDetails.choices) {
+    if (["tools","languages","weapons"].includes(choice.kind)) {
+      character.rulesDetails[choice.kind]=unique([...(character.rulesDetails[choice.kind] ?? []),...choice.selected.map(displayName)]);
+    }
     if (!["skills","expertise"].includes(choice.kind) || !raw.sheetEdits?.featureChoices?.[choice.id]) continue;
     for (const name of choice.selected) {
       if (!(name in skills) || !Number.isFinite(mod[skills[name]]) || !Number.isFinite(pb)) continue;
@@ -313,6 +338,10 @@ export function enrichCharacter(record) {
       if (skill) {skill.bonus = mod[skills[name]]+(choice.kind === "expertise" ? 2 : 1)*pb;skill.base=null;}
     }
   }
+  character.rulesDetails.skillTraining=unique([...character.rulesDetails.skillTraining,...character.skills.filter(skill=>{
+    const name=normalize(skill.name);
+    return Number.isFinite(skill.bonus) && Number.isFinite(mod[skills[name]]) && skill.bonus>=mod[skills[name]]+pb;
+  }).map(skill=>skill.name)]);
   for (const skill of character.skills) {
     if (Number.isFinite(skill.bonus) || !Number.isFinite(skill.base)) continue;
     if (classDetails.traits.includes("Jack of All Trades")) skill.bonus = skill.base+Math.floor(pb/2);
@@ -322,10 +351,18 @@ export function enrichCharacter(record) {
     if (Number.isFinite(trained)) character.passivePerception = 10+trained;
   }
   character.spells = applySpellChoices(character.spells,classDetails,raw.sheetEdits);
+  if(!classDetails.choices.some(choice=>choice.kind==="prepared")) {
+    for(const spell of character.spells) if(classDetails.choices.some(choice=>choice.kind==="spells" && choice.options.some(option=>
+      ruleKey(option.name)===ruleKey(spell.name.split(" (")[0])))) spell.prepared=true;
+  }
   for (const grant of classChosenSpells(classDetails)) {
     const existing = character.spells.find((spell) => ruleKey(spell.name.split(" (")[0]) === ruleKey(grant.name));
     if (!existing) character.spells.push(grant);
-    else if (grant.castUsage) Object.assign(existing,{castUsage:grant.castUsage,castingAbility:grant.castingAbility,grantedBy:grant.grantedBy});
+    else {
+      if(grant.castingAbility) existing.castingAbility=grant.castingAbility;
+      if(grant.prepared) existing.prepared=true;
+      if (grant.castUsage && (!grant.castUsage.ritual || existing.grantedBy)) Object.assign(existing,{castUsage:grant.castUsage,castingAbility:grant.castingAbility,grantedBy:grant.grantedBy});
+    }
   }
   return character;
 }

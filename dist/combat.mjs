@@ -1,4 +1,6 @@
 import {crossesMapWall, mapFloor, mapLineClear, mapWalls} from "./map-walls.mjs";
+import {tokenSize,sizeRank,actorCells,containsCell,overlaps,spaceDistance,touchesArea} from './actor-space.mjs';
+import {captureImpact, captureMessage, captureRoll, recordAction, withActionEvent} from "./action-events.mjs";
 
 const storedDamageTypes = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 const error = (message) => {throw new Error(message);};
@@ -19,29 +21,41 @@ export function diceTerms(expression) {
   return terms;
 }
 
-export function rollDice(expression, {doubleDice = false, random = Math.random} = {}) {
+export function rollDice(expression, {doubleDice = false, random = Math.random, label = expression, capture = true} = {}) {
   const terms = diceTerms(expression);
   if (!terms) error("Enter a dice expression such as 2d6+3 or 1d8+1d4+4.");
   let total = 0;
+  const dice = [];
   const breakdown = terms.map(({sign, count, faces, flat}, index) => {
     const values = faces ? Array.from({length:count * (doubleDice ? 2 : 1)}, () => 1 + Math.floor(random() * faces)) : [];
+    if (faces) dice.push(...values.map((value) => ({faces,value,sign})));
     const subtotal = faces ? values.reduce((sum, value) => sum + value, 0) : flat;
     total += sign * subtotal;
     const lead = sign < 0 ? "− " : index ? "+ " : "";
     return lead + (faces ? (doubleDice ? count * 2 : count) + "d" + faces + " [" + values.join(", ") + "]" : flat);
   });
-  return {total, breakdown:breakdown.join(" ")};
+  const result = {total, breakdown:breakdown.join(" ")};
+  if (capture) captureRoll(result,{label,dice,base:dice.reduce((sum,die) => sum+die.sign*die.value,0),modifier:total-dice.reduce((sum,die) => sum+die.sign*die.value,0)});
+  return result;
 }
 
-export function d20(modifier, {advantage = false, disadvantage = false, random = Math.random} = {}) {
+export function d20(modifier, {advantage = false, disadvantage = false, random = Math.random, label = "D20 roll"} = {}) {
   if (!Number.isFinite(modifier)) error("Enter a numeric roll modifier.");
-  const rolls = Array.from({length:advantage === disadvantage ? 1 : 2}, () => rollDice("d20", {random}).total);
+  const rolls = Array.from({length:advantage === disadvantage ? 1 : 2}, () => rollDice("d20", {random,capture:false}).total);
   const kept = advantage && !disadvantage ? Math.max(...rolls) : Math.min(...rolls);
   const bonus = modifier >= 0 ? " + " + modifier : " − " + Math.abs(modifier);
-  return {kept, total:kept + modifier, breakdown:rolls.join("/") + bonus};
+  const result = {kept, total:kept + modifier, breakdown:rolls.join("/") + bonus};
+  let used = false;
+  const dice = rolls.map((value) => {
+    const discarded = value !== kept || used;
+    if (!discarded) used = true;
+    return {faces:20,value,sign:1,discarded};
+  });
+  captureRoll(result,{label,dice,advantage:advantage && !disadvantage,disadvantage:disadvantage && !advantage});
+  return result;
 }
 
-export const distanceFt = (one, two) => Math.max(Math.abs(one.x - two.x), Math.abs(one.y - two.y)) * 5;
+export const distanceFt = spaceDistance;
 export const keyAt = (x, y) => x + ":" + y;
 export const currentActor = (battle) => battle.actors.find(({id}) => id === battle.order[battle.turn]);
 export const actorIsUp = (actor) => Boolean(actor && actor.hp > 0 && !actor.dead);
@@ -71,14 +85,8 @@ export function newBattle() {
 
 export function log(battle, text) {
   battle.log.push(text);
+  captureMessage(battle,text);
   if (battle.log.length > 160) battle.log.splice(0, battle.log.length - 160);
-}
-
-function monsterEvent(battle, actor, event) {
-  if (actor.side !== "hostile" || !Number.isInteger(actor.x) || !Number.isInteger(actor.y)) return;
-  const events = battle.monsterEvents ??= [];
-  events.push({id:(events.at(-1)?.id ?? 0)+1,actor:actor.id,name:actor.name,x:actor.x,y:actor.y,...event});
-  if (events.length > 48) events.shift();
 }
 
 export function makeActor(record) {
@@ -167,6 +175,7 @@ function resetTurn(battle) {
   battle.bonusUsed = false;
   battle.cast = null;
   battle.martialAttack = false;
+  battle.kiAction = false;
   battle.flurry = 0;
   battle.actionSurged = false;
   actor.steadyAim = false;
@@ -181,7 +190,8 @@ export function startInitiative(battle, random = Math.random, participantIds = n
     (!participantIds || participantIds.has(actor.id)));
   if (ready.length < 2) error("Place at least two tokens on the grid.");
   const scores = ready.map((actor) => {
-    const roll = d20(actor.initiative, {random});
+    const roll = withActionEvent(battle,actor,{action:"Initiative",kind:"initiative"},
+      () => d20(actor.initiative, {random,label:"Initiative"}));
     actor.initiativeRoll = roll.total;
     return actor;
   }).sort((a, b) => b.initiativeRoll - a.initiativeRoll || (b.dex ?? 0) - (a.dex ?? 0));
@@ -197,7 +207,8 @@ export function startInitiative(battle, random = Math.random, participantIds = n
 
 export function joinInitiative(battle, actor, random = Math.random) {
   if (!battle.round || !actorIsUp(actor) || !occupies(actor) || battle.order.includes(actor.id)) return;
-  actor.initiativeRoll = d20(actor.initiative,{random}).total;
+  actor.initiativeRoll = withActionEvent(battle,actor,{action:"Join initiative",kind:"initiative"},
+    () => d20(actor.initiative,{random,label:"Initiative"})).total;
   const index = battle.order.findIndex((id) => {
     const other = battle.actors.find((entry) => entry.id === id);
     return other && (other.initiativeRoll < actor.initiativeRoll ||
@@ -214,6 +225,7 @@ export function joinInitiative(battle, actor, random = Math.random) {
 export function endTurn(battle, random = Math.random) {
   if (!battle.round) error("Start initiative first.");
   if (battle.movement) error("Resolve the opportunity attack before ending the turn.");
+  if (battle.classReaction) error("Resolve Deflect Missiles before ending the turn.");
   const actor = currentActor(battle);
   if (actor?.hp === 0 && actor.resolveDeath && !actor.dead && !actor.stable && !battle.deathRolled) {
     error("Roll this character's death save before ending the turn.");
@@ -225,10 +237,13 @@ export function endTurn(battle, random = Math.random) {
     }
     for (const effect of actor.conditions ?? []) {
       if (!effect.repeatSave || !actorIsUp(actor)) continue;
-      const save = savingThrow(actor,effect.repeatSave,{random});
-      const passed = save.total >= effect.dc;
-      log(battle,actor.name + " repeats the save against " + effect.name + " — " + save.total + " vs DC " +
-        effect.dc + (passed ? ", succeeds." : ", fails."));
+      const passed = withActionEvent(battle,actor,{action:effect.name+" saving throw",kind:"save"},() => {
+        const save = savingThrow(actor,effect.repeatSave,{random});
+        const passed = save.total >= effect.dc;
+        log(battle,actor.name + " repeats the save against " + effect.name + " — " + save.total + " vs DC " +
+          effect.dc + (passed ? ", succeeds." : ", fails."));
+        return passed;
+      });
       if (passed) removeCondition(actor,effect);
     }
     if (actor.concentration?.bolt && battle.action && battle.action !== "witch-bolt") endConcentration(battle,actor);
@@ -282,20 +297,28 @@ export const moveLeft = (battle, actor) => Math.max(0, movementBudget(battle,act
 
 export function placeToken(battle, actor, x, y, board) {
   if (actor.dead) error("This token is defeated.");
-  if (x < 0 || y < 0 || x >= board.cols || y >= board.rows) error("Choose a square inside the grid.");
-  if (!mapFloor(board,x,y) || battle.terrain[keyAt(x,y)] === "wall") error("This square is blocked.");
-  if (battle.actors.some((entry) => entry.id !== actor.id && occupies(entry) && entry.x === x && entry.y === y)) {
-    error("Another token occupies that square.");
-  }
+  if(!canStand(battle,actor,x,y,board)) error("The token's full space must fit inside the grid without walls or other creatures.");
   actor.x = x;
   actor.y = y;
+}
+
+function footprintClear(battle,actor,x,y,board) {
+  const cells=actorCells({...actor,x,y});
+  return cells.every(c=>c.x>=0 && c.y>=0 && c.x<board.cols && c.y<board.rows && mapFloor(board,c.x,c.y,battle) && battle.terrain[keyAt(c.x,c.y)]!=='wall' &&
+    (c.x===x || !crossesMapWall(board,{x:c.x-1,y:c.y},c,battle)) && (c.y===y || !crossesMapWall(board,{x:c.x,y:c.y-1},c,battle)));
+}
+export function canStand(battle,actor,x,y,board) {
+  return footprintClear(battle,actor,x,y,board) && !battle.actors.some(other=>other.id!==actor.id && occupies(other) && overlaps({...actor,x,y},other));
 }
 
 function findPath(battle, actor, x, y, board, exploration = false, {goal, score, budget = exploration ? Infinity : moveLeft(battle,actor)} = {}) {
   const origin = keyAt(actor.x, actor.y);
   const destination = keyAt(x, y);
-  const blockers = new Map(battle.actors.filter((entry) => entry.id !== actor.id && occupies(entry)).map((entry) =>
-    [keyAt(entry.x, entry.y), entry]));
+  const blockers = new Map();
+  const others=battle.actors.filter(entry=>entry.id!==actor.id && occupies(entry));
+  for(const entry of others) for(const cell of actorCells(entry)) blockers.set(keyAt(cell.x,cell.y),entry);
+  const occupied=(col,row)=>others.some(other=>overlaps({...actor,x:col,y:row},other));
+  if(x!=null && y!=null && !canStand(battle,actor,x,y,board)) error('That space is blocked or occupied.');
   if (blockers.has(destination)) error("Another token occupies that square.");
   const known = new Map([[origin, 0]]);
   const pending = [{x:actor.x, y:actor.y, cost:0, previous:null}];
@@ -306,24 +329,24 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, score,
     return {cost:cell.cost,path:path.reverse()};
   };
   let nextUnvisited = 0;
-  const blocked = (col,row) => !mapFloor(board,col,row) || battle.terrain[keyAt(col,row)] === "wall";
   while (exploration ? nextUnvisited < pending.length : pending.length) {
     if (!exploration) pending.sort((a,b) => b.cost - a.cost);
     const cell = exploration ? pending[nextUnvisited++] : pending.pop();
     const here = keyAt(cell.x, cell.y);
     if (cell.cost !== known.get(here)) continue;
-    if (here === destination || (goal && !blockers.has(here) && goal(cell))) return trace(cell);
-    if (score && !blockers.has(here) && score(cell) > score(best)) best = cell;
+    if (here === destination || (goal && !occupied(cell.x,cell.y) && goal({...actor,...cell}))) return trace(cell);
+    if (score && !occupied(cell.x,cell.y) && score({...actor,...cell}) > score({...actor,...best})) best = cell;
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
         const col = cell.x + dx;
         const row = cell.y + dy;
         const next = keyAt(col,row);
-        if ((!dx && !dy) || col < 0 || row < 0 || col >= board.cols || row >= board.rows || blocked(col,row)) continue;
-        if (crossesMapWall(board,cell,{x:col,y:row})) continue;
-        if (dx && dy && (blocked(cell.x + dx, cell.y) || blocked(cell.x, cell.y + dy))) continue;
-        if (blockers.has(next) && blockers.get(next).side !== actor.side) continue;
-        const difficult = battle.terrain[next] === "difficult" || blockers.has(next);
+        if ((!dx && !dy) || !footprintClear(battle,actor,col,row,board)) continue;
+        if (actorCells({...actor,...cell}).some(c=>crossesMapWall(board,c,{x:c.x+dx,y:c.y+dy},battle))) continue;
+        if (dx && dy && (!footprintClear(battle,actor,cell.x+dx,cell.y,board) || !footprintClear(battle,actor,cell.x,cell.y+dy,board))) continue;
+        const crossed=others.filter(other=>overlaps({...actor,x:col,y:row},other));
+        if (crossed.some(other=>other.side!==actor.side && Math.abs(sizeRank(other)-sizeRank(actor))<2)) continue;
+        const difficult = actorCells({...actor,x:col,y:row}).some(c=>battle.terrain[keyAt(c.x,c.y)]==='difficult') || crossed.length>0;
         const cost = cell.cost + (exploration ? 5 : (difficult ? 10 : 5) + (actor.prone ? 5 : 0));
         if (cost > budget || cost >= (known.get(next) ?? Infinity)) continue;
         known.set(next, cost);
@@ -348,17 +371,24 @@ export function exploreToken(battle, actor, x, y, board, stopAt) {
   if (battle.round || !actorIsUp(actor) || !occupies(actor)) error("Choose a party member who can explore.");
   const result = previewMovement(battle, actor, x, y, board);
   if (!result) error("That square is blocked or occupied.");
+  let distance = 0;
   for (const step of result.path) {
     advanceTime(battle,30/Math.max(5,speedOf(actor)));
     actor.x = step.x; actor.y = step.y;
+    distance = step.cost;
     // A route can cross friendly squares. The token must stop in a free square.
-    if (battle.actors.some((other) => other.id !== actor.id && occupies(other) && other.x === step.x && other.y === step.y)) continue;
+    if (battle.actors.some((other) => other.id !== actor.id && occupies(other) && overlaps({...actor,...step},other))) continue;
     if (stopAt(actor)) break;
+  }
+  if (distance) {
+    log(battle,actor.name+" moves "+distance+" ft.");
+    recordAction(battle,actor,{action:"Moved "+distance+" ft",kind:"move"});
   }
 }
 
 function assertTurn(battle, actor) {
   if (battle.movement) error("Resolve the opportunity attack before continuing.");
+  if (battle.classReaction) error("Resolve Deflect Missiles before continuing.");
   if (!battle.round || currentActor(battle)?.id !== actor.id) error("It is not this token’s turn.");
   if (!actorIsUp(actor)) error("This token cannot take actions at 0 hit points.");
   if (incapacitated(actor)) error("This character is incapacitated.");
@@ -381,7 +411,7 @@ function walkRemaining(battle, actor, board) {
       other.side !== actor.side && other.side !== "neutral" && !other.reactionUsed && !walk.passed.includes(other.id) &&
       reactionWeapons(other).some((weapon) => {
         const reach = weapon.reach || 5;
-        return distanceFt(actor,other) <= reach && distanceFt(next,other) > reach && canSee(battle,other,actor,board);
+        return distanceFt(actor,other) <= reach && distanceFt({...actor,...next},other) > reach && canSee(battle,other,actor,board);
       }));
     if (foe) {
       walk.foe = foe.id;
@@ -401,7 +431,7 @@ function walkRemaining(battle, actor, board) {
       movement[actor.id] = (movement[actor.id] ?? 0)+distance;
     }
     log(battle, actor.name + " moves " + distance + " ft.");
-    monsterEvent(battle,actor,{action:"Moved " + distance + " ft"});
+    recordAction(battle,actor,{action:"Moved " + distance + " ft"});
   }
   battle.movement = null;
 }
@@ -409,6 +439,7 @@ function walkRemaining(battle, actor, board) {
 export function moveToken(battle, actor, x, y, board) {
   if (!battle.round) return placeToken(battle, actor, x, y, board);
   if (battle.movement) error("Resolve the opportunity attack before continuing.");
+  if (battle.classReaction) error("Resolve Deflect Missiles before moving.");
   if (!movementGroup(battle).includes(actor)) error("This character cannot move at the current initiative.");
   if (!actorIsUp(actor) || !occupies(actor)) error("This character cannot move.");
   const result = findPath(battle, actor, x, y, board);
@@ -425,7 +456,7 @@ export function opportunity(battle) {
   const next = battle.movement.path[battle.movement.index];
   const attacks = reactionWeapons(foe).filter((weapon) => {
     const reach = weapon.reach || 5;
-    return distanceFt(actor,foe) <= reach && distanceFt(next,foe) > reach;
+    return distanceFt(actor,foe) <= reach && distanceFt({...actor,...next},foe) > reach;
   });
   return {actor, foe, attacks};
 }
@@ -439,7 +470,10 @@ export function resolveOpportunity(battle, attackIndex, random = Math.random, bo
     if (!attack) error("Select a melee attack.");
     foe.reactionUsed = true;
     resolveWeaponRoll(battle,foe,actor,attack,{reaction:true,map:board},random);
-  } else log(battle, foe.name + " passes the opportunity attack.");
+  } else {
+    log(battle, foe.name + " passes the opportunity attack.");
+    recordAction(battle,foe,{action:"Pass opportunity attack",reaction:true});
+  }
   battle.movement.passed.push(foe.id);
   battle.movement.foe = null;
   walkRemaining(battle,actor,board);
@@ -454,7 +488,7 @@ export function turnAction(battle, actor, action) {
     battle.spent += cost;
     actor.prone = false;
     log(battle, actor.name + " stands up.");
-    monsterEvent(battle,actor,{action:"Stood up"});
+    recordAction(battle,actor,{action:"Stood up"});
     return;
   }
   if (action === "bonus-disengage") {
@@ -462,7 +496,7 @@ export function turnAction(battle, actor, action) {
     actor.disengaged = true;
     battle.bonusUsed = true;
     log(battle, actor.name + " uses a bonus action to disengage.");
-    monsterEvent(battle,actor,{action:"Disengage (bonus action)"});
+    recordAction(battle,actor,{action:"Disengage (bonus action)"});
     return;
   }
   if (battle.action) error("This token has used its action.");
@@ -473,15 +507,30 @@ export function turnAction(battle, actor, action) {
   battle.action = action;
   const label = action.charAt(0).toUpperCase() + action.slice(1);
   log(battle, actor.name + " takes the " + label + " action.");
-  monsterEvent(battle,actor,{action:label});
+  recordAction(battle,actor,{action:label});
 }
 
-export function applyDamage(battle, actor, rawDamage, type, critical = false, random = Math.random, source) {
+function damageTrait(records,type,properties) {
+  return (records ?? []).some(record=>{
+    if(typeof record==='string') return record===type;
+    if(!record || typeof record!=='object') return false;
+    const note=String(record.note ?? '').toLowerCase();
+    if(note.includes('attacks') && !properties.attack) return false;
+    if(note.includes('nonmagical') && properties.magical) return false;
+    if(note.includes('silver') && properties.silvered) return false;
+    if(note.includes('adamantine') && properties.adamantine) return false;
+    if(note.includes('from spells') && !properties.spell) return false;
+    if(note && !/nonmagical|silver|adamantine|from spells/.test(note)) return false;
+    return damageTrait(record.resist ?? record.immune ?? record.vulnerable,type,properties);
+  });
+}
+
+export function applyDamage(battle, actor, rawDamage, type, critical = false, random = Math.random, source, properties = {}) {
   let damage = Math.max(0, rawDamage);
-  if (type && storedDamageTypes(actor.immune).includes(type)) damage = 0;
+  if (type && damageTrait(actor.immune,type,properties)) damage = 0;
   else if (type) {
-    if (storedDamageTypes(actor.resist).includes(type)) damage = Math.floor(damage / 2);
-    if (storedDamageTypes(actor.vulnerable).includes(type)) damage *= 2;
+    if (damageTrait(actor.resist,type,properties)) damage = Math.floor(damage / 2);
+    if (damageTrait(actor.vulnerable,type,properties)) damage *= 2;
   }
   const absorbed = Math.min(actor.tempHp, damage);
   actor.tempHp -= absorbed;
@@ -535,7 +584,54 @@ export function heal(actor, amount) {
   return restored;
 }
 
+export function fallingDamage(battle,actor,height,{slowFall=true}={},random=Math.random) {
+  if(!Number.isFinite(height) || height<0 || height>10000) error("Enter a fall height between 0 and 10,000 feet.");
+  if(!actorIsUp(actor)) error("Choose a conscious creature.");
+  if(battle.movement || battle.classReaction) error("Resolve the pending reaction first.");
+  return withActionEvent(battle,actor,{action:"Fall · "+height+" ft",kind:"fall"},()=>{
+    const dice=Math.min(20,Math.floor(height/10));
+    if(!dice) {log(battle,actor.name+" falls less than 10 ft without falling damage.");return {damage:0};}
+    const roll=rollDice(dice+"d6",{random,label:"Falling damage"});
+    const available=!battle.round || !actor.reactionUsed;
+    const reduction=slowFall && available && hasFeature(actor,"Slow Fall") && !incapacitated(actor) ? 5*actor.classRules.levels.Monk : 0;
+    if(reduction) {actor.reactionUsed=true;log(battle,actor.name+" uses Slow Fall to reduce falling damage by "+reduction+".");}
+    const outcome=recordDamage(battle,actor,Math.max(0,roll.total-reduction),"bludgeoning",roll.breakdown+(reduction ? " − Slow Fall "+reduction : ""),false,random);
+    if(outcome.damage>0) actor.prone=true;
+    return outcome;
+  });
+}
+
+export function resolveDeflection(battle,actor,target,{map,fits=false}={},random=Math.random) {
+  const reaction=battle.classReaction;
+  if(!reaction || reaction.actor!==actor?.id) error("There is no deflected missile to return.");
+  if(!target) {
+    battle.classReaction=null;
+    log(battle,actor.name+" finishes the Deflect Missiles reaction.");
+    recordAction(battle,actor,{action:"Finish Deflect Missiles",reaction:true});
+    return;
+  }
+  if(!actorIsUp(actor) || incapacitated(actor) || !actor.freeHand || !(actor.resources?.ki?.current>=1)) error("Returning a missile requires a free hand and 1 ki point.");
+  if(!fits) error("Confirm that the missile fits in one hand.");
+  validTarget(actor,target,false);
+  if(target.id===actor.id || distanceFt(actor,target)>60 || !lineClear(battle,actor,target,map)) error("Choose a target within 60 ft and a clear line of fire.");
+  const terms=diceTerms(reaction.weapon.damage)?.filter(term=>term.faces) ?? [];
+  const expected=terms.reduce((sum,term)=>sum+term.sign*term.count*(term.faces+1)/2,0);
+  const martial=actor.classRules?.unarmoredMonk ? actor.classRules.martialDie : null;
+  const dice=martial && (martial+1)/2>expected ? "1d"+martial : terms.map((term,index)=>(term.sign<0 ? "-" : index ? "+" : "")+term.count+"d"+term.faces).join('') || "1";
+  const dexterity=actor.ability.dex ?? 0;
+  actor.resources.ki.current-=1;
+  battle.classReaction=null;
+  log(battle,actor.name+" spends 1 ki to return the deflected missile.");
+  return resolveWeaponRoll(battle,actor,target,{name:"Deflect Missiles · return",bonus:dexterity+(actor.proficiency ?? 0),
+    damage:dice+(dexterity>=0 ? "+" : "")+dexterity,type:reaction.weapon.type,normalRange:20,longRange:60,monkWeapon:true},
+    {reaction:true,map},random);
+}
+
 export function deathSave(battle, actor, random = Math.random) {
+  return withActionEvent(battle,actor,{action:"Death saving throw",kind:"save"},() => resolveDeathSave(battle,actor,random));
+}
+
+function resolveDeathSave(battle, actor, random) {
   if (!battle.round || currentActor(battle)?.id !== actor.id || !actor.resolveDeath ||
       actor.hp !== 0 || actor.dead || actor.stable || battle.deathRolled) error("This character cannot make a death save right now.");
   const result = savingThrow(actor,null,{random});
@@ -561,8 +657,9 @@ function validTarget(attacker, target, allowDown = true) {
   }
 }
 
-function recordDamage(battle, target, amount, type, breakdown, critical = false, random = Math.random, source) {
-  const outcome = applyDamage(battle,target,amount,type,critical,random,source);
+function recordDamage(battle, target, amount, type, breakdown, critical = false, random = Math.random, source, properties = {}) {
+  const outcome = applyDamage(battle,target,amount,type,critical,random,source,properties);
+  captureImpact(battle,target,{amount:outcome.damage,type,critical,defeated:outcome.defeated,absorbed:outcome.absorbed});
   log(battle, target.name + " takes " + outcome.damage + (type ? " " + type : "") + " damage" +
     " (" + breakdown + (outcome.absorbed ? "; " + outcome.absorbed + " absorbed by temp HP" : "") + ")" +
     (outcome.defeated ? " and is defeated." : outcome.unconscious ? " and falls unconscious." : "."));
@@ -571,13 +668,13 @@ function recordDamage(battle, target, amount, type, breakdown, critical = false,
 
 function damageLog(battle, target, expression, type, critical, random, source) {
   const roll = rollDice(expression,{doubleDice:critical,random});
-  return recordDamage(battle,target,roll.total,type,roll.breakdown,critical,random,source);
+  return recordDamage(battle,target,roll.total,type,roll.breakdown,critical,random,source,{magical:true,spell:true});
 }
 
 export function savingThrow(actor, ability, {extra = 0, advantage = false, random = Math.random} = {}) {
   let bonus = actor.saves[ability] ?? actor.ability[ability] ?? 0;
-  if (ability === "str" && actor.astralArms) bonus = Math.max(bonus,actor.ability.wis ?? 0);
-  const result = d20(bonus + extra,{advantage,random});
+  if (ability === "str" && actor.astralArms) bonus += Math.max(0,(actor.ability.wis ?? 0)-(actor.ability.str ?? 0));
+  const result = d20(bonus + extra,{advantage,random,label:actor.name+" · "+(ability ? ability.toUpperCase()+" save" : "Death save")});
   addInspiration(actor,result,random);
   if (actor.sliver) {
     actor.sliver = null;
@@ -617,7 +714,8 @@ function attackMode(battle, attacker, target, options, ranged, distance) {
 }
 
 export function lineClear(battle, from, to, board, {vision = false} = {}) {
-  if (vision || mapWalls(board)) return mapLineClear(board,from,to,(x,y) => battle.terrain[keyAt(x,y)] === "wall",vision);
+  if(tokenSize(from)>1 || tokenSize(to)>1) return actorCells(from).some(a=>actorCells(to).some(b=>lineClear(battle,a,b,board,{vision})));
+  if (vision || mapWalls(board,battle)) return mapLineClear(board,from,to,(x,y) => battle.terrain[keyAt(x,y)] === "wall",vision,battle);
   let {x,y} = from;
   const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
   const signX = x < to.x ? 1 : -1, signY = y < to.y ? 1 : -1;
@@ -640,9 +738,10 @@ function obscuredCells(zones) {
 
 export function canSee(battle,from,to,map) {
   if (from.id !== to.id && (condition(to,"Invisible") || condition(to,"Hidden") && from.side !== to.side)) return false;
+  if(tokenSize(from)>1 || tokenSize(to)>1) return actorCells(from).some(a=>actorCells(to).some(b=>canSee(battle,{...from,...a,creatureSize:'M'},{...to,...b,creatureSize:'M'},map)));
   if (!lineClear(battle,from,to,map,{vision:true})) return false;
   if (!battle.spellZones?.length || from.x === to.x && from.y === to.y) return true;
-  const zones = from.astralVisage && distanceFt(from,to) <= 120 ? battle.spellZones.filter((zone) => zone.name !== "Darkness") : battle.spellZones;
+  const zones = (from.astralVisage || hasFeature(from,"Devil's Sight")) && distanceFt(from,to) <= 120 ? battle.spellZones.filter((zone) => zone.name !== "Darkness") : battle.spellZones;
   const obscured = obscuredCells(zones);
   let {x,y} = from;
   const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
@@ -665,8 +764,14 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
   if (!Number.isFinite(weapon.bonus) || !diceTerms(weapon.damage)) error("This action needs a numeric attack bonus and a damage formula.");
   const bonusStrike = options.bonusStrike;
   if (bonusStrike) {
-    if (!weapon.unarmed) error("Choose an unarmed strike.");
-    if (!battle.flurry && (!attacker.classRules?.unarmoredMonk || !battle.martialAttack)) error("Use the Attack action with a monk weapon first.");
+    if (options.kiFueled) {
+      if(!hasFeature(attacker,"Ki-Fueled Attack") || !battle.kiAction) error("Spend ki as part of your action before using Ki-Fueled Attack.");
+      if(!weapon.unarmed && !weapon.monkWeapon) error("Choose an unarmed strike or monk weapon.");
+      if(battle.bonusUsed) error("This token has used its bonus action.");
+    } else {
+      if (!weapon.unarmed) error("Choose an unarmed strike.");
+      if (!battle.flurry && (!attacker.classRules?.unarmoredMonk || !battle.martialAttack)) error("Use the Attack action with a monk weapon first.");
+    }
     if (!battle.flurry && battle.bonusUsed) error("This token has used its bonus action.");
   } else {
     if (battle.action && battle.action !== "attack") error("This token has used its action.");
@@ -680,7 +785,7 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
   if (distance > (ranged ? weapon.longRange || weapon.normalRange : weapon.reach || 5)) error("The target is out of range.");
   if (options.cover === "full" || !lineClear(battle,attacker,target,options.map)) error("Full cover blocks the attack.");
   if (bonusStrike) {
-    if (battle.flurry) battle.flurry -= 1;
+    if (battle.flurry && !options.kiFueled) battle.flurry -= 1;
     else battle.bonusUsed = true;
   } else {
     battle.action = "attack";
@@ -691,13 +796,34 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
 }
 
 function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
+  if(attacker.classRules?.unarmoredMonk && (weapon.monkWeapon || weapon.unarmed)) {
+    const dice=diceTerms(weapon.damage)?.filter(term=>term.faces);
+    if(dice?.length===1 && dice[0].count===1 && dice[0].sign===1 && attacker.classRules.martialDie>dice[0].faces) {
+      weapon={...weapon,damage:weapon.damage.replace(/\d*d\d+/i,'1d'+attacker.classRules.martialDie)};
+    }
+  }
+  return withActionEvent(battle,attacker,{action:weapon.name,kind:"attack",target:target.name},
+    () => weaponRoll(battle,attacker,target,weapon,options,random));
+}
+
+function weaponRoll(battle, attacker, target, weapon, options, random) {
   const distance = distanceFt(attacker,target);
   const ranged = Boolean(weapon.normalRange);
 
   const mode = attackMode(battle, attacker, target, options, ranged, distance);
   mode.disadvantage ||= ranged && distance > weapon.normalRange;
-  const roll = d20(weapon.bonus, {...mode, random});
+  const roll = d20(weapon.bonus, {...mode, random,label:"Attack roll"});
   addInspiration(attacker,roll,random);
+  if (hasFeature(attacker,"Focused Aim") && roll.kept!==1 && roll.kept!==20 && options.focusedAim>0) {
+    const needed=Math.ceil((armorClass(target)+(Number(options.cover)||0)-roll.total)/2);
+    const maximum=Math.min(3,Number(options.focusedAim),attacker.resources?.ki?.current ?? 0);
+    if(needed>0 && needed<=maximum) {
+      attacker.resources.ki.current-=needed;roll.total+=2*needed;
+      roll.breakdown+=" + Focused Aim "+2*needed;
+      if(!options.bonusStrike && !options.reaction) battle.kiAction=true;
+      log(battle,attacker.name+" spends "+needed+" ki on Focused Aim, adding "+2*needed+" to the attack.");
+    }
+  }
   const bard = roll.kept !== 20 && roll.total >= armorClass(target) && battle.actors.find((ally) =>
     ally.side === target.side && ally.side !== attacker.side && ally.cuttingWords && hasFeature(ally,"Cutting Words") &&
     actorIsUp(ally) && !incapacitated(ally) && !ally.reactionUsed && ally.resources?.inspiration?.current > 0 &&
@@ -723,7 +849,7 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
     (critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   if (hit) {
     const retaliation = !ranged && target.tempHp > 0 ? target.agathys : null;
-    const raw = rollDice(weapon.damage,{doubleDice:critical,random});
+    const raw = rollDice(weapon.damage,{doubleDice:critical,random,label:"Damage"});
     let totalDamage = raw.total;
     let breakdown = raw.breakdown;
     const turnKey = battle.round+"|"+currentActor(battle)?.id;
@@ -738,19 +864,26 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
       breakdown += " + Sneak Attack "+sneak.breakdown;
       attacker.sneakTurn = turnKey;
     }
-    if (ranged && hasFeature(target,"Deflect Missiles") && !target.reactionUsed && !incapacitated(target)) {
-      const reduction = rollDice("1d10",{random}).total+(target.ability.dex ?? 0)+(target.classRules.levels.Monk ?? 0);
+    if (ranged && !weapon.spellAttack && hasFeature(target,"Deflect Missiles") && !target.reactionUsed && !incapacitated(target)) {
+      const bonus=(target.ability.dex ?? 0)+(target.classRules.levels.Monk ?? 0);
+      const reduction = rollDice("1d10"+(bonus>=0 ? "+" : "")+bonus,{random,label:"Deflect Missiles"}).total;
       totalDamage = Math.max(0,totalDamage-reduction);
       target.reactionUsed = true;
       log(battle,target.name+" uses Deflect Missiles, reducing damage by "+reduction+".");
+      if(totalDamage===0 && target.freeHand) {
+        log(battle,target.name+" can catch the missile if it fits in one hand.");
+        if(target.resources?.ki?.current>=1 && target.side==="party") battle.classReaction={kind:"deflect-return",actor:target.id,source:attacker.id,weapon:{damage:weapon.damage,type:weapon.type}};
+      }
     } else if (hasFeature(target,"Uncanny Dodge") && !target.reactionUsed && !incapacitated(target) && canSee(battle,target,attacker,options.map)) {
       totalDamage = Math.floor(totalDamage/2);
       target.reactionUsed = true;
       log(battle,target.name+" uses Uncanny Dodge to halve the attack’s damage.");
     }
-    damage = recordDamage(battle,target,totalDamage,weapon.type,breakdown,critical,random,attacker);
-    if (options.stun && actorIsUp(target)) {
+    damage = recordDamage(battle,target,totalDamage,weapon.type,breakdown,critical,random,attacker,
+      {attack:true,magical:weapon.magical || weapon.spellAttack || weapon.unarmed && hasFeature(attacker,"Ki-Empowered Strikes"),silvered:weapon.silvered,adamantine:weapon.adamantine});
+    if (options.stun && actorIsUp(target) && attacker.resources.ki.current>=1) {
       attacker.resources.ki.current -= 1;
+      if(!options.bonusStrike && !options.reaction) battle.kiAction=true;
       const save = savingThrow(target,"con",{random});
       const dc = attacker.classRules.kiDC;
       log(battle,target.name+" Constitution save "+save.total+" vs Ki DC "+dc+".");
@@ -766,8 +899,8 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
       log(battle, target.name + " Strength save " + save.total + " vs DC " + weapon.proneDC + (target.prone ? " · prone." : "."));
     }
   }
-  monsterEvent(battle,attacker,{
-    action:weapon.name, target:target.name, roll:roll.breakdown, total:roll.total,
+  recordAction(battle,attacker,{
+    action:weapon.name, target:target.name, roll:roll.breakdown, total:roll.total,blocked:!hit && armorClass(target)>=16,
     outcome:critical ? "Critical hit" : hit ? "Hit" : "Miss", damage, type:weapon.type, prone, reaction:options.reaction,
   });
   return {roll, hit, critical};
@@ -817,7 +950,17 @@ function breakInvisibility(battle,actor) {
       other.name === "Invisible" && other.concentration === caster.id))) endConcentration(battle,caster);
 }
 
-function checkCast(battle,caster,level,slotLevel,timing,usage) {
+export const slotRank = value => value==null || value==="" ? 0 : Number(String(value).split(':').at(-1));
+
+function castingPool(caster,slotLevel,slotPool) {
+  const pact=caster.resources?.pactMagic;
+  if(slotPool==="pact") return pact?.slotLevel===slotLevel ? pact : undefined;
+  if(slotPool==="spellcasting") return caster.slots[slotLevel];
+  if(!(caster.slots[slotLevel]?.current>0) && pact?.slotLevel===slotLevel) return pact;
+  return caster.slots[slotLevel];
+}
+
+function checkCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
   if (!actorIsUp(caster)) error("This token cannot cast at 0 hit points.");
   if (incapacitated(caster)) error("This character is incapacitated.");
   if (!occupies(caster)) error("Place the caster on the grid first.");
@@ -835,13 +978,13 @@ function checkCast(battle,caster,level,slotLevel,timing,usage) {
       error("After a bonus-action spell, another spell on this turn must be a one-action cantrip.");
     }
   }
-  if (usage?.resource && !(caster.resources?.[usage.resource]?.current > 0)) error("This feature’s spell use is expended.");
-  if (level && !usage && (!Number.isInteger(slotLevel) || slotLevel < level || !(caster.slots[slotLevel]?.current > 0))) {
+  if (usage?.resource && !(caster.resources?.[usage.resource]?.current >= (usage.cost ?? 1))) error("This feature’s spell use is expended.");
+  if (level && !usage && (!Number.isInteger(slotLevel) || slotLevel < level || !(castingPool(caster,slotLevel,slotPool)?.current > 0))) {
     error("Choose a slot of the spell’s level or higher with a use remaining.");
   }
 }
 
-function spendCast(battle,caster,level,slotLevel,timing,usage) {
+function spendCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
   if (battle.round) {
     if (timing === "bonus") battle.bonusUsed = true;
     else if (timing === "reaction") caster.reactionUsed = true;
@@ -854,19 +997,23 @@ function spendCast(battle,caster,level,slotLevel,timing,usage) {
       };
     }
   }
-  if (usage?.resource) caster.resources[usage.resource].current -= 1;
-  else if (level && !usage) caster.slots[slotLevel].current -= 1;
+  if (usage?.resource) {
+    caster.resources[usage.resource].current -= usage.cost ?? 1;
+    if (usage.resource === "ki" && battle.round && timing === "action") battle.kiAction = true;
+  }
+  else if (level && !usage) castingPool(caster,slotLevel,slotPool).current -= 1;
 }
 
-export function recordSpell(battle,caster,spell,slotLevel) {
+export function recordSpell(battle,caster,spell,slotLevel,options={}) {
   if (!spell.reference || spell.edition !== "2014" || spell.customUse) error("Use the table ruling for this custom or revised spell.");
   if (!["action","bonus","reaction"].includes(spell.timing)) error("Resolve the longer casting time at the table.");
   const usage = spell.castUsage && slotLevel === 0 ? spell.castUsage : undefined;
-  checkCast(battle,caster,spell.level,slotLevel,spell.timing,usage);
-  spendCast(battle,caster,spell.level,slotLevel,spell.timing,usage);
+  checkCast(battle,caster,spell.level,slotLevel,spell.timing,usage,options.slotPool);
+  spendCast(battle,caster,spell.level,slotLevel,spell.timing,usage,options.slotPool);
   breakInvisibility(battle,caster);
   log(battle,caster.name+" casts "+spell.name+(usage ? " using "+(spell.grantedBy ?? "a class feature") :
     spell.level ? " with a level "+slotLevel+" slot" : "")+" · manual effect.");
+  recordAction(battle,caster,{action:spell.name,kind:"spell",messages:[battle.log.at(-1)]});
 }
 
 function spellSave(battle, caster, target, effect, options, random) {
@@ -884,7 +1031,7 @@ function spellSave(battle, caster, target, effect, options, random) {
 
 function rangedSpellAttack(battle,caster,target,effect,expression,options,random) {
   const distance = distanceFt(caster,target);
-  const result = d20(caster.spellAttack,{...attackMode(battle,caster,target,options,true,distance),random});
+  const result = d20(caster.spellAttack,{...attackMode(battle,caster,target,options,true,distance),random,label:"Spell attack"});
   addInspiration(caster,result,random);
   if (target.helped?.side === caster.side) delete target.helped;
   breakInvisibility(battle,caster);
@@ -892,6 +1039,7 @@ function rangedSpellAttack(battle,caster,target,effect,expression,options,random
   const hit = result.kept === 20 || (result.kept !== 1 && result.total >= armorClass(target) + (Number(options.cover) || 0));
   const critical = hit && (result.kept === 20 || ((target.hp === 0 || incapacitated(target)) && distance <= 5));
   log(battle,"Spell attack on "+target.name+" — "+result.breakdown+" = "+result.total+(critical ? ", critical hit." : hit ? ", hit." : ", miss."));
+  recordAction(battle,caster,{outcome:critical ? "Critical hit" : hit ? "Hit" : "Miss",roll:result.breakdown,total:result.total});
   if (hit) {
     damageLog(battle,target,expression,effect.type,critical,random,caster);
     if (effect.slow && actorIsUp(target)) target.slowedBy = caster.id;
@@ -902,7 +1050,7 @@ function rangedSpellAttack(battle,caster,target,effect,expression,options,random
 export function areaCells(battle, origin, radius, board) {
   const queue = [{...origin,cost:0}];
   const visited = new Set([keyAt(origin.x,origin.y)]);
-  const wall = (x,y) => !mapFloor(board,x,y) || battle.terrain[keyAt(x,y)] === "wall";
+  const wall = (x,y) => !mapFloor(board,x,y,battle) || battle.terrain[keyAt(x,y)] === "wall";
   for (let i=0;i<queue.length;i++) {
     const {x,y,cost} = queue[i];
     if (cost >= radius) continue;
@@ -910,7 +1058,7 @@ export function areaCells(battle, origin, radius, board) {
       for (let dy=-1;dy<=1;dy++) {
         const col=x+dx, row=y+dy, key=keyAt(col,row);
         if (visited.has(key) || col<0 || row<0 || col>=board.cols || row>=board.rows || wall(col,row)) continue;
-        if (crossesMapWall(board,{x,y},{x:col,y:row})) continue;
+        if (crossesMapWall(board,{x,y},{x:col,y:row},battle)) continue;
         if (dx && dy && wall(col,y) && wall(x,row)) continue;
         visited.add(key);
         queue.push({x:col,y:row,cost:cost+5});
@@ -933,7 +1081,7 @@ export function spellCells(battle,caster,square,effect,board,rank = effect.level
       const forward = (u*dx+v*dy)/length;
       const side = Math.abs(u*dy-v*dx)/length;
       if (forward > 0 && forward*5 <= effect.cone && side <= forward/2 &&
-          mapFloor(board,x,y) && lineClear(battle,caster,{x,y},board)) cells.add(keyAt(x,y));
+          mapFloor(board,x,y,battle) && lineClear(battle,caster,{x,y},board)) cells.add(keyAt(x,y));
     }
   }
   return cells;
@@ -964,6 +1112,10 @@ export function checkSpellTethers(battle,map) {
 }
 
 export function sustainWitchBolt(battle,caster,map,random = Math.random) {
+  return withActionEvent(battle,caster,{action:"Sustain Witch Bolt",kind:"spell"},() => resolveWitchBolt(battle,caster,map,random));
+}
+
+function resolveWitchBolt(battle,caster,map,random) {
   assertTurn(battle,caster);
   const target = boltTarget(battle,caster,map);
   if (!target || battle.action) error("Witch Bolt’s action is unavailable.");
@@ -979,13 +1131,14 @@ export function wakeCreature(battle,actor,target) {
   battle.action = "wake";
   removeCondition(target,sleep);
   log(battle,actor.name+" wakes "+target.name+".");
+  recordAction(battle,actor,{action:"Wake "+target.name,kind:"ability"});
 }
 
 function areaDamage(battle,caster,source,square,effect,map,dice,random) {
   const area = spellCells(battle,caster,square,effect,map);
   const roll = rollDice(dice+"d"+effect.faces,{random});
   log(battle,effect.name+" damage roll — "+roll.breakdown+" = "+roll.total+".");
-  for (const creature of battle.actors.filter((actor) => occupies(actor) && area.has(keyAt(actor.x,actor.y)))) {
+  for (const creature of battle.actors.filter((actor) => occupies(actor) && touchesArea(actor,area))) {
     const passed = spellSave(battle,source,creature,effect,{cover:0},random);
     const evasion = effect.save === "dex" && hasFeature(creature,"Evasion") && !incapacitated(creature);
     const amount = evasion && passed ? 0 : passed || evasion ? Math.floor(roll.total/2) : roll.total;
@@ -1018,7 +1171,8 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
     caster.spellAttack = caster.proficiency+ability;
   }
   try {
-    return resolveSpell(battle,caster,target,spell,usage ? spell.level : slotLevel,options,random,usage);
+    return withActionEvent(battle,caster,{action:spell.name,kind:"spell",target:target?.name},
+      () => resolveSpell(battle,caster,target,spell,usage ? spell.level : slotLevel,options,random,usage));
   } finally {Object.assign(caster,original);}
 }
 
@@ -1029,7 +1183,7 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
   const {level = 0, heal:healing} = effect;
   const timing = effect.bonus ? "bonus" : "action";
   if (!battle.round && !effect.exploration) error("Enter combat to cast this spell.");
-  checkCast(battle,caster,level,slotLevel,timing,usage);
+  checkCast(battle,caster,level,slotLevel,timing,usage,options.slotPool);
   const tier = 1 + [5,11,17].filter((threshold) => caster.level >= threshold).length;
   const square = options.square;
   const aimed = effect.area || effect.cone || effect.teleport;
@@ -1042,8 +1196,7 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
         square.x < 0 || square.y < 0 || square.x >= options.map.cols || square.y >= options.map.rows) {
       error("Choose a square on the map.");
     }
-    if (effect.teleport && (!mapFloor(options.map,square.x,square.y) || battle.terrain[keyAt(square.x,square.y)] === "wall" ||
-        battle.actors.some((actor) => occupies(actor) && actor.x===square.x && actor.y===square.y))) error("Choose an unoccupied destination.");
+    if (effect.teleport && !canStand(battle,caster,square.x,square.y,options.map)) error("Choose an unoccupied destination that fits the caster.");
     if (effect.cone) {
       if (!distanceFt(caster,square)) error("Choose the direction of the cone.");
     } else {
@@ -1075,7 +1228,7 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
     if (!breathTypes.includes(options.damageType)) error("Choose a damage type for Dragon’s Breath.");
     if (!Number.isFinite(caster.spellDC)) error("Set the spell save DC.");
   }
-  spendCast(battle,caster,level,slotLevel,timing,usage);
+  spendCast(battle,caster,level,slotLevel,timing,usage,options.slotPool);
   if (!effect.attack) breakInvisibility(battle,caster);
   if (effect.concentration) startConcentration(battle,caster,spell.name,effect.concentration);
   const destination = aimed ? " at square "+(square.x+1)+", "+(square.y+1) :
@@ -1111,7 +1264,7 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
   } else if (effect.area || effect.cone) {
     if (effect.sleep) {
       const area = spellCells(battle,caster,square,effect,options.map);
-      const caught = battle.actors.filter((actor) => occupies(actor) && area.has(keyAt(actor.x,actor.y)));
+      const caught = battle.actors.filter((actor) => occupies(actor) && touchesArea(actor,area));
       const roll = rollDice((5+2*(slotLevel-level))+"d8",{random});
       let pool = roll.total;
       log(battle,spell.name+" HP pool — "+roll.breakdown+" = "+pool+".");
@@ -1125,9 +1278,10 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
       areaDamage(battle,caster,caster,square,{...effect,name:spell.name},options.map,(effect.dice ?? 8)+slotLevel-level,random);
     }
   } else if (healing) {
-    const amount = rollDice(slotLevel+"d"+effect.faces,{random});
-    const restored = heal(target,amount.total+caster.spellAbility);
-    log(battle,target.name+" regains "+restored+" HP ("+amount.breakdown+", modifier "+caster.spellAbility+").");
+    const amount = rollDice(slotLevel+"d"+effect.faces+(caster.spellAbility>=0 ? "+" : "")+caster.spellAbility,{random,label:"Healing"});
+    const restored = heal(target,amount.total);
+    captureImpact(battle,target,{amount:restored,healing:true});
+    log(battle,target.name+" regains "+restored+" HP ("+amount.breakdown+").");
   } else if (effect.condition) {
     for (const creature of targets) {
       if (effect.save && spellSave(battle,caster,creature,effect,options,random)) continue;
@@ -1175,6 +1329,10 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
 }
 
 export function drinkPotion(battle, actor, item, random = Math.random) {
+  return withActionEvent(battle,actor,{action:item?.name ?? "Use item",kind:"heal"},() => resolvePotion(battle,actor,item,random));
+}
+
+function resolvePotion(battle, actor, item, random) {
   if (battle.round) {
     assertTurn(battle, actor);
     if (battle.action) error("This token has used its action.");
@@ -1184,5 +1342,6 @@ export function drinkPotion(battle, actor, item, random = Math.random) {
   if (battle.round) battle.action = "potion";
   item.quantity -= 1;
   const restored = heal(actor, amount.total);
+  captureImpact(battle,actor,{amount:restored,healing:true});
   log(battle, actor.name + " uses " + item.name + " and regains " + restored + " HP (" + amount.breakdown + ").");
 }

@@ -1,4 +1,5 @@
-import {keyAt, occupies, placeToken} from "./combat.mjs";
+import {actorCells} from './actor-space.mjs';
+import {keyAt, occupies, placeToken, canStand} from "./combat.mjs";
 import {authoredRoster, creatureActor, regionAt, regionCells, cellCenter} from "./encounters.mjs";
 import {mapFloor} from "./map-walls.mjs";
 import {automaticRoom, startingCount} from "./scene-data.mjs";
@@ -90,21 +91,21 @@ export async function populateScene(map, battle, random = Math.random) {
     prepared.push({region:plan.region,actors,markers});
   }
 
-  const occupied = new Set(battle.actors.filter(occupies).map(({x,y})=>keyAt(x,y)));
+  const occupied = new Set(battle.actors.filter(occupies).flatMap(a=>actorCells(a).map(c=>keyAt(c.x,c.y))));
   const markerSquares = new Set();
   battle.markers ??= [];
   for (const {region,actors,markers} of prepared) {
     if (!actors.length && !markers.length) continue;
     const cells = regionCells(map,region).filter(({x,y}) => mapFloor(map,x,y) && battle.terrain[keyAt(x,y)]!=="wall");
     for (const actor of actors) {
-      const cell = cells.find(({x,y}) => !occupied.has(keyAt(x,y)));
+      const cell = cells.find(({x,y}) => canStand(battle,actor,x,y,map));
       if (!cell) {
         battle.unplacedScene ??= {};
         battle.unplacedScene[areaKey(region)] = (battle.unplacedScene[areaKey(region)] ?? 0) + 1;
         continue;
       }
       placeToken(battle,actor,cell.x,cell.y,map);
-      occupied.add(keyAt(cell.x,cell.y));
+      for(const c of actorCells(actor)) occupied.add(keyAt(c.x,c.y));
       battle.actors.push(actor);
     }
     for (const [index,marker] of markers.entries()) {

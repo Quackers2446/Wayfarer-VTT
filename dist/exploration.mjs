@@ -1,10 +1,11 @@
-import {actorIsUp, canSee, condition, distanceFt, keyAt, occupies, startInitiative} from "./combat.mjs";
+import {actorIsUp, canSee, condition, distanceFt, hasFeature, keyAt, occupies, startInitiative} from "./combat.mjs";
 import {cellCenter, regionAt} from "./encounters.mjs";
 import {exploredCells, rememberCells} from "./fog-memory.mjs";
 import {mapFloor, mapWalls} from "./map-walls.mjs";
 
 const roomGrids = new WeakMap();
 const cachedVision = new WeakMap();
+const visionDistance = actor => actor.astralVisage || hasFeature(actor,"Devil's Sight") ? 120 : Number.isFinite(actor.darkvision) ? Math.max(30,Math.min(120,actor.darkvision)) : 30;
 const roomNeighbors = [[-1,0],[1,0],[0,-1],[0,1]];
 const mapGeometry = (map) => [map.cols,map.rows,map.offsetX,map.offsetY,map.cellWidth ?? map.size,map.cellHeight ?? map.size].join(":");
 
@@ -28,7 +29,7 @@ export function inSight(battle, map, partyMember, target, maxDistance = 30) {
   if (!actorIsUp(partyMember) || !occupies(partyMember)) return false;
   const distance = distanceFt(partyMember,target);
   if (distance > maxDistance || !canSee(battle,partyMember,target,map)) return false;
-  if (mapWalls(map) || !map.regions.length || distance <= 5) return true;
+  if (mapWalls(map,battle) || !map.regions.length || distance <= 5) return true;
   const friendRoom = roomId(map,partyMember);
   const enemyRoom = roomId(map,target);
   if (friendRoom === enemyRoom) return true;
@@ -39,17 +40,17 @@ export function inSight(battle, map, partyMember, target, maxDistance = 30) {
 
 export function partyVision(battle,map) {
   const heroes = battle.actors.filter((actor) => actor.side === "party" && actorIsUp(actor) && occupies(actor) && !condition(actor,"Asleep"));
-  const signature = [mapGeometry(map),...heroes.map((actor) => `${actor.x}:${actor.y}:${actor.darkvision}`),
+  const signature = [mapGeometry(map),battle.wallRevision ?? 0,(battle.wallData?.doors ?? []).map(d => `${d.id}:${d.state}`).join(","),...heroes.map((actor) => `${actor.x}:${actor.y}:${visionDistance(actor)}`),
     ...Object.keys(battle.terrain).filter((cell) => battle.terrain[cell] === "wall")].join("/");
   const cached = cachedVision.get(battle);
   if (cached?.map === map && cached.signature === signature && cached.zones === battle.spellZones) return cached.visible;
   const visible = new Set();
   for (const actor of heroes) {
-    const distance = Number.isFinite(actor.darkvision) ? Math.max(30,Math.min(120,actor.darkvision)) : 30;
+    const distance = visionDistance(actor);
     const cells = Math.ceil(distance/5);
     for (let y = Math.max(0,actor.y-cells); y <= Math.min(map.rows-1,actor.y+cells); y++) {
       for (let x = Math.max(0,actor.x-cells); x <= Math.min(map.cols-1,actor.x+cells); x++) {
-        if (mapFloor(map,x,y) && inSight(battle,map,actor,{x,y},distance)) visible.add(keyAt(x,y));
+        if (mapFloor(map,x,y,battle) && inSight(battle,map,actor,{x,y},distance)) visible.add(keyAt(x,y));
       }
     }
   }
@@ -77,7 +78,7 @@ export function engageEnemy(battle, map, actor, enemy, noticed = false, random =
   const participants = new Set(battle.actors.filter((entry) => entry.side === "party" && occupies(entry)).map(({id}) => id));
   for (const entry of battle.actors.filter(hostile)) {
     const sameArea = (enemyRoom && roomId(map,entry) === enemyRoom) || (enemy.origin && enemy.origin === entry.origin);
-    if (entry.id === enemy.id || noticesEnemy(battle,map,actor,entry) || (!mapWalls(map) && sameArea)) participants.add(entry.id);
+    if (entry.id === enemy.id || noticesEnemy(battle,map,actor,entry) || (!mapWalls(map,battle) && sameArea)) participants.add(entry.id);
   }
   startInitiative(battle,random,participants);
   return noticed

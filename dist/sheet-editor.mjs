@@ -112,16 +112,34 @@ export function readSheetEdits(data, skills, character) {
     const level = readNumber(data,"class-level-"+cls.id,cls.name+" level",1,20);
     if (level !== undefined) classLevels[cls.id] = level;
     const selected = data.get("class-subclass-"+cls.id);
-    if (selected && cls.subclasses.some(({id}) => id === selected)) subclasses[cls.id] = selected;
+    if (selected === "" || cls.subclasses.some(({id}) => id === selected)) subclasses[cls.id] = selected;
   }
   for (const choice of details?.choices ?? []) {
     if (!data.has("choice-present-"+choice.id)) continue;
     const selected = [...new Set(data.getAll("feature-choice-"+choice.id))];
-    if (selected.length > choice.count) throw new Error(choice.label+" allows "+choice.count+" choices.");
+    if (!choice.minimum && selected.length > choice.count) {
+      const imported=["spells","prepared"].includes(choice.kind) && !character.sheetEdits?.featureChoices?.[choice.id] &&
+        choice.inferred?.length===selected.length && choice.inferred.every(id=>selected.includes(id));
+      // Preserve an unresolved imported list while other sheet fields are edited.
+      // It remains flagged for review until the player records a legal selection.
+      if(imported) continue;
+      throw new Error(choice.label+" allows "+choice.count+" choices.");
+    }
     if (selected.some((id) => !choice.options.some((entry) => entry.id === id))) throw new Error("Choose an available feature.");
+    for (const id of selected) {
+      const entry=choice.options.find(entry=>entry.id===id);
+      if(entry.disabled) throw new Error(entry.name+" requires "+entry.requires+".");
+    }
     featureChoices[choice.id] = selected;
     const note = String(data.get("feature-note-"+choice.id) ?? "").trim();
     if (note) featureNotes[choice.id] = note.slice(0,300);
+  }
+  const expertise=new Set();
+  for(const choice of details?.choices.filter(choice=>choice.kind==="expertise") ?? []) {
+    for(const name of featureChoices[choice.id] ?? []) {
+      if(expertise.has(name)) throw new Error("Choose different skills for each Expertise selection.");
+      expertise.add(name);
+    }
   }
   if (Object.keys(classLevels).length) result.classLevels = classLevels;
   if (Object.keys(subclasses).length) result.subclasses = subclasses;

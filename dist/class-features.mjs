@@ -1,13 +1,21 @@
 import {ruleKey} from "./rules-library.mjs";
+import {choiceValues, preparedCount, prerequisiteProblems, sourceAllowed, sourceProficiencies} from "./class-choice-rules.mjs";
+import {additionalSpellChoices} from "./class-spell-choices.mjs";
 
 let database = {optionalFeatures:[],feats:[],spells:[]};
 const idOf = (record) => record.name.toLowerCase()+"|"+record.source.toLowerCase();
 const words = (text) => String(text ?? "").replace(/\{@\w+ ([^}]+)\}/g,(_,body) => body.split("|")[0]);
 const unique = (values) => [...new Set(values)];
+const sameSpell = (spell,option) => ruleKey(spell.name.split(" (")[0]) === ruleKey(option.name);
 
 export function loadFeatureData(data) {database = data;}
 export const classKey = (record) => idOf(record);
 export const subclassKey = (record) => idOf(record);
+export function pactMagicResource(level,edition="2014") {
+  const rules=database.classes?.find(record=>record.name==="Warlock" && record.edition===edition);
+  const pact=rules?.slots[level-1]?.pact;
+  return pact ? {name:"Pact Magic · level "+pact[0],maximum:pact[1],rest:"short",slotLevel:pact[0]} : null;
+}
 export function selectedFeatNames(character) {
   const selected = new Set(Object.values(character.sheetEdits?.featureChoices ?? {}).flat());
   return database.feats.filter((feat) => selected.has(idOf(feat))).map((feat) => feat.name);
@@ -48,19 +56,16 @@ function inlineOptions(feature) {
     if (!node || typeof node !== "object") return;
     if (node.type === "options" && node.entries?.length && node.count) {
       const options = node.entries.filter((entry) => typeof entry === "object").map((entry,index) => ({
-        id:entry.uid ?? (entry.optionalfeature ? entry.optionalfeature.toLowerCase() : feature.id+"."+path+"."+index),
+        ...entry,id:entry.uid ?? (entry.optionalfeature ? entry.optionalfeature.toLowerCase() : feature.id+"."+path+"."+index),
         name:entry.name ?? entry.optionalfeature?.split("|")[0] ?? "Option "+(index+1),entries:entry.entries ?? [],
       }));
       if (options.length) result.push({id:feature.id+path,label:feature.name,level:feature.level,count:node.count,kind:"options",options});
+      return;
     }
     for (const [key,value] of Object.entries(node)) if (key !== "data") visit(value,path+"."+key);
   };
   visit(feature.entries,"");
   return result;
-}
-
-function sourceAllowed(record,edition) {
-  return edition === "2024" || !["XPHB","EFA"].includes(record.source);
 }
 
 function choiceInstruction(entries) {
@@ -84,89 +89,6 @@ function optionalAllowed(record,level,rules) {
   });
 }
 
-function selections(character,choice) {
-  return (character.sheetEdits?.featureChoices?.[choice.id] ?? []).filter((id) => choice.options.some((option) => option.id === id));
-}
-
-function spellFilter(spell,filter) {
-  return String(filter).split("|").every((piece) => {
-    const [name,values] = piece.split("=");
-    const options = String(values ?? "").split(";").map((value) => value.toLowerCase());
-    if (name.toLowerCase() === "level") return options.includes(String(spell.level));
-    if (name.toLowerCase() === "school") return options.includes(spell.school?.toLowerCase());
-    if (name.toLowerCase() === "class") return Object.values(spell.classes ?? {}).some((classes) =>
-      Object.keys(classes).some((name) => options.includes(name.toLowerCase())));
-    return true;
-  });
-}
-
-function additionalSpellChoices(character,sources,edition) {
-  const choices = [], grants = [];
-  const find = (reference) => {
-    const [name,source] = reference.split("#")[0].split("|");
-    return database.spells.find((spell) => ruleKey(spell.name) === ruleKey(name) &&
-      (source ? spell.source.toLowerCase() === source.toLowerCase() : spell.edition === edition));
-  };
-  const catalog = database.spells.filter((spell) => sourceAllowed(spell,edition));
-  const visited = new Set();
-  for (const source of sources) {
-    const sourceId = source.id ?? idOf(source);
-    if (visited.has(sourceId)) continue;
-    visited.add(sourceId);
-    const branches = source.additionalSpells ?? [];
-    let selected = branches;
-    if (branches.length > 1) {
-      const id = sourceId+"|spell-branch";
-      const options = branches.map((branch,index) => ({id:String(index),name:branch.name ?? "Spell option "+(index+1)}));
-      const saved = character.sheetEdits?.featureChoices?.[id] ?? [];
-      choices.push({id,label:source.name+" · spell option",level:1,count:1,kind:"spell-branch",options,selected:saved,
-        remaining:saved.length ? 0 : 1});
-      selected = branches.filter((_,index) => saved.includes(String(index)));
-    }
-    for (const [index,branch] of selected.entries()) {
-      const ability = branch.ability && branch.ability !== "inherit" && typeof branch.ability === "string" ? branch.ability : undefined;
-      const visit = (node,path,castUsage) => {
-        if (typeof node === "string") {
-          const spell = find(node);
-          if (spell) grants.push({...spell,castUsage,castingAbility:ability,grantedBy:source.name});
-        } else if (Array.isArray(node)) node.forEach((value,index) => visit(value,path+"."+index,castUsage));
-        else if (node && typeof node === "object") {
-          if (node.choose) {
-            const from = node.choose.from;
-            const options = from ? from.map(find).filter(Boolean) : catalog.filter((spell) => spellFilter(spell,node.choose));
-            const id = sourceId+"|spells|"+path;
-            const selected = character.sheetEdits?.featureChoices?.[id] ?? [];
-            const count = node.count ?? node.choose.count ?? 1;
-            const choicesHere = options.map((spell) => ({id:idOf(spell),...spell}));
-            choices.push({id,label:source.name+" · granted spells",level:1,count,kind:"granted-spells",options:choicesHere,
-              selected,remaining:Math.max(0,count-selected.length)});
-            for (const spell of choicesHere.filter((spell) => selected.includes(spell.id))) {
-              grants.push({...spell,castUsage,castingAbility:ability,grantedBy:source.name});
-            }
-          } else {
-            for (const [key,value] of Object.entries(node)) {
-              if (key === "daily" || key === "rest") {
-                for (const [uses,entries] of Object.entries(value)) {
-                  const count = Number(uses.replace("e",""));
-                  if (Number.isFinite(count)) visit(entries,path+"."+key+"."+uses,{maximum:count,rest:key === "rest" ? "short" : "long"});
-                }
-              } else visit(value,path+"."+key,castUsage);
-            }
-          }
-        }
-      };
-      for (const type of ["known","prepared","innate"]) {
-        for (const [required,entries] of Object.entries(branch[type] ?? {})) {
-          if (/^\d+$/.test(required) && Number(required) > character.level) continue;
-          if (!/^\d+$/.test(required) && required !== "_") continue;
-          visit(entries,index+"."+type+"."+required,type === "innate" ? {atWill:true} : undefined);
-        }
-      }
-    }
-  }
-  return {choices,grants};
-}
-
 export function buildClassFeatures(character,classes,mod,pb,edition) {
   const details = [];
   const choices = [];
@@ -176,10 +98,20 @@ export function buildClassFeatures(character,classes,mod,pb,edition) {
   const levels = {};
   const tables = {};
   const pools = {};
+  const grantSources = [];
+  const fixedProficiencies = {skills:[],tools:[],languages:[],weapons:[],armor:[]};
+  const starting = classes.length === 1 ? classes[0] : classes.find(({rules}) =>
+    ruleKey(rules.name) === ruleKey(character.startingClass ?? ""));
+  const collectProficiencies = (source,options) => {
+    const result = sourceProficiencies(source,database,character,pb,mod,options);
+    choices.push(...result.choices);
+    for (const key of Object.keys(fixedProficiencies)) fixedProficiencies[key].push(...result.fixed[key]);
+  };
   for (const {rules,subclass,level} of classes) {
     const key = classKey(rules);
     details.push({id:key,name:rules.name,source:rules.source,level,subclass:subclass?.name,
       subclassId:subclass ? subclassKey(subclass) : "",subclassTitle:rules.subclassTitle ?? "Subclass",
+      subclassLevel:Math.min(...(rules.subclasses.flatMap(entry=>entry.featureDetails.map(feature=>feature.level)))),
       subclasses:rules.subclasses.map((entry) => ({id:subclassKey(entry),name:entry.name,source:entry.source})),
       tables:tableValues(rules,level)});
     if (!level) continue;
@@ -197,7 +129,12 @@ export function buildClassFeatures(character,classes,mod,pb,edition) {
       features.push({...feature,className:rules.name});
       traitNames.add(feature.name);
       for (const nested of nestedEntries(feature.entries)) traitNames.add(nested.name);
-      choices.push(...inlineOptions(feature));
+      const progressNames = [rules,subclass].filter(Boolean).flatMap(record=>(record.optionalfeatureProgression ?? []).map(progress=>progress.name));
+      const progressTypes=[rules,subclass].filter(Boolean).flatMap(record=>(record.optionalfeatureProgression ?? []).flatMap(progress=>progress.featureType));
+      choices.push(...inlineOptions(feature).filter(choice=>!progressNames.some(name=>choice.label.endsWith(name)) &&
+        !choice.options.every(option=>option.featureType?.some(type=>progressTypes.includes(type)))));
+      collectProficiencies(feature,{level:feature.level,id:feature.id});
+      grantSources.push({...feature,grantLevel:level});
       if (feature.name === "Ability Score Improvement") {
         choices.push({id:feature.id,label:rules.name+" level "+feature.level+" · Ability score improvement or feat",
           level:feature.level,count:1,kind:"advancement",options:[{id:"asi",name:"Ability score improvement (already included in scores)"},
@@ -209,29 +146,32 @@ export function buildClassFeatures(character,classes,mod,pb,edition) {
         const choice = {id:feature.id,label:rules.name+" level "+feature.level+" · Expertise",level:feature.level,count:2,kind:"expertise",options};
         const inferred = character.skills.filter((skill) => Number.isFinite(skill.bonus) &&
           skill.bonus === (mod[skillAbility(skill.name)] ?? 0)+2*pb).map((skill) => ruleKey(skill.name));
-        choice.inferred = inferred.slice(feature.level >= 6 ? 2 : 0,feature.level >= 6 ? 4 : 2);
+        choice.inferred = inferred.length === choice.count ? inferred : [];
         choices.push(choice);
       } else if (!["Spellcasting","Pact Magic","Martial Arts","Ki","Monastic Tradition","Roguish Archetype","Bard College",
         "Otherworldly Patron","Arcane Tradition","Ranger Archetype","Fighting Style","Eldritch Invocations","Pact Boon"].includes(feature.name)) {
         const instruction = choiceInstruction(feature.entries);
-        if (instruction && !inlineOptions(feature).length) {
+        if (instruction && !inlineOptions(feature).length && (/favored enemy|favored terrain|weapon type|maneuver|metamagic/i.test(instruction) ||
+          !choices.some(choice=>choice.id.startsWith(feature.id+"|") && ["skills","tools","languages"].includes(choice.kind)))) {
           choices.push({id:feature.id+"|choice",label:feature.name+" · recorded choice",level:feature.level,count:1,kind:"record",
             options:[],instruction});
         }
       }
     }
-    const skillFrom = rules.skills?.find((entry) => entry.choose)?.choose;
+    const gained = starting === classes.find(entry=>entry.rules===rules) ? rules : starting ? rules.multiclassing?.proficienciesGained : null;
+    const skillFrom = gained?.skills?.find((entry) => entry.choose)?.choose;
     if (skillFrom) {
       const count = skillFrom.count ?? skillFrom.amount ?? 1;
       const inferred = character.skills.filter((skill) => skillFrom.from.includes(ruleKey(skill.name)) &&
         Number.isFinite(skill.bonus) && skill.bonus >= (mod[skillAbility(skill.name)] ?? 0)+pb)
-        .map((skill) => ruleKey(skill.name)).slice(0,count);
-      choices.push({id:key+"|skills",label:rules.name+" starting skills",level:1,count,kind:"skills",
-        options:skillFrom.from.map((name) => ({id:name,name})),inferred});
+        .map((skill) => ruleKey(skill.name));
+      choices.push({id:key+"|skills",label:rules.name+(gained===rules ? " starting skills" : " multiclass skill"),level:1,count,kind:"skills",
+        options:skillFrom.from.map((name) => ({id:name,name})),inferred:inferred.length===count ? inferred : []});
     }
-    const fromAnySkill = rules.skills?.find((entry) => entry.any)?.any;
+    const fromAnySkill = gained?.skills?.find((entry) => entry.any)?.any;
     if (fromAnySkill) choices.push({id:key+"|skills",label:rules.name+" starting skills",level:1,count:fromAnySkill,kind:"skills",
       options:Object.keys(skillAbilities).map((name) => ({id:name,name}))});
+    if (gained) collectProficiencies({...gained,name:rules.name,id:key,edition:rules.edition},{level:1,id:key,starting:true});
     for (const record of [rules,subclass].filter(Boolean)) {
       for (const progress of record.optionalfeatureProgression ?? []) {
         const count = progressionAt(progress.progression,level);
@@ -239,71 +179,135 @@ export function buildClassFeatures(character,classes,mod,pb,edition) {
         const options = database.optionalFeatures.filter((entry) => sourceAllowed(entry,edition) &&
           entry.featureType?.some((type) => progress.featureType.includes(type)) && optionalAllowed(entry,level,rules))
           .map((entry) => ({id:idOf(entry),...entry}));
-        choices.push({id:key+"|"+progress.name,label:progress.name,level,count,kind:"optional-features",options});
-      }
-      for (const addition of record.additionalSpells ?? []) {
-        for (const [required,entries] of Object.entries(addition.prepared ?? {})) {
-          if (/^\d+$/.test(required) && Number(required) <= level) {
-            for (const name of Array.isArray(entries) ? entries : []) {
-              if (typeof name === "string") grantedSpells.push(name.split("|")[0]);
-            }
-          }
-        }
+        const aliases=[...unlocked,...subFeatures].filter(feature=>feature.name===progress.name).flatMap(feature=>inlineOptions(feature).map(choice=>choice.id));
+        const id=key+"|"+progress.name;
+        const previous=choices.find(choice=>choice.id===id);
+        if(previous) {previous.count+=count;previous.aliases=unique([...previous.aliases,...aliases]);previous.options=[...new Map([...previous.options,...options].map(option=>[option.id,option])).values()];}
+        else choices.push({id,aliases,label:progress.name,level,count,kind:"optional-features",options});
       }
     }
     const spellList = subclass?.casterProgression && !rules.casterProgression ? "Wizard" : rules.name;
     const slots = subclass?.slots?.length ? subclass.slots : rules.slots;
     const pool = slots[level-1];
     const maxRank = pool?.pact?.[0] ?? (Array.isArray(pool) ? pool.reduce((rank,count,index) => count > 0 ? index+1 : rank,0) : 0);
+    const sourceGrants=[rules,subclass].filter(Boolean).map(record=>({...record,id:idOf(record),grantLevel:level,maxSpellLevel:maxRank,
+      spellcastingAbility:record.spellcastingAbility ?? rules.spellcastingAbility}));
+    grantSources.push(...sourceGrants);
+    const additional = additionalSpellChoices(character,sourceGrants,edition,database,pb);
+    const expandedIds = new Set(additional.expanded.map(idOf));
+    const bonusSpellIds = new Set(additional.grants.map(idOf));
     const cantrips = (subclass?.cantripProgression ?? rules.cantripProgression)?.[level-1] ?? 0;
     const known = (subclass?.spellsKnownProgression ?? rules.spellsKnownProgression)?.[level-1];
     const catalog = database.spells.filter((spell) => sourceAllowed(spell,edition) &&
-      (spell.classes?.[rules.source]?.[spellList] || spell.classes?.PHB?.[spellList]));
+      (spell.classes?.[rules.source]?.[spellList] || spell.classes?.PHB?.[spellList] || expandedIds.has(idOf(spell))));
     for (const feature of [...unlocked,...subFeatures]) {
       if (!/Magical Secrets/.test(feature.name)) continue;
+      if ([rules,subclass].some(record=>record?.additionalSpells?.some(addition=>addition.name===feature.name))) continue;
       choices.push({id:feature.id+"|spells",label:feature.name+" · level "+feature.level,level:feature.level,count:2,kind:"spells",
         options:database.spells.filter((spell) => sourceAllowed(spell,edition) && spell.level <= maxRank)
           .map((spell) => ({id:idOf(spell),...spell}))});
     }
-    for (const [type,count] of [["cantrips",cantrips],["spells",known]]) {
+    const secretsCount=rules.name==="Bard" ? additional.choices.filter(choice=>choice.grantedBy===rules.name).reduce((sum,choice)=>sum+choice.count,0) : 0;
+    for (const [type,count] of [["cantrips",cantrips],["spells",known-secretsCount]]) {
       if (!count || !catalog.length) continue;
-      const options = catalog.filter((spell) => type === "cantrips" ? spell.level === 0 : spell.level > 0 && spell.level <= maxRank)
+      const options = catalog.filter((spell) => !bonusSpellIds.has(idOf(spell)) && (type === "cantrips" ? spell.level === 0 : spell.level > 0 && spell.level <= maxRank))
         .map((entry) => ({id:idOf(entry),...entry}));
-      const imported = character.spells.filter((spell) => (type === "cantrips" ? spell.level === 0 : spell.level > 0))
-        .flatMap((spell) => options.find((option) => ruleKey(spell.name).startsWith(ruleKey(option.name)))?.id ?? []);
-      choices.push({id:key+"|"+type,label:rules.name+" "+type+" known",level,count,kind:"spells",options,inferred:unique(imported)});
+      const imported = character.spells.filter((spell) => !spell.grantedBy && (type === "cantrips" ? spell.level === 0 : spell.level > 0))
+        .flatMap((spell) => options.find((option) => sameSpell(spell,option))?.id ?? []);
+      choices.push({id:key+"|"+type,label:rules.name+" "+type+" known",level,count,kind:"spells",options,inferred:unique(imported),
+        castingAbility:subclass?.spellcastingAbility ?? rules.spellcastingAbility});
+    }
+    const bookMinimum=rules.spellsKnownProgressionFixed?.slice(0,level).reduce((sum,count)=>sum+count,0);
+    let book;
+    if(bookMinimum && catalog.length) {
+      const options=catalog.filter(spell=>spell.level>0 && spell.level<=maxRank).map(spell=>({id:idOf(spell),...spell}));
+      const inferred=character.spells.filter(spell=>spell.level>0).flatMap(spell=>options.find(option=>ruleKey(spell.name.split(" (")[0])===ruleKey(option.name))?.id ?? []);
+      book={id:key+"|spellbook",label:rules.name+" spellbook · minimum learned",level,count:bookMinimum,minimum:true,kind:"spellbook",options,inferred:unique(inferred),
+        castingAbility:rules.spellcastingAbility};
+      choices.push(book);
     }
     if (maxRank && !known && !subclass?.spellsKnownProgression && catalog.length) {
-      const count = Math.max(1,level+(mod[rules.spellcastingAbility] ?? 0));
+      const count = preparedCount(subclass ?? {},level,mod) ?? preparedCount(rules,level,mod);
+      if (count == null) continue;
+      const learned=book && choiceValues(character,book);
+      const options=catalog.filter(spell=>spell.level>0 && spell.level<=maxRank && !bonusSpellIds.has(idOf(spell)) && (!learned || learned.includes(idOf(spell))));
       choices.push({id:key+"|prepared",label:rules.name+" prepared spells",level,count,kind:"prepared",optional:true,
-        options:catalog.filter((spell) => spell.level > 0 && spell.level <= maxRank).map((entry) => ({id:idOf(entry),...entry})),
+        castingAbility:subclass?.spellcastingAbility ?? rules.spellcastingAbility,
+        options:options.map((entry) => ({id:idOf(entry),...entry})),
         inferred:character.spells.filter((entry) => entry.prepared).flatMap((spell) =>
-          catalog.find((entry) => ruleKey(spell.name).startsWith(ruleKey(entry.name))) ? idOf(catalog.find((entry) =>
-            ruleKey(spell.name).startsWith(ruleKey(entry.name)))) : [])});
+          options.find((entry) => sameSpell(spell,entry)) ? idOf(options.find((entry) =>
+            sameSpell(spell,entry))) : [])});
     }
   }
   const selectedFeatures = [];
+  const selectedIds=new Set();
+  const baseTraits = new Set(traitNames);
   for (const choice of choices) {
-    const saved = character.sheetEdits?.featureChoices?.[choice.id];
-    choice.selected = saved ? selections(character,choice) : choice.inferred ?? [];
+    choice.selected = choiceValues(character,choice) ?? choice.inferred ?? [];
     choice.note = character.sheetEdits?.featureNotes?.[choice.id] ?? "";
     choice.remaining = choice.kind === "record" ? Number(!choice.note) : Math.max(0,choice.count-choice.selected.length);
+    choice.over = choice.minimum ? 0 : Math.max(0,choice.selected.length-choice.count);
     if (["optional-features","options","advancement"].includes(choice.kind)) {
-      for (const option of choice.options.filter((option) => choice.selected.includes(option.id))) {
-        if (option.entries) {
-          selectedFeatures.push({...option,level:choice.level});
+      for (const option of choice.options.filter((option) => !choice.over && choice.selected.includes(option.id))) {
+        if (option.entries && !selectedIds.has(option.id)) {
+          selectedIds.add(option.id);
+          const selectedFeature={...option,level:choice.level,choiceKind:choice.kind,parentFeature:choice.parentFeature};
+          selectedFeatures.push(selectedFeature);
+          for(const nestedChoice of inlineOptions(selectedFeature)) if(!choices.some(choice=>choice.id===nestedChoice.id)) choices.push({...nestedChoice,parentFeature:option.id});
           traitNames.add(option.name);
           for (const nested of nestedEntries(option.entries)) traitNames.add(nested.name);
         }
       }
     }
   }
-  const grantData = additionalSpellChoices(character,
-    [...classes.flatMap(({rules,subclass}) => [rules,subclass].filter(Boolean)),...selectedFeatures],edition);
+  if (traitNames.has("Dedicated Weapon")) {
+    const training=[...(character.rulesDetails?.weapons ?? []),...fixedProficiencies.weapons].map(ruleKey);
+    const options=(database.equipment ?? []).filter(item=>sourceAllowed(item,edition) && item.weaponCategory &&
+      !item.property?.some(property=>["H","S"].includes(property)) &&
+      (training.includes(item.weaponCategory) || training.some(name=>ruleKey(item.name)===name || ruleKey(item.name)+"s"===name)))
+      .map(item=>({id:idOf(item),name:item.name,source:item.source}));
+    const id="monk|dedicated-weapon";
+    const choice={id,label:"Dedicated Weapon · weapon",level:2,count:1,kind:"dedicated-weapon",options};
+    choice.selected=choiceValues(character,choice) ?? [];choice.remaining=1-choice.selected.length;choice.note="";
+    choices.push(choice);
+  }
+  const prerequisiteContext={levels,level:character.level,traits:[...traitNames],spells:character.spells,items:character.items ?? [],
+    species:character.species,background:character.background,feats:character.rulesDetails?.feats ?? character.feats ?? [],
+    scores:Object.fromEntries(character.abilities.map(ability=>[ability.abbr.toLowerCase(),ability.score])),
+    canCast:classes.some(({rules,subclass})=>rules.casterProgression || subclass?.casterProgression),
+    proficiencies:character.rulesDetails};
+  let validSelected=[...selectedFeatures];
+  for(let pass=0;pass<=selectedFeatures.length;pass++) {
+    prerequisiteContext.traits=[...baseTraits,...validSelected.flatMap(feature=>[feature.name,...nestedEntries(feature.entries).map(entry=>entry.name)])];
+    const next=validSelected.filter(feature=>(!feature.parentFeature || validSelected.some(parent=>parent.id===feature.parentFeature)) &&
+      !prerequisiteProblems(feature,feature.choiceKind==="advancement" && classes.length===1 ? {...prerequisiteContext,level:feature.level} : prerequisiteContext).length);
+    if(next.length===validSelected.length) break;
+    validSelected=next;
+  }
+  traitNames.clear();
+  for(const name of [...baseTraits,...validSelected.flatMap(feature=>[feature.name,...nestedEntries(feature.entries).map(entry=>entry.name)])]) traitNames.add(name);
+  prerequisiteContext.traits=[...traitNames];
+  for (const choice of choices) {
+    for (const option of choice.options) {
+      const problems=prerequisiteProblems(option,choice.kind==="advancement" && classes.length===1 ? {...prerequisiteContext,level:choice.level} : prerequisiteContext);
+      if (problems.length) {option.disabled=true;option.requires=problems.join(", ");}
+    }
+    choice.invalid=choice.selected.filter(id=>choice.options.some(option=>option.id===id && option.disabled));
+  }
+  for(const feature of validSelected) collectProficiencies(feature,{level:feature.level,id:feature.id});
+  const grantData = additionalSpellChoices(character,[...grantSources,...validSelected],edition,database,pb);
   choices.push(...grantData.choices);
+  for (const choice of choices) {
+    if (choice.selected) continue;
+    choice.selected=choiceValues(character,choice) ?? choice.inferred ?? [];
+    choice.remaining=Math.max(0,choice.count-choice.selected.length);choice.over=Math.max(0,choice.selected.length-choice.count);choice.note="";
+  }
   const martial = tables["Martial Arts"]?.toRoll?.[0];
   const sneak = tables["Sneak Attack"]?.toRoll?.[0];
   if (traitNames.has("Ki") && Number.isFinite(tables["Ki Points"])) pools.ki = {name:"Ki",maximum:tables["Ki Points"],rest:"short"};
+  const pactRow=classes.find(({rules})=>rules.casterProgression==="pact");
+  const pact=pactRow?.rules.slots[pactRow.level-1]?.pact;
+  if(pact) pools.pactMagic={name:"Pact Magic · level "+pact[0],maximum:pact[1],rest:"short",slotLevel:pact[0]};
   if (traitNames.has("Bardic Inspiration")) pools.inspiration = {name:"Bardic Inspiration",maximum:Math.max(1,mod.cha ?? 0),
     rest:traitNames.has("Font of Inspiration") ? "short" : "long"};
   if (traitNames.has("Second Wind")) pools.secondWind = {name:"Second Wind",maximum:1,rest:"short"};
@@ -320,18 +324,26 @@ export function buildClassFeatures(character,classes,mod,pb,edition) {
     features.some((feature) => nestedEntries(feature.entries).some((entry) => entry.name === "Extra Attack"));
   const fighterSwings = features.some((entry) => entry.name === "Extra Attack (3)") ? 4 :
     features.some((entry) => entry.name === "Extra Attack (2)") ? 3 : 2;
-  return {classes:details,features:[...features,...selectedFeatures],choices,pools,grantedSpells,spellGrants:grantData.grants,traits:[...traitNames],
+  const dedicated=choices.find(choice=>choice.kind==="dedicated-weapon");
+  const featureCosts=Object.fromEntries([...features,...validSelected].flatMap(feature=>[feature,...nestedEntries(feature.entries)])
+    .filter(feature=>feature.consumes).map(feature=>[feature.name,{name:feature.consumes.name,cost:feature.consumes.amount ?? 1}]));
+  const inspirationDice=features.filter(feature=>/^Bardic Inspiration/.test(feature.name)).map(feature=>{
+    const die=feature.name.match(/\bd(6|8|10|12)\b/) ?? feature.entries.find(entry=>typeof entry==='string' && /\bd6\b/.test(entry))?.match(/\bd(6)\b/);
+    return Number(die?.[1] ?? 6);
+  });
+  return {classes:details,needsStartingClass:classes.length>1 && !starting,features:[...features,...validSelected],choices,pools,grantedSpells,spellGrants:grantData.grants,traits:[...traitNames],fixedProficiencies,
     mechanics:{levels,edition,traits:[...traitNames],martialDie:martial?.faces,sneakDice:sneak?.number,
       movement:tables["Unarmored Movement"]?.value ?? 0,swings:extraAttack ? fighterSwings : 1,
       kiDC:Number.isFinite(mod.wis) && Number.isFinite(pb) ? 8+pb+mod.wis : null,
-      inspirationDie:levels.Bard >= 15 ? 12 : levels.Bard >= 10 ? 10 : levels.Bard >= 5 ? 8 : 6,
+      inspirationDie:Math.max(6,...inspirationDice),featureCosts,
+      dedicatedWeapon:dedicated?.options.find(option=>dedicated.selected.includes(option.id))?.name,
       rageDamage:tables["Rage Damage"],resources:pools,pact:classes.some(({rules}) => rules.casterProgression === "pact")}};
 }
 
 export function classChosenSpells(details) {
-  const result = details.choices.filter((choice) => choice.kind === "spells" || choice.kind === "prepared")
-    .flatMap((choice) => choice.options.filter((option) => choice.selected.includes(option.id)))
-    .map((spell) => ({name:spell.name,level:spell.level,prepared:true,source:spell.source,grantedByClass:true}));
+  const result = details.choices.filter((choice) => ["spells","prepared","spellbook"].includes(choice.kind) && !choice.over)
+    .flatMap((choice) => choice.options.filter((option) => choice.selected.includes(option.id)).map(spell=>({name:spell.name,level:spell.level,
+      prepared:choice.kind!=="spellbook",source:spell.source,grantedByClass:true,castingAbility:choice.castingAbility})));
   for (const name of details.grantedSpells) {
     const spell = database.spells.find((record) => record.name.toLowerCase() === name.toLowerCase() && record.edition === "2014");
     if (spell) result.push({name:spell.name,level:spell.level,prepared:true,source:spell.source,grantedByClass:true});
@@ -340,15 +352,23 @@ export function classChosenSpells(details) {
     result.push({name:spell.name,source:spell.source,level:spell.level,prepared:true,castUsage:spell.castUsage,
       castingAbility:spell.castingAbility,grantedByClass:true,grantedBy:spell.grantedBy});
   }
-  return result;
+  const merged=new Map();
+  for(const spell of result) {
+    const previous=merged.get(ruleKey(spell.name));
+    merged.set(ruleKey(spell.name),previous ? {...previous,...spell,prepared:previous.prepared || spell.prepared} : spell);
+  }
+  return [...merged.values()];
 }
 
 export function applySpellChoices(spells,details,edits) {
-  const chosen = details.choices.filter((choice) => ["spells","prepared"].includes(choice.kind) && edits?.featureChoices?.[choice.id]);
-  return spells.filter((spell) => {
-    const candidates = chosen.filter((choice) => choice.options.some((option) => ruleKey(spell.name).startsWith(ruleKey(option.name))));
-    return !candidates.length || candidates.some((choice) => choice.selected.some((id) =>
-      choice.options.some((option) => option.id === id && ruleKey(spell.name).startsWith(ruleKey(option.name)))));
+  const chosen = details.choices.filter(choice=>["spells","prepared","spellbook"].includes(choice.kind) && edits?.featureChoices?.[choice.id]);
+  return spells.flatMap(spell=>{
+    const candidates=chosen.filter(choice=>choice.options.some(option=>sameSpell(spell,option)));
+    const learned=candidates.filter(choice=>choice.kind!=="prepared");
+    const selected=choice=>choice.options.some(option=>choice.selected.includes(option.id) && sameSpell(spell,option));
+    if(learned.length && !learned.some(selected)) return [];
+    const prepared=candidates.filter(choice=>choice.kind==="prepared");
+    return [{...spell,...(prepared.length ? {prepared:prepared.some(selected)} : {})}];
   });
 }
 

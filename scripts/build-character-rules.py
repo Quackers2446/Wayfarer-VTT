@@ -143,6 +143,8 @@ def reference_id(uid, subclass=False):
 
 def class_data(read, files):
     data = [read("class/" + filename) for filename in files]
+    optional_records = read("optionalfeatures.json").get("optionalfeature", [])
+    optional_lookup = {(record["name"].lower(), record["source"].lower()): record for record in optional_records}
     definitions = {}
     for file in data:
         for field in ("classFeature", "subclassFeature"):
@@ -154,12 +156,22 @@ def class_data(read, files):
             return [expand(item, chain) for item in node]
         if not isinstance(node, dict):
             return node
+        if node.get("type") == "refOptionalfeature":
+            parts = node["optionalfeature"].split("|")
+            identity = (parts[0].lower(), (parts[1] if len(parts) > 1 and parts[1] else "PHB").lower())
+            uid = "|".join(identity)
+            found = optional_lookup.get(identity)
+            if found and uid not in chain:
+                return {**select(found, "name source prerequisite featureType ability consumes additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies"),
+                        "type": "entries", "uid": uid, "optionalfeature": uid,
+                        "entries": expand(found.get("entries", []), (*chain, uid))}
         field = "classFeature" if node.get("type") == "refClassFeature" else "subclassFeature" if node.get("type") == "refSubclassFeature" else None
         if field:
             uid = reference_id(node[field], field == "subclassFeature")
             feature = definitions.get(uid)
             if feature and uid not in chain:
-                return {"type": "entries", "name": feature["name"], "source": feature["source"], "uid": uid,
+                return {**select(feature, "consumes additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies"),
+                        "type": "entries", "name": feature["name"], "source": feature["source"], "uid": uid,
                         "entries": expand(feature.get("entries", []), (*chain, uid))}
         return {key: expand(value, chain) for key, value in node.items()}
 
@@ -168,7 +180,7 @@ def class_data(read, files):
         found = definitions.get(uid)
         if not found:
             return None
-        return {**select(found, "name source level consumes isClassFeatureVariant"),
+        return {**select(found, "name source level consumes isClassFeatureVariant additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies"),
                 "id": uid, "entries": expand(found.get("entries", []), (uid,)),
                 "optional": not subclass and found["source"] != found.get("classSource", "PHB")}
 
@@ -185,6 +197,19 @@ def class_data(read, files):
     classes = []
     extras = "cantripProgression spellsKnownProgression spellsKnownProgressionFixed preparedSpells preparedSpellsProgression additionalSpells optionalfeatureProgression subclassTitle classTableGroups multiclassing"
     for file in data:
+        subclass_lookup = {(sub["name"], sub["source"], sub.get("className"), sub.get("classSource", "PHB")): sub
+                           for sub in file.get("subclass", [])}
+
+        def resolved_subclass(sub, chain=()):
+            copy = sub.get("_copy")
+            if not copy:
+                return sub
+            identity = (copy["name"], copy["source"], copy.get("className"), copy.get("classSource", "PHB"))
+            parent = subclass_lookup.get(identity)
+            if not parent or identity in chain or copy.get("_mod"):
+                return sub
+            return {**resolved_subclass(parent, (*chain, identity)), **sub}
+
         for cls in file.get("class", []):
             if not cls.get("hd"):
                 continue
@@ -196,7 +221,8 @@ def class_data(read, files):
                 if key in {"armor", "weapons", "tools", "skills", "toolProficiencies"}:
                     record[key] = [label(entry) if isinstance(entry, str) else entry for entry in entries]
             record["subclasses"] = []
-            for sub in file.get("subclass", []):
+            for raw_sub in file.get("subclass", []):
+                sub = resolved_subclass(raw_sub)
                 if sub.get("classSource", "PHB") != cls["source"] or not sub.get("subclassFeatures"):
                     continue
                 record["subclasses"].append({
@@ -208,18 +234,25 @@ def class_data(read, files):
                 })
             classes.append(record)
 
-    optional = [select(record, "name source featureType prerequisite entries consumes additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies")
-                for record in read("optionalfeatures.json").get("optionalfeature", [])]
-    feats = [select(record, "name source prerequisite entries ability additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies")
+    optional = [{**select(record, "name source featureType prerequisite consumes additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies"),
+                 "entries": expand(record.get("entries", [])), "edition": edition(record)}
+                for record in optional_records]
+    feats = [{**select(record, "name source prerequisite category ability additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies"),
+              "entries": expand(record.get("entries", [])), "edition": edition(record)}
              for record in read("feats.json").get("feat", [])]
     spells = []
     lookup = read("generated/gendata-spell-source-lookup.json")
     for filename in read("spells/index.json").values():
         for spell in read("spells/" + filename).get("spell", []):
             membership = lookup.get(spell["source"].lower(), {}).get(spell["name"].lower(), {})
-            spells.append({**select(spell, "name source level school"), "edition": edition(spell),
+            spells.append({**select(spell, "name source level school meta spellAttack"), "edition": edition(spell),
                            "classes": membership.get("class", {}), "subclasses": membership.get("subclass", {})})
-    return {"classes": classes, "optionalFeatures": optional, "feats": feats, "spells": spells}
+    items = [*read("items-base.json").get("baseitem", []), *read("items.json").get("item", [])]
+    equipment = [{**select(item, "name source type weaponCategory property"), "edition": edition(item)}
+                 for item in items if item.get("weaponCategory") or item.get("type", "").split("|")[0] in {"AT", "INS", "GS", "T"}]
+    languages = [select(item, "name source type") for item in read("languages.json").get("language", [])]
+    return {"classes": classes, "optionalFeatures": optional, "feats": feats, "spells": spells,
+            "equipment": equipment, "languages": languages}
 
 
 def build(source):

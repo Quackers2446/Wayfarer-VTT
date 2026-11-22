@@ -1,3 +1,4 @@
+import {tokenSize} from './actor-space.mjs';
 const FIVE_FEET = 5;
 const number = (value, fallback) => Number.isFinite(value) ? value : fallback;
 const positive = (value, fallback) => value > 0 && Number.isFinite(value) ? value : fallback;
@@ -58,7 +59,7 @@ export function cellBounds(map, cell) {
 
 export function cellCenter(map, cell) {
   const [x,y,width,height] = cellBounds(map,cell);
-  return [x+width/2,y+height/2];
+  return [x+width*tokenSize(cell)/2,y+height*tokenSize(cell)/2];
 }
 
 export function cellAt(map, x, y) {

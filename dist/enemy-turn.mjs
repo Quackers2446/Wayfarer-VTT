@@ -2,6 +2,7 @@ import {
   actorIsUp, approachPath, charmedBy, currentActor, diceTerms, distanceFt, endInitiative, endTurn, incapacitated, lineClear,
   log, moveLeft, moveToken, occupies, opportunity, resolveOpportunity, rollStrike, speedOf, turnAction,
 } from "./combat.mjs";
+import {overlaps} from './actor-space.mjs';
 
 const canAct = (actor) => actorIsUp(actor) && occupies(actor);
 const weaponRange = (weapon) => weapon.normalRange || weapon.reach || 5;
@@ -10,6 +11,7 @@ const waitingForSave = (actor) => actor?.resolveDeath && !actor.dead && !actor.s
 
 export function enemyTurnPending(battle) {
   if (!battle.round) return false;
+  if (battle.classReaction) return false;
   const reaction = opportunity(battle);
   if (reaction) return reaction.foe.side === "hostile";
   const actor = currentActor(battle);
@@ -39,10 +41,10 @@ function approach(battle, map, actor, targets, weapons) {
     turnAction(battle,actor,"dash");
   }
   const step = path.path.slice().reverse().find((cell) => cell.cost <= moveLeft(battle,actor) &&
-    !battle.actors.some((other) => occupies(other) && other.x === cell.x && other.y === cell.y));
+    !battle.actors.some((other) => other.id!==actor.id && occupies(other) && overlaps({...actor,...cell},other)));
   if (!step) return;
   if (actor.nimbleEscape && !battle.bonusUsed && targets.some((target) =>
-    distanceFt(actor,target) <= 5 && distanceFt(step,target) > 5)) turnAction(battle,actor,"bonus-disengage");
+    distanceFt(actor,target) <= 5 && distanceFt({...actor,...step},target) > 5)) turnAction(battle,actor,"bonus-disengage");
   moveToken(battle,actor,step.x,step.y,map);
 }
 
@@ -68,6 +70,7 @@ function enemyTurn(battle, map, actor, heroes, random) {
     if (!attack) break;
     const {weapon,target} = attack;
     rollStrike(battle,actor,target,weapon,{map,mode:routine?.name === weapon.name && routine.disadvantage ? "disadvantage" : ""},random);
+    if(battle.classReaction) return;
     if (routine && routine.name !== weapon.name) break;
   }
   if (!battle.action && canAct(actor)) turnAction(battle,actor,"dodge");
@@ -79,6 +82,7 @@ export function runEnemyTurns(battle, map, random = Math.random) {
   // One sweep reaches another playable turn, a reaction, or the end of the encounter.
   const maximum = battle.order.length + battle.actors.length + 1;
   for (let step = 0; battle.round && step < maximum; step++) {
+    if(battle.classReaction) break;
     const reaction = opportunity(battle);
     if (reaction) {
       if (reaction.foe.side !== "hostile") break;
@@ -98,7 +102,7 @@ export function runEnemyTurns(battle, map, random = Math.random) {
     if (actor?.side === "hostile") {
       enemyTurn(battle,map,actor,heroes,random);
       lastEnemy = actor.name;
-      if (battle.movement) break;
+      if (battle.movement || battle.classReaction) break;
     } else if (!incapacitated(actor) && (!actor?.stable || actorIsUp(actor))) break;
     if (waitingForSave(actor) && !battle.deathRolled) break;
     endTurn(battle,random);

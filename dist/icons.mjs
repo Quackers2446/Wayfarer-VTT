@@ -1,4 +1,9 @@
 const paths = {
+  sword:'<path d="m14 3 7-1-1 7L9 20l-5-5L14 3zm-6 9 4 4M3 22l4-4M2 15l7 7"/>',
+  bow:'<path d="M4 3c10-3 20 7 17 17L4 3zm0 0L2 22l19-2M3 21 17 7m-3 0h3v3"/>',
+  fist:'<path d="M8 13V5a2 2 0 0 1 4 0v6m0-6a2 2 0 0 1 4 0v6m0-4a2 2 0 0 1 4 0v7c0 4-2 7-6 7h-3c-2 0-3-1-4-3l-4-6c-1-2 2-4 3-2l2 3zm2 8v2m7-2v2"/>',
+  flame:'<path d="M13 2c2 7-4 7-1 11 2-1 3-3 3-5 7 7 6 14-3 14-8 0-11-7-5-13-1 5 0 5 1 6-2-7 5-8 5-13z"/>',
+  potion:'<path d="M9 2h6m-5 0v6L4 17c-2 3 1 5 3 5h10c2 0 5-2 3-5l-6-9V2M6 14h12M8 18h3"/>',
   home: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/><circle cx="9" cy="7" r="4"/>',
   book: '<path d="M12 7a5 5 0 0 0-5-5H3v17h5a4 4 0 0 1 4 3 4 4 0 0 1 4-3h5V2h-4a5 5 0 0 0-5 5zm0 0v15"/>',

@@ -206,7 +206,9 @@ function spellContent(character) {
       </div>
     </header>
     ${Object.keys(character.spellSlots ?? {}).length ? `<dl class="sheet-slot-summary">${Object.entries(character.spellSlots).map(([level,{current,maximum}]) =>
-      `<div><dt>Level ${text(level)} ${character.rulesDetails?.pact ? "pact slots" : "slots"}</dt><dd>${text(current)} / ${text(maximum)}</dd></div>`).join("")}</dl>` : ""}
+      `<div><dt>Level ${text(level)} slots</dt><dd>${text(current)} / ${text(maximum)}</dd></div>`).join("")}</dl>` : ""}
+    ${character.resources?.pactMagic ? `<dl class="sheet-slot-summary"><div><dt>Pact Magic · level ${character.resources.pactMagic.slotLevel}</dt>
+      <dd>${character.resources.pactMagic.current} / ${character.resources.pactMagic.maximum}</dd><small>Short or long rest</small></div></dl>` : ""}
     <div class="sheet-filters">${searchField("Search spells")}
       ${canFilterPrepared ? `<label class="prepared-filter"><input id="prepared-only" type="checkbox"> Prepared only</label>` : ""}
     </div>

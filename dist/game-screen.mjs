@@ -4,7 +4,7 @@ import {icon} from "./icons.mjs";
 import {mapControls, mapHint, mapViewport} from "./map-camera.mjs";
 
 function button(label, symbol, action, extra = "") {
-  return `<button class="game-button" type="button" data-play="${action}" ${extra}>${symbol ? icon(symbol,17) : ""}${escape(label)}</button>`;
+  return `<button class="game-button" type="button" data-play="${action}" ${extra} ${extra.includes('aria-label=') ? '' : 'aria-label="'+escape(label)+'"'}>${symbol ? icon(symbol,17) : ""}<span class="game-button-label">${escape(label)}</span></button>`;
 }
 
 function portraits(party, selected, inCombat, controllers, controller, players, movers) {
@@ -17,7 +17,7 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
     const owner = controllers?.[character.id];
     const mine = owner === controller;
     return `<div class="game-character ${character.id === selected?.id ? "game-character-current" : ""}">
-      <button type="button" class="game-portrait" data-play="inspect" data-id="${id}" aria-label="Open character sheet for ${name}">
+      <button type="button" class="game-portrait" data-play="inspect" data-id="${id}" aria-label="Open character sheet for ${name}" title="${escape(character.name+' · '+character.hp+'/'+character.maxHp+' HP'+(owner ? ' · '+(mine ? 'Your character' : names.get(owner) ?? 'Claimed') : ''))}">
         <span class="game-avatar palette-${index%4}" aria-hidden="true">
           <span data-token-initial>${escape(initials)}</span><canvas data-creature-portrait="${id}" hidden></canvas>
         </span>
@@ -35,22 +35,18 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
 
 export function gameScreen({
   map, battle, selected, party, category, actions, tacticalTools, room, status, artworkNote,
-  logOpen, toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,
-  destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative, players = [],
+  logOpen, toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,hotbar,resourceControls,
+  destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
 }) {
   const active = battle.round > 0;
   const turn = currentActor(battle);
   const movers = movementGroup(battle);
-  const movingEarly = active && selected && selected !== turn;
+  const reacting=Boolean(battle.classReaction);
+  const movingEarly = active && selected && selected !== turn && !reacting;
   const enemyTurn = active && selected?.side === "hostile";
   const online = players.filter((player) => player.online).length;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
   const total = selected && active ? movementBudget(battle,selected) : 0;
-  const categoryList = [
-    ["move","Move","footprints"],["weapon","Weapons","shield"],["spell","Spells","sparkles"],
-    ["potion","Items","sheet"],
-    ["feature","Abilities","sparkles"],
-  ];
   return `<section class="game-screen ${active ? "game-combat" : ""}" aria-label="Wayfarer game">
     <header class="game-top">
       <div class="game-location">
@@ -83,8 +79,9 @@ export function gameScreen({
         }).join("")}</div>` : ""}
         ${mapViewport(map,true)}
         <div class="combat-cues" aria-live="polite" aria-atomic="true"></div>
+        <div class="game-event-slot"></div>
         <div class="game-board-meta">
-          <div><p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>${mapHint()}</div>
+          <div><p id="game-move-preview" class="game-move-preview">${escape(canAct && destination || '')}</p><p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>${mapHint()}</div>
           ${mapControls(hasToken)}
         </div>
         ${logOpen ? `<aside class="game-flyout play-panel" aria-label="Combat log"><h2>Combat log</h2>
@@ -96,30 +93,24 @@ export function gameScreen({
       </div>
       ${shared ? '<div class="game-chat-slot"></div>' : ""}
     </div>
-    <footer class="game-hud">
+    <footer class="game-hud" aria-busy="${busy}">
       <div class="game-hud-top">
         <div class="game-active">
-          <span class="game-label">${enemyTurn ? "Enemy turn · game controlled" : movingEarly ? "Shared initiative · move" : active ? "Current turn" : "Selected character"}</span>
+          <span class="game-label">${reacting ? "Reaction · Deflect Missiles" : enemyTurn ? "Enemy turn · game controlled" : movingEarly ? "Shared initiative · move" : active ? "Current turn" : "Selected character"}</span>
           <strong>${escape(selected?.name ?? "Choose a party member")}</strong>
           ${selected?.concentration ? `<span class="game-label">Concentrating · ${escape(selected.concentration.name)}</span>` : ""}
-          ${Object.values(selected?.resources ?? {}).length ? `<span class="game-class-resources">${Object.values(selected.resources).map((pool) =>
-            escape(pool.name)+" "+pool.current+"/"+pool.maximum).join(" · ")}</span>` : ""}
         </div>
         ${enemyTurn ? "" : `<div class="game-move" ${active ? 'aria-label="Movement budget"' : ""}>
           ${active ? `<span><strong>${remaining} ft</strong> left / ${total} ft</span>
           <progress value="${Math.min(Math.max(1,total), remaining)}" max="${Math.max(1,total)}" aria-label="Movement remaining"></progress>` :
             '<strong>Free movement</strong>'}
         </div>`}
-        ${active && !enemyTurn && !movingEarly ? `<div class="game-economy"><span class="${battle.action ? "used" : ""}">Action ${battle.action ? "used" : "ready"}</span>
-          <span class="${battle.bonusUsed ? "used" : ""}">Bonus ${battle.bonusUsed ? "used" : "ready"}</span></div>` : ""}
-        ${active && !enemyTurn && !movingEarly ? button("End turn","check","end",battle.movement || !canAct ? "disabled" : "") : ""}
+        ${!enemyTurn && !movingEarly ? resourceControls : ''}
+        ${active && !enemyTurn && !movingEarly && !reacting ? button("End turn","check","end",battle.movement || !canAct ? "disabled" : "") : ""}
       </div>
       <div class="game-hud-body">
-        ${canAct && !battle.movement && !movingEarly ? `<nav class="game-categories" aria-label="Actions">
-          ${categoryList.map(([key,label,symbol]) => button(label,symbol,"game-category",`data-id="${key}" aria-pressed="${category === key}"`)).join("")}
-        </nav>` : ""}
-        <div class="game-action-content">
-          <p class="game-move-preview" id="game-move-preview">${escape(canAct && (destination || (category === "move" ? "Select a square to move." : "")) || "")}</p>
+        ${canAct && !battle.movement && !movingEarly && !reacting && selected?.hp>0 ? hotbar : ''}
+        <div class="game-action-content"${actionPanelOpen ? ' role="region" aria-label="Selected action controls"' : ' hidden'}>
           ${rescueAvailable ? button("Free Sildar","users","rescue-sildar") : ""}
           ${actions}
         </div>

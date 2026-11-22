@@ -35,6 +35,7 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/) in your web browser.
 - **Automated Rule Derivation**: Computes Proficiency Bonus, ability modifiers, saving throws, AC based on worn armor categories and shields, passive Perception, walking speed, darkvision, and multiclass spell slots.
 - **Custom Token Portraits**: Upload custom square PNG, JPEG, or WebP portraits; tokens automatically crop and sync across players.
 - **Sheet Editor**: Live editing for class levels, subclasses, feats, skill training ranks (Untrained, Proficient, Expertise), worn equipment, and spell slot pools.
+- **Class Build Choices**: Indexes class/subclass progressions, optional features, prerequisites, bonus spells, tools, and languages from the local 5etools release. Tracks monk Ki and separate Pact Magic resources. The feature list distinguishes playable controls from rules references whose effects still need automation.
 
 ### 2. 5etools Archive & Adventure Library
 - **Offline IndexedDB Storage**: Attaches 5etools ZIP releases directly in the browser without re-uploading on refresh.
@@ -42,15 +43,19 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/) in your web browser.
 - **Map & Chapter Indexes**: Access chapter breakdowns and map lists (identifying DM maps vs. player maps).
 
 ### 3. Tactical Virtual Tabletop (VTT)
+- **Monster Sizes**: Local 5etools size categories set Large tokens to 2×2 squares, Huge to 3×3, and Gargantuan to 4×4. Existing monster tokens inherit their source size too. Placement, paths, collision, reach, area targeting, hover labels, and action callouts use the creature's space. Run `node scripts/test-token-sizes.mjs` for footprint checks; rebuild the size index with `python3 scripts/build-monster-sizes.py`.
 - **Computer Vision Grid Snapping**: Auto-aligns the tactical 5-foot grid to printed battle map artwork using image luminance edge detection.
 - **Fog of War & Line of Sight**: Raycasted field-of-view taking into account darkvision, walls, and vision-blocking screens. Explored terrain is saved compactly using binary bitsets.
 - **A\* Movement & Opportunity Attacks**: Pathfinding accounts for difficult terrain, prone penalties, and wall barriers. Moving out of enemy melee reach automatically triggers real-time opportunity attacks.
 - **Automated Spell Mechanics**: AoE sphere flood-fills, cone projections, and concentration tracking for spells including *Fireball*, *Misty Step*, *Magic Missile*, *Sleep*, *Aid*, *Witch Bolt*, *Fog Cloud*, and *Darkness*.
 - **Autonomous Hostile Monster AI**: Enemy creatures stand from prone, approach targets, dash when distant, use Nimble Escape, resolve multiattack routines, and dodge when idle.
+- **Character Action Hotbar**: A compact single-row bottom dock keeps the map full-width, with floating party portraits and action details that open only when needed. Scroll or expand to reach extra actions. Weapon, spell, item, and class-ability tiles show costs; filter by action, bonus action, Ki, or spell-slot level and select targets on the map. Flurry follow-ups stay visible after activation. Use **Checks** for skills and resting, **1–0** for visible tiles, and **Escape** to cancel targeting.
+- **Action Messages & Dice Effects**: Player and monster actions appear in an activity feed and animated token callouts, with floating damage/healing. Beveled 3D dice have fixed face numbers and physical bounces; the d20 smoothly turns its recorded result face directly toward the camera, upright, before the modifier and total appear. All players see the same committed results. Use **Tools → Dice animations** to switch to a brief static reveal; reduced-motion preferences and browsers without WebGL are also supported.
 - **Story Journal**: Automatically reads room polygon entries and surfaces DM read-aloud boxed text as the party explores. Freeing captives like Sildar Hallwinter updates the campaign story journal.
 
 ### 4. Multiplayer Campaign Tables
 - **Edge Architecture**: Powered by Cloudflare Workers, D1 SQLite database, and R2 image storage.
+- **Shared Images**: Map artwork and custom tokens use R2 when a bucket is configured, or chunked D1 storage otherwise. Apply `drizzle/0003_session_images.sql` to enable the database image store. Run `node scripts/test-session-images.mjs` with Node 24+ to verify image sharing without R2.
 - **Optimistic Concurrency**: Fast turn state synchronization with conflict reconciliation.
 - **Party Seats**: Up to 4 players can claim character seats and control their cameras independently.
 - **Party Chat**: Integrated chat with 200-message scrollback, unread badges, and speaker attribution.
@@ -58,6 +63,8 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/) in your web browser.
 ---
 
 ## Project Layout
+
+Run `node scripts/test-action-bar.mjs` for hotbar availability and resource filters, `node scripts/test-action-events.mjs` for committed roll events, `node scripts/test-dice-geometry.mjs` for accurate solids and numbering, and `node scripts/test-class-progression.mjs` for source-based choices, monk actions and reactions, spell grants, prerequisites, and Pact Magic recovery. Fog of war is temporarily paused globally in `dist/game-settings.mjs`; exploration memory and combat sight calculations remain active.
 
 ```
 wayfarer/
@@ -102,6 +109,19 @@ npx wrangler d1 migrations apply DB --local --config dist/server/wrangler.json
 # Run local multiplayer worker
 npx wrangler dev --local --config dist/server/wrangler.json
 ```
+
+### Rebuilding the Dice Renderer
+
+The client includes a local bundle of Three.js and cannon-es; it loads on the first dice animation and needs no external CDN. Rebuild it after editing `scripts/dice-renderer/scene.mjs` or `dist/dice-geometry.mjs`:
+
+```bash
+npm ci --prefix scripts/dice-renderer
+npm run build --prefix scripts/dice-renderer
+node scripts/dice-renderer/test-physics.mjs
+node scripts/build.mjs
+```
+
+The physics check covers all twenty d20 results and mixed dice. Rendering only presents committed game results; it never rerolls them. Library licenses are included in `dist/assets/dice-libraries.txt`.
 
 ---
 

@@ -2,14 +2,29 @@ import {
   actorIsUp, addCondition, addInspiration, advanceTime, canSee, condition, currentActor, d20, distanceFt, hasFeature, heal, incapacitated,
   log, occupies, rollDice, savingThrow, speedOf, applyDamage,
 } from "./combat.mjs";
+import {captureImpact, recordAction, withActionEvent} from "./action-events.mjs";
+import {pactMagicResource} from "./class-features.mjs";
+
+export function migratePactResources(actor) {
+  if(!actor.classRules?.pact || actor.resources?.pactMagic) return;
+  const pool=pactMagicResource(actor.classRules.levels?.Warlock,actor.classRules.edition);
+  if(!pool) return;
+  const onlyPact=Object.keys(actor.classRules.levels).every(name=>name==="Warlock");
+  const remaining=onlyPact ? actor.slots?.[pool.slotLevel]?.current : undefined;
+  (actor.resources ??= {}).pactMagic={...pool,current:Math.min(pool.maximum,remaining ?? pool.maximum)};
+  if(onlyPact) actor.slots={};
+}
 
 export function classWeapons(actor,battle) {
   const attacks = [...actor.attacks];
-  if (actor.astralArms && hasFeature(actor,"Arms of the Astral Self") && actor.classRules.unarmoredMonk) {
+  if (actor.astralArms && hasFeature(actor,"Arms of the Astral Self")) {
     const wisdom = actor.ability.wis ?? 0;
     attacks.push({name:"Astral Arms",bonus:wisdom+(actor.proficiency ?? 0),
-      damage:"1d"+actor.classRules.martialDie+(wisdom >= 0 ? "+" : "")+wisdom,type:"force",
+      damage:(actor.classRules.unarmoredMonk ? "1d"+actor.classRules.martialDie : "1")+(wisdom >= 0 ? "+" : "")+wisdom,type:"force",
       reach:currentActor(battle)?.id === actor.id ? 10 : 5,unarmed:true,monkWeapon:true});
+    const ordinary=Math.max(actor.ability.str ?? 0,actor.classRules.unarmoredMonk ? actor.ability.dex ?? 0 : -Infinity);
+    if(ordinary>wisdom) attacks.push({...attacks.at(-1),name:"Astral Arms (physical ability)",bonus:ordinary+(actor.proficiency ?? 0),
+      damage:(actor.classRules.unarmoredMonk ? "1d"+actor.classRules.martialDie : "1")+(ordinary>=0 ? "+" : "")+ordinary});
   }
   return attacks;
 }
@@ -19,10 +34,13 @@ export function syncClassResources(actor,source) {
   actor.proficiency = source.proficiency;
   actor.skillBonuses = source.skillBonuses;
   actor.proficientSkills = source.proficientSkills;
-  actor.resources ??= {};
+  const previousResources = actor.resources ?? {};
+  actor.resources = {};
   for (const [key,pool] of Object.entries(source.resources ?? {})) {
-    const current = actor.resources[key]?.current ?? pool.current;
+    const legacyPact=key==="pactMagic" && Object.keys(source.classRules?.levels ?? {}).every(name=>name==="Warlock") && !previousResources.pactMagic;
+    const current = previousResources[key]?.current ?? (legacyPact ? actor.slots?.[pool.slotLevel]?.current : undefined) ?? pool.current;
     actor.resources[key] = {...pool,current:Math.min(current,pool.maximum)};
+    if(legacyPact && actor.slots) for(const rank of Object.keys(actor.slots)) if(!(source.slots?.[rank]?.maximum>0)) delete actor.slots[rank];
   }
   actor.swings = Math.max(1,source.classRules?.swings ?? actor.swings);
   for (const attack of source.attacks.filter((entry) => entry.unarmed)) {
@@ -39,6 +57,8 @@ const definitions = [
   {id:"martial-arts",name:"Martial Arts · bonus strike",feature:"Martial Arts",timing:"bonus",attack:true},
   {id:"flurry",name:"Flurry of Blows",feature:"Flurry of Blows",timing:"bonus",resource:"ki",cost:1},
   {id:"flurry-strike",name:"Flurry · unarmed strike",feature:"Flurry of Blows",timing:"flurry",attack:true},
+  {id:"ki-fueled",name:"Ki-Fueled Attack",feature:"Ki-Fueled Attack",timing:"bonus",attack:true,monkWeapon:true},
+  {id:"quickened-healing",name:"Quickened Healing",feature:"Quickened Healing",timing:"action",resource:"ki",cost:2},
   {id:"patient-defense",name:"Patient Defense",feature:"Patient Defense",timing:"bonus",resource:"ki",cost:1},
   {id:"step-dash",name:"Step of the Wind · Dash",feature:"Step of the Wind",timing:"bonus",resource:"ki",cost:1},
   {id:"step-disengage",name:"Step of the Wind · Disengage",feature:"Step of the Wind",timing:"bonus",resource:"ki",cost:1},
@@ -57,7 +77,9 @@ const definitions = [
 export function classActions(actor,battle) {
   return definitions.filter((entry) => hasFeature(actor,entry.feature) &&
     (entry.id !== "martial-arts" || actor.classRules.unarmoredMonk) &&
-    (entry.id !== "flurry-strike" || battle.flurry > 0));
+    (entry.id !== "flurry-strike" || battle.flurry > 0)).map(entry=>({...entry,
+      cost:entry.id === "astral-both" ? (actor.classRules?.featureCosts?.["Arms of the Astral Self"]?.cost ?? 1)+(actor.classRules?.featureCosts?.["Visage of the Astral Self"]?.cost ?? 1) :
+        actor.classRules?.featureCosts?.[entry.feature]?.cost ?? entry.cost}));
 }
 
 function requireAction(battle,actor,definition) {
@@ -86,6 +108,12 @@ function hide(battle,actor,map,random) {
 
 export function useClassAction(battle,actor,id,options = {},random = Math.random) {
   const definition = classActions(actor,battle).find((entry) => entry.id === id);
+  return withActionEvent(battle,actor,{action:definition?.name ?? id,kind:"ability",target:options.target?.name},
+    () => resolveClassAction(battle,actor,id,options,random));
+}
+
+function resolveClassAction(battle,actor,id,options,random) {
+  const definition = classActions(actor,battle).find((entry) => entry.id === id);
   if (!definition) throw new Error("This character does not have that feature.");
   requireAction(battle,actor,definition);
   if (definition.attack) throw new Error("Choose a target for the unarmed strike.");
@@ -107,6 +135,7 @@ export function useClassAction(battle,actor,id,options = {},random = Math.random
   }
   if (id === "cunning-hide") hide(battle,actor,options.map,random);
   if (definition.resource) actor.resources[definition.resource].current -= definition.cost;
+  if (definition.resource === "ki" && definition.timing === "action") battle.kiAction = true;
   if (definition.timing === "action") battle.action = "feature";
   if (definition.timing === "bonus") battle.bonusUsed = true;
 
@@ -114,6 +143,12 @@ export function useClassAction(battle,actor,id,options = {},random = Math.random
   if (id === "cunning-disengage" || id === "step-disengage") actor.disengaged = true;
   if (id === "patient-defense") actor.dodging = true;
   if (id === "flurry") battle.flurry = 2;
+  if (id === "quickened-healing") {
+    const roll=rollDice("1d"+actor.classRules.martialDie+"+"+actor.proficiency,{random,label:"Quickened Healing"});
+    const restored=heal(actor,roll.total);
+    captureImpact(battle,actor,{amount:restored,healing:true});
+    log(battle,actor.name+" regains "+restored+" HP with Quickened Healing ("+roll.breakdown+").");
+  }
   if (id.startsWith("astral-")) {
     if (id === "astral-arms" || id === "astral-both") {
       actor.astralArms = {expires:(battle.elapsed ?? 0)+600};
@@ -126,6 +161,7 @@ export function useClassAction(battle,actor,id,options = {},random = Math.random
         if (save.total < dc) {
           const damage = rollDice("2d"+actor.classRules.martialDie,{random});
           const result = applyDamage(battle,enemy,damage.total,"force",false,random,actor);
+          captureImpact(battle,enemy,{amount:result.damage,type:"force",defeated:result.defeated});
           log(battle,enemy.name+" takes "+result.damage+" force damage from Astral Arms ("+damage.breakdown+").");
         }
       }
@@ -134,7 +170,8 @@ export function useClassAction(battle,actor,id,options = {},random = Math.random
   }
   if (id === "stillness") actor.conditions = (actor.conditions ?? []).filter((entry) => !["Charmed","Frightened"].includes(entry.name));
   if (id === "second-wind") {
-    const restored = heal(actor,rollDice("1d10",{random}).total+actor.classRules.levels.Fighter);
+    const restored = heal(actor,rollDice("1d10+"+actor.classRules.levels.Fighter,{random,label:"Second Wind"}).total);
+    captureImpact(battle,actor,{amount:restored,healing:true});
     log(battle,actor.name+" regains "+restored+" HP with Second Wind.");
   }
   if (id === "action-surge") {
@@ -150,12 +187,17 @@ export function useClassAction(battle,actor,id,options = {},random = Math.random
 }
 
 export function classSkillCheck(battle,actor,name,map,random = Math.random) {
+  return withActionEvent(battle,actor,{action:name+" check",kind:"check"},() => resolveSkillCheck(battle,actor,name,map,random));
+}
+
+function resolveSkillCheck(battle,actor,name,map,random) {
   if (!actorIsUp(actor) || incapacitated(actor)) throw new Error("This character cannot make this check.");
-  const modifier = actor.skillBonuses?.[name];
+  let modifier = actor.skillBonuses?.[name];
   if (!Number.isFinite(modifier)) throw new Error("Complete this skill’s modifier on the character sheet.");
+  if(name === "athletics" && actor.astralArms) modifier+=Math.max(0,(actor.ability.wis ?? 0)-(actor.ability.str ?? 0));
   const astral = actor.astralVisage && ["insight","intimidation"].includes(name);
   const acrobatics = actor.bladesong && name === "acrobatics";
-  const result = d20(modifier,{advantage:Boolean(astral || acrobatics),random});
+  const result = d20(modifier,{advantage:Boolean(astral || acrobatics),random,label:name+" check"});
   if (hasFeature(actor,"Reliable Talent") && actor.proficientSkills?.includes(name) && result.kept < 10) {
     result.total += 10-result.kept;
     result.breakdown += " (Reliable Talent minimum 10)";
@@ -169,13 +211,14 @@ export function restParty(battle,long = false) {
   if (battle.round || battle.movement) throw new Error("Finish combat before resting.");
   const heroes = battle.actors.filter((actor) => actor.side === "party" && !actor.dead);
   for (const actor of heroes) {
+    recordAction(battle,actor,{action:long ? "Long rest · 8 hours" : "Short rest · 1 hour",kind:"rest"});
     for (const pool of Object.values(actor.resources ?? {})) {
       if (long || pool.rest === "short") pool.current = pool.maximum;
     }
     if (long) {
       heal(actor,actor.maxHp);
       for (const pool of Object.values(actor.slots)) if (Number.isFinite(pool.maximum)) pool.current = pool.maximum;
-    } else if (actor.classRules?.pact) {
+    } else if (actor.classRules?.pact && !actor.resources?.pactMagic) {
       for (const pool of Object.values(actor.slots)) if (Number.isFinite(pool.maximum)) pool.current = pool.maximum;
     }
     actor.reactionUsed = false;

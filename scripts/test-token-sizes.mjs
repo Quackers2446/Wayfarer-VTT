@@ -1,0 +1,31 @@
+import {runEnemyTurns} from '../dist/enemy-turn.mjs';
+import assert from 'node:assert/strict';
+import {actorCells,tokenSize,containsCell,touchesArea} from '../dist/actor-space.mjs';
+import {makeActor,newBattle,placeToken,canStand,previewMovement,distanceFt,startInitiative,rollStrike,approachPath,moveToken,opportunity,resolveOpportunity} from '../dist/combat.mjs';
+import {cellCenter} from '../dist/map-grid.mjs';
+import {tokenAtPoint} from '../dist/grid-view.mjs';
+const board={cols:15,rows:12,width:1050,height:840,size:70,offsetX:0,offsetY:0,regions:[]};
+const giant=makeActor({name:'Hill Giant',statName:'Hill Giant',source:'MM',hp:1000,maxHp:1000,ac:5,x:5,y:2});
+const hero=makeActor({name:'Hero',side:'party',hp:50,maxHp:50,initiative:100,x:8,y:4,attacks:[{name:'Sword',bonus:7,damage:'1d8+4',reach:5}]});
+assert.equal(tokenSize(makeActor({name:'Wolf',source:'MM'})),1);assert.equal(tokenSize(giant),3);
+assert.deepEqual(['S','M','L','H','G'].map(creatureSize=>tokenSize({creatureSize})),[1,1,2,3,4]);
+assert.equal(actorCells(giant).length,9);assert.equal(containsCell(giant,7,4),true);assert.deepEqual(cellCenter(board,giant),[455,245]);
+let battle={...newBattle(),actors:[hero,giant]};
+assert.equal(distanceFt(hero,giant),5);assert.equal(canStand(battle,hero,7,4,board),false);assert.equal(canStand(battle,giant,13,2,board),false);
+assert.throws(()=>placeToken(battle,hero,7,4,board));assert.equal(touchesArea(giant,new Set(['7:4'])),true);
+assert.equal(tokenAtPoint(board,battle,7.8*70,4.8*70).id,giant.id,'Every occupied square of the large token can be targeted');
+battle.terrain['7:3']='wall';assert.equal(canStand(battle,giant,5,2,board),false);delete battle.terrain['7:3'];
+startInitiative(battle,()=>.5);rollStrike(battle,hero,giant,hero.attacks[0],{map:board},()=>.5);assert.ok(giant.hp<1000,'Melee attack reaches the nearest edge');
+const solo={...newBattle(),actors:[giant]};
+const path=previewMovement(solo,giant,9,2,board);assert.equal(path.cost,20,'A three-square-wide creature pays for translation, not nine separate moves');
+for(let x=0;x<15;x++) {solo.terrain[x+':3']='wall';solo.terrain[x+':6']='wall';}
+Object.assign(giant,{x:1,y:4});assert.equal(previewMovement(solo,giant,9,4,board),null,'A Huge creature cannot walk through a two-square-wide corridor at full size');
+const wolf=makeActor({name:'Wolf',source:'MM',hp:11,x:1,y:4});solo.actors=[wolf];assert.ok(previewMovement(solo,wolf,9,4,board));
+console.log('Source sizes, nine-square Huge footprint, rendering hit areas, edge reach, collisions, bounds, movement costs and corridor widths verified.');
+
+Object.assign(giant,{x:5,y:2,initiative:100,attacks:[{name:'Greatclub',bonus:8,damage:'2d8+5',reach:10}],swings:1});
+Object.assign(hero,{x:8,y:4,initiative:0,hp:50});
+battle={...newBattle(),actors:[giant,hero]};startInitiative(battle,()=>.5);runEnemyTurns(battle,board,()=>.5);
+assert.ok(hero.hp<50);assert.deepEqual([giant.x,giant.y],[5,2],'NPC recognizes melee targets alongside the far edge of its space');
+battle={...newBattle(),actors:[giant,hero]};startInitiative(battle,()=>.5);moveToken(battle,giant,3,2,board);assert.equal(opportunity(battle)?.foe.id,hero.id,'Leaving reach uses the whole moving footprint');
+resolveOpportunity(battle,0,()=>.5,board);assert.equal(giant.x,3);
