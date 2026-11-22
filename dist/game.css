@@ -94,6 +94,11 @@ body:has(.game-main){overflow:hidden;background:#17231d}
 .game-active{display:grid;gap:0;min-width:0;overflow-wrap:anywhere}
 .game-active>strong{font:600 clamp(1.03rem,2vw,1.42rem) var(--display)}
 .game-label{font-size:.7rem;color:var(--game-muted);font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.game-class-resources{font-size:.78rem;color:#e2d4a9}
+.feature-resource-row{display:flex;gap:10px;flex-wrap:wrap;font-size:.83rem;color:#f2d9a7}
+.feature-burst-targets{border:1px solid #6d7e64;border-radius:5px;padding:4px 8px;display:flex;gap:7px;flex-wrap:wrap}
+.feature-burst-targets legend{font-size:.76rem;padding:0 3px}
+.feature-burst-targets label{font-size:.82rem}
 .game-move{color:var(--game-muted);font-size:.84rem;min-width:110px}
 .game-move strong{color:var(--game-text)}
 .game-economy{display:flex;flex-wrap:wrap;gap:6px;color:#e9edd8;font-size:.75rem}

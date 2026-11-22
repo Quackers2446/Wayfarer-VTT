@@ -6,6 +6,7 @@ import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
 import {createCombatCues} from "./combat-cues.mjs";
 import {createGameChat} from "./game-chat.mjs";
+import {classActions, classSkillCheck, classWeapons, restParty, syncClassResources, useClassAction} from "./class-actions.mjs";
 import {canRescue, discoverStory, rescueSildar, storyPanel, storyVersion} from "./adventure-story.mjs";
 import {enemyTurnPending, runEnemyTurns} from "./enemy-turn.mjs";
 import {enemyInSight, engageEnemy, noticesEnemy, partyVision, rememberVision} from "./exploration.mjs";
@@ -20,8 +21,8 @@ import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs"
 import {artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
   syncSessionPlayers, tablePanel, writeSession} from "./multiplayer.mjs";
 import {
-  actorIsUp, applyDamage, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion,
-  endInitiative, endTurn, incapacitated, joinInitiative, keyAt, moveLeft,
+  actorIsUp, applyDamage, armorClass, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion,
+  endInitiative, endTurn, hasFeature, incapacitated, joinInitiative, keyAt, moveLeft,
   exploreToken, heal, lineClear, log, movementGroup, moveToken, newBattle, occupies, opportunity, placeToken, previewMovement, recordSpell, resolveOpportunity, rollDice,
   rollStrike, spellCells, spellTargetCount, startInitiative, supportedSpell, sustainWitchBolt, turnAction, wakeCreature,
 } from "./combat.mjs";
@@ -79,6 +80,7 @@ let previewMessage = "";
 let spellSquare;
 let castSlot = "";
 let breathType = "fire";
+let featureChoice = "";
 const extraTargets = new Map();
 let pendingSquare;
 const sceneJobs = new WeakMap();
@@ -412,7 +414,7 @@ function input(label, id, value, type = "text", extra = "") {
 }
 function choices(actor) {
   if (!actor) return [];
-  const weapons = actor.attacks.flatMap((weapon) => weapon.thrown ? [weapon, {...weapon, ...weapon.thrown, name:weapon.name+" (thrown)"}] : [weapon]);
+  const weapons = classWeapons(actor,battle).flatMap((weapon) => weapon.thrown ? [weapon, {...weapon, ...weapon.thrown, name:weapon.name+" (thrown)"}] : [weapon]);
   const exhale = battle.round && condition(actor,"Dragon’s Breath") ?
     [{mode:"spell",name:"Exhale Dragon’s Breath",usable:true,data:{key:"exhale dragons breath",edition:"2014",name:"Dragon’s Breath",level:0}}] : [];
   return [
@@ -468,6 +470,7 @@ function playOptions(actor) {
     ? `<p>${actor.stable ? "Stable at 0 HP" : "Unconscious · " + actor.successes + " successes, " + actor.failures + " failures"}</p>
       ${actor.stable || battle.deathRolled ? "" : actionButton("Roll death save","death",{primary:true})}` : "";
   if (incapacitated(actor)) return "<p>" + (condition(actor,"Asleep") ? "Asleep" : "Paralyzed") + "</p>";
+  if (context.game && category === "feature") return featureOptions(actor);
   const {list,index,choice,targets,target} = combatSelection(actor,visibleTokens());
   const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.key) : null;
   const pickArea = effect?.area || effect?.cone || effect?.teleport;
@@ -476,7 +479,7 @@ function playOptions(actor) {
     condition(target,"Asleep") && distanceFt(actor,target) <= 5);
   const moveActions = battle.round ? ["dash","dodge","disengage"].map((act) =>
     actionButton(act.charAt(0).toUpperCase()+act.slice(1),act,{disabled:Boolean(battle.action)})).join("") +
-    (actor.nimbleEscape ? actionButton("Disengage (bonus)","bonus-disengage",{disabled:battle.bonusUsed}) : "") +
+    (actor.nimbleEscape || hasFeature(actor,"Cunning Action") ? actionButton("Disengage (bonus)","bonus-disengage",{disabled:battle.bonusUsed}) : "") +
     (actor.prone ? actionButton("Stand up","stand") : "") +
     (asleep && !battle.action ? actionButton("Wake "+asleep.name,"wake",{id:asleep.id}) : "") : "";
   if (context.game && category === "move") return '<div class="play-action-row">' +
@@ -484,10 +487,14 @@ function playOptions(actor) {
   const legalChoices = list.map((entry,index) => ({entry,index})).filter(({entry}) => !context.game ||
     entry.mode === category || (category === "weapon" && entry.mode === "custom"));
   if (!legalChoices.length) return `<p>${category === "spell" ? "This character has no listed spells." : "This character has no usable items."}</p>`;
+  const usage = choice?.mode === "spell" && choice.data.castUsage;
+  const featurePool = usage?.resource && actor.resources?.[usage.resource];
   const slotOptions = choice?.mode === "spell" && choice.data.level
-    ? Object.entries(actor.slots).filter(([level, pool]) => Number(level) >= choice.data.level && pool.current > 0)
+    ? [...(usage && (usage.atWill || featurePool?.current > 0) ? [["0",{feature:true,current:featurePool?.current}]] : []),
+      ...Object.entries(actor.slots).filter(([level, pool]) => Number(level) >= choice.data.level && pool.current > 0)]
     : [];
-  const rank = Number(castSlot || slotOptions[0]?.[0] || 0);
+  const selectedRank = Number(castSlot || slotOptions[0]?.[0] || 0);
+  const rank = selectedRank || (usage ? choice.data.level : 0);
   const auxiliary = effect ? spellTargetCount(effect,actor.level,rank)-1 : 0;
   const spellTargets = effect?.humanoid ? targets.filter((entry) => !entry.creatureType || entry.creatureType === "humanoid") :
     effect?.breath ? targets.filter((entry) => entry.side === actor.side) : targets;
@@ -506,7 +513,8 @@ function playOptions(actor) {
         [option("",effect.beams || effect.missiles ? "Same as first target" : "Optional",!extraTargets.get(index)),
           ...spellTargets.map((entry) => option(entry.id,entry.name,entry.id === extraTargets.get(index)))])).join("")}</div>` : ""}
     ${choice?.mode === "spell" && choice.data.level ? field("Spell slot","cast-slot",slotOptions.length ?
-      slotOptions.map(([level,pool]) => option(level, "Level " + level + " · " + pool.current + " left",level === castSlot)) : [option("","No available slot")]) : ""}
+      slotOptions.map(([level,pool]) => option(level,pool.feature ? (choice.data.grantedBy ?? "Feature")+" · "+(usage.atWill ? "at will" : pool.current+" left") :
+        "Level " + level + " · " + pool.current + " left",level === castSlot)) : [option("","No available slot or feature use")]) : ""}
     ${effect?.breath ? field("Damage type","breath-type",breathTypes.map((type) =>
       option(type,type.charAt(0).toUpperCase()+type.slice(1),type === breathType))) : ""}
     ${choice?.mode === "custom" ? `<div class="play-field-row">
@@ -515,6 +523,8 @@ function playOptions(actor) {
       ${input("Reach (ft)","custom-reach",customWeapon.reach,"number",'min="5" placeholder="5"')}
       ${input("Ranged limit (ft)","custom-range",customWeapon.normalRange,"number",'min="5" placeholder="Melee"')}
     </div>` : ""}
+    ${choice?.mode === "weapon" && !choice.data.normalRange && hasFeature(actor,"Stunning Strike") ?
+      '<label class="game-spell-note"><input id="stunning-strike" type="checkbox"> Stunning Strike on hit (1 Ki)</label>' : ""}
     ${choice && choice.mode !== "potion" && !effect?.self && !effect?.teleport && !effect?.aid && !effect?.breath && !effect?.exhale ? `<div class="play-field-row">
       ${field("Roll","roll-mode",[option("","Normal",!rollMode),option("advantage","Advantage",rollMode === "advantage"),option("disadvantage","Disadvantage",rollMode === "disadvantage")])}
       ${field("Cover","cover",[option("","None",!cover),option("2","Half (+2)",cover === "2"),option("5","Three-quarters (+5)",cover === "5"),option("full","Total",cover === "full")])}
@@ -531,6 +541,39 @@ function playOptions(actor) {
       ${actor.concentration?.bolt && battle.round && !battle.action ? actionButton("Sustain Witch Bolt","witch-bolt") : ""}
     </div>
   </form>`;
+}
+
+function featureOptions(actor) {
+  const resources = Object.values(actor.resources ?? {}).map((pool) => "<span>"+escape(pool.name)+" "+pool.current+" / "+pool.maximum+"</span>").join("");
+  const skills = Object.entries(actor.skillBonuses ?? {}).filter(([,bonus]) => Number.isFinite(bonus));
+  const checks = skills.length ? `<form id="class-skill-form" class="play-form">${field("Skill check","class-skill",
+    skills.map(([name]) => option(name,name)))}<button class="button outline small" type="submit">Roll check</button></form>` : "";
+  const inspiration = actor.inspiration ? actionButton(actor.inspirationArmed ? "Cancel inspiration" : "Use inspiration on next roll","arm-inspiration") : "";
+  const cuttingWords = hasFeature(actor,"Cutting Words") ? actionButton(actor.cuttingWords ? "Cutting Words reactions on" : "Enable Cutting Words reactions","cutting-words") : "";
+  if (!battle.round) return '<div class="feature-resource-row">'+resources+'</div><div class="play-action-row">' +
+    actionButton("Short rest · 1 hour","short-rest") + actionButton("Long rest · 8 hours","long-rest") +
+    actionButton("Feature rules","inspect",{id:actor.id})+inspiration+cuttingWords+"</div>"+checks;
+  const actions = classActions(actor,battle);
+  const entry = actions.find((action) => action.id === featureChoice) ?? actions[0];
+  const visible = visibleTokens();
+  const targets = battle.actors.filter((actor) => occupies(actor) && actorIsUp(actor) && (!visible || visible.has(actor.id)));
+  const enemies = targets.filter((target) => target.side !== actor.side && target.side !== "neutral").sort((a,b) => distanceFt(actor,a)-distanceFt(actor,b));
+  const targetList = entry?.target === "ally" ? targets.filter((target) => target.side === actor.side && target !== actor) : enemies;
+  const unarmed = classWeapons(actor,battle).filter((weapon) => weapon.unarmed);
+  const used = entry?.timing === "bonus" && battle.bonusUsed || entry?.timing === "action" && battle.action ||
+    entry?.resource && !(actor.resources?.[entry.resource]?.current >= entry.cost);
+  return '<div class="feature-resource-row">'+resources+"</div>" + (entry ? `<form id="class-action-form" class="play-form">
+    ${field("Class ability","feature-select",actions.map((action) => option(action.id,action.name+
+      (action.resource ? " · "+action.cost+" "+actor.resources[action.resource].name : ""),action.id === entry.id)))}
+    ${entry.target || entry.attack ? field("Target","feature-target",targetList.map((target,index) =>
+      option(target.id,target.name,index === 0))) : ""}
+    ${entry.attack ? field("Unarmed strike","feature-unarmed",unarmed.map((weapon,index) => option(index,weapon.name,index === 0))) : ""}
+    ${entry.area ? `<fieldset class="feature-burst-targets"><legend>Astral Arms targets within 10 ft</legend>${targets.filter((target) =>
+      target !== actor && distanceFt(actor,target) <= 10).map((target) => `<label><input type="checkbox" name="burst-target"
+      value="${escape(target.id)}"${target.side === "hostile" ? " checked" : ""}> ${escape(target.name)}</label>`).join("")}</fieldset>` : ""}
+    <button class="button primary small" type="submit"${used || entry.attack && !enemies.length ? " disabled" : ""}>Use ability</button>
+  </form>` : "<p>Open the character’s Actions tab to read its class features.</p>") +
+    '<div class="play-action-row">'+actionButton("Feature rules","inspect",{id:actor.id})+inspiration+cuttingWords+"</div>"+checks;
 }
 
 function setupControls() {
@@ -840,6 +883,7 @@ function tableTools() {
 function resetActionSelection() {
   combatChoice = ""; castSlot = ""; targetId = ""; spellSquare = null; extraTargets.clear();
   pathPreview = null; previewMessage = ""; pendingSquare = null;
+  featureChoice = "";
 }
 
 function canRollInitiative() {
@@ -936,6 +980,7 @@ async function launchGame() {
     const character = importedCharacter(actor);
     if (!character) continue;
     const imported = partyActor(character);
+    syncClassResources(actor,imported);
     actor.spells = imported.spells;
     actor.slots ??= {};
     actor.saves ??= {};
@@ -973,6 +1018,7 @@ async function launchGame() {
 
 function refreshPartyToken(actor, character) {
   const sheet = partyActor(character);
+  syncClassResources(actor,sheet);
   for (const key of ["name","ac","speed","darkvision","initiative","dex","ability","saves","resist","level","spells","spellDC","spellAttack","spellAbility"]) {
     actor[key] = sheet[key];
   }
@@ -1109,8 +1155,17 @@ async function loadFile(file, name) {
 
 function sharedSheet(record) {
   const character = enrichCharacter(record);
-  const fields = ["id","species","characterClass","level","abilities","skills","items","spells","attacks","proficiency","passivePerception","background","alignment","rulesDetails"];
-  return Object.fromEntries(fields.filter((key) => character[key] != null).map((key) => [key,character[key]]));
+  const fields = ["id","species","characterClass","level","abilities","skills","items","spells","attacks","proficiency","passivePerception",
+    "background","alignment","rulesDetails","classRules","resources"];
+  const sheet = Object.fromEntries(fields.filter((key) => character[key] != null).map((key) => [key,character[key]]));
+  const details = sheet.rulesDetails?.classDetails;
+  if (details) {
+    sheet.rulesDetails = {...sheet.rulesDetails,classDetails:{...details,
+      classes:details.classes.map(({subclasses,...cls}) => cls),
+      choices:details.choices.map(({options,...choice}) => choice),
+    }};
+  }
+  return sheet;
 }
 
 const tableState = () => ({battle,alignment:map.printedGrid ?? null});
@@ -1165,6 +1220,14 @@ function applyTableState(connection, snapshot) {
   connection.revision = snapshot.revision;
   connection.online = true;
   battle = structuredClone(snapshot.state.battle);
+  for (const actor of battle.actors.filter((entry) => entry.side === "party" && !entry.classRules)) {
+    const record = importedCharacter(actor) ?? battle.sheets?.[actor.id];
+    if (!record) continue;
+    try {
+      const source = partyActor({...record,name:actor.name,ac:actor.ac,hp:actor.hp,maxHp:actor.maxHp,speed:String(actor.speed)});
+      syncClassResources(actor,source);
+    } catch {}
+  }
   if (geometryChanged && map.sourceGrid) {
     setAlignment(snapshot.state.alignment ?? map.sourceGrid);
     gridDraft = null;
@@ -1503,6 +1566,7 @@ document.addEventListener("click", (event) => {
     const actor = battle.actors.find((entry) => entry.id === id);
     if (actor) document.dispatchEvent(new CustomEvent("wayfarer:inspect",{
       detail:structuredClone({...actor,tokenImage:partyTokenImage(actor),tokenSession:table?.id,
+        ac:armorClass(actor),
         sharedSheet:table ? battle.sheets?.[id] : undefined}),
     }));
     return;
@@ -1613,6 +1677,19 @@ document.addEventListener("click", (event) => {
         if (selectedActor() !== currentActor(battle)) throw new Error("Wait for this character’s action turn.");
         requireControl(currentActor(battle)); endTurn(battle); resetActionSelection(); category = "move"; break;
       case "death": requireControl(selectedActor()); deathSave(battle,selectedActor()); break;
+      case "arm-inspiration": {
+        const actor = selectedActor();
+        requireControl(actor);
+        if (actor.inspiration) actor.inspirationArmed = !actor.inspirationArmed;
+        break;
+      }
+      case "cutting-words": {
+        const actor = selectedActor();
+        requireControl(actor);
+        if (hasFeature(actor,"Cutting Words")) actor.cuttingWords = !actor.cuttingWords;
+        break;
+      }
+      case "short-rest": case "long-rest": restParty(battle,play === "long-rest"); break;
       case "witch-bolt": requireControl(selectedActor()); sustainWitchBolt(battle,selectedActor(),map); break;
       case "wake": requireControl(selectedActor()); wakeCreature(battle,selectedActor(),battle.actors.find((actor) => actor.id === id)); break;
       case "pass-reaction": requireControl(opportunity(battle)?.foe); resolveOpportunity(battle,null,undefined,map); break;
@@ -1718,6 +1795,7 @@ document.addEventListener("change", (event) => {
     case "combat-choice": combatChoice = value; spellSquare = null; castSlot = ""; extraTargets.clear(); break;
     case "cast-slot": castSlot = value; break;
     case "breath-type": breathType = value; return;
+    case "feature-select": featureChoice = value; break;
     case "target-select": targetId = value; break;
     case "roll-mode": rollMode = value; break;
     case "cover": cover = value; break;
@@ -1751,6 +1829,31 @@ document.addEventListener("submit", (event) => {
   }
   interact(async () => {
     switch (event.target.id) {
+      case "class-skill-form": {
+        const actor = selectedActor();
+        requireControl(actor);
+        classSkillCheck(battle,actor,value("class-skill"),map);
+        status = battle.log.at(-1);
+        break;
+      }
+      case "class-action-form": {
+        const actor = selectedActor();
+        requireControl(actor);
+        const id = value("feature-select");
+        const action = classActions(actor,battle).find((entry) => entry.id === id);
+        const target = battle.actors.find((entry) => entry.id === value("feature-target"));
+        if (action?.attack) {
+          const unarmed = classWeapons(actor,battle).filter((weapon) => weapon.unarmed);
+          const weapon = unarmed[Number(value("feature-unarmed"))];
+          if (!weapon) throw new Error("Choose an unarmed strike.");
+          rollStrike(battle,actor,target,weapon,{map,bonusStrike:true});
+        } else {
+          const ids = [...event.target.querySelectorAll('[name="burst-target"]:checked')].map((input) => input.value);
+          useClassAction(battle,actor,id,{map,target,targets:battle.actors.filter((entry) => ids.includes(entry.id))});
+        }
+        status = battle.log.at(-1);
+        break;
+      }
       case "session-party-form": {
         if (!table || battle.round) return;
         const character = context.characters.find(({id}) => id === value("session-character"));
@@ -1839,6 +1942,7 @@ document.addEventListener("submit", (event) => {
         const {choice,target} = combatSelection(actor,visibleTokens());
         const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.key) : null;
         const options = {mode:rollMode,cover,square:spellSquare,map,damageType:breathType,
+          stun:event.target.querySelector("#stunning-strike")?.checked,
           keepTemp:event.target.querySelector("#keep-temp")?.checked,
           targets:[...event.target.querySelectorAll('[id^="extra-target-"]')].map((field) =>
             battle.actors.find((entry) => entry.id === field.value))};

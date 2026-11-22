@@ -1,4 +1,5 @@
 import {escape, text} from "./format.mjs";
+import {featureChoiceEditor} from "./class-feature-view.mjs";
 
 const identity = [["characterClass","Class and subclass"],["species","Species"],["background","Background"],["startingClass","Starting class for multiclassing"]];
 const combat = [
@@ -61,7 +62,7 @@ function readNumber(data, key, label, min, max) {
   return number;
 }
 
-export function readSheetEdits(data, skills) {
+export function readSheetEdits(data, skills, character) {
   const result = {};
   for (const [key] of identity) {
     const value = data.get(key)?.trim();
@@ -105,11 +106,43 @@ export function readSheetEdits(data, skills) {
     };
   }
   if (Object.keys(slots).length) result.slots = slots;
+  const subclasses = {}, classLevels = {}, featureChoices = {}, featureNotes = {};
+  const details = character?.rulesDetails?.classDetails;
+  for (const cls of details?.classes ?? []) {
+    const level = readNumber(data,"class-level-"+cls.id,cls.name+" level",1,20);
+    if (level !== undefined) classLevels[cls.id] = level;
+    const selected = data.get("class-subclass-"+cls.id);
+    if (selected && cls.subclasses.some(({id}) => id === selected)) subclasses[cls.id] = selected;
+  }
+  for (const choice of details?.choices ?? []) {
+    if (!data.has("choice-present-"+choice.id)) continue;
+    const selected = [...new Set(data.getAll("feature-choice-"+choice.id))];
+    if (selected.length > choice.count) throw new Error(choice.label+" allows "+choice.count+" choices.");
+    if (selected.some((id) => !choice.options.some((entry) => entry.id === id))) throw new Error("Choose an available feature.");
+    featureChoices[choice.id] = selected;
+    const note = String(data.get("feature-note-"+choice.id) ?? "").trim();
+    if (note) featureNotes[choice.id] = note.slice(0,300);
+  }
+  if (Object.keys(classLevels).length) result.classLevels = classLevels;
+  if (Object.keys(subclasses).length) result.subclasses = subclasses;
+  if (Object.keys(featureChoices).length) result.featureChoices = featureChoices;
+  if (Object.keys(featureNotes).length) result.featureNotes = featureNotes;
+  const resources = {};
+  for (const [key,pool] of Object.entries(character?.resources ?? {})) {
+    const current = readNumber(data,"resource-"+key,pool.name+" remaining",0,pool.maximum);
+    if (current !== undefined) resources[key] = current;
+  }
+  if (Object.keys(resources).length) result.resources = resources;
   return result;
 }
 
 export function validateSheetEdits(character) {
   const edits = character.sheetEdits ?? {};
+  const knownClasses = character.rulesDetails?.classDetails?.classes ?? [];
+  const classTotal = Object.values(edits.classLevels ?? {}).reduce((total,value) => total+value,0);
+  if (knownClasses.length && classTotal && classTotal !== character.level) {
+    throw new Error("Class levels must add up to the character’s total level.");
+  }
   if (edits.armor && edits.ac == null && character.rulesDetails.wornAC == null) {
     throw new Error("Enter Dexterity or enter Armor Class directly.");
   }
@@ -158,6 +191,10 @@ export function sheetEditor(character, skills) {
       <label class="sheet-editor-check"><input type="checkbox" name="shield"${edits.shield ? " checked" : ""}> Wear a shield</label>
       <label class="sheet-editor-check"><input type="checkbox" name="fixedHp"${edits.fixedHp ? " checked" : ""}> Use fixed HP by class level</label>
     </div><p class="sheet-editor-detail">Direct AC and maximum HP entries take priority. Use them for magic gear, special defenses, or rolled HP.</p></fieldset>
+    ${featureChoiceEditor(character)}
+    ${Object.keys(character.resources ?? {}).length ? `<fieldset><legend>Class resources</legend><div class="sheet-editor-grid">
+      ${Object.entries(character.resources).map(([key,pool]) => numberField(["resource-"+key,pool.name+" remaining / "+pool.maximum,0,pool.maximum],
+        pool.current,{["resource-"+key]:edits.resources?.[key]})).join("")}</div></fieldset>` : ""}
     <details><summary>Ability scores and training</summary>
       <fieldset><legend>Ability scores</legend><div class="sheet-editor-grid">${abilities.map(([key,label]) =>
         numberField([key,label,1,30],character.abilities.find(({abbr}) => abbr.toLowerCase() === key)?.score,edits.scores ?? {},"score-"+key)).join("")}</div></fieldset>

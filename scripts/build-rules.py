@@ -30,7 +30,7 @@ def build_rules(source):
         weapons = []
         for item in json.loads(archive.read(root + "items-base.json")).get("baseitem", []):
             if item.get("srd") and item.get("type") in {"M", "R"} and item.get("dmg1"):
-                weapons.append(select(item, "name type dmg1 dmg2 dmgType range property"))
+                weapons.append(select(item, "name type weaponCategory dmg1 dmg2 dmgType range property"))
         return {"spells": spells, "weapons": weapons}
 
 

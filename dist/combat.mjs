@@ -47,8 +47,9 @@ export const currentActor = (battle) => battle.actors.find(({id}) => id === batt
 export const actorIsUp = (actor) => Boolean(actor && actor.hp > 0 && !actor.dead);
 export const occupies = (actor) => !actor.dead && actor.x != null && actor.y != null;
 export const modifier = (score) => score == null ? null : Math.floor((score - 10) / 2);
+export const hasFeature = (actor,name) => actor.classRules?.edition === "2014" && actor.classRules.traits.includes(name);
 export const condition = (actor,name) => actor?.conditions?.find((effect) => effect.name === name);
-export const incapacitated = (actor) => Boolean(condition(actor,"Paralyzed") || condition(actor,"Asleep"));
+export const incapacitated = (actor) => Boolean(condition(actor,"Paralyzed") || condition(actor,"Asleep") || condition(actor,"Stunned"));
 
 export function movementGroup(battle) {
   const first = currentActor(battle);
@@ -108,7 +109,7 @@ function startConcentration(battle,caster,name,duration) {
   caster.concentration = {name,expires:(battle.elapsed ?? 0)+duration};
 }
 
-function addCondition(battle,actor,name,duration,properties = {}) {
+export function addCondition(battle,actor,name,duration,properties = {}) {
   if (storedDamageTypes(actor.conditionImmune).includes(name.toLowerCase())) {
     log(battle,actor.name + " is immune to " + name.toLowerCase() + ".");
     return;
@@ -119,9 +120,13 @@ function addCondition(battle,actor,name,duration,properties = {}) {
   if (incapacitated(actor)) endConcentration(battle,actor);
 }
 
-function advanceTime(battle, seconds) {
+export function advanceTime(battle, seconds) {
   battle.elapsed = (battle.elapsed ?? 0) + seconds;
   for (const creature of battle.actors) {
+    if (creature.astralArms?.expires <= battle.elapsed || incapacitated(creature) || !actorIsUp(creature)) delete creature.astralArms;
+    if (creature.astralVisage?.expires <= battle.elapsed || incapacitated(creature) || !actorIsUp(creature)) delete creature.astralVisage;
+    if (creature.inspiration?.expires <= battle.elapsed) delete creature.inspiration;
+    if (creature.bladesong?.expires <= battle.elapsed || incapacitated(creature)) delete creature.bladesong;
     if (creature.concentration?.expires <= battle.elapsed) endConcentration(battle,creature);
     if (creature.conditions) creature.conditions = creature.conditions.filter((effect) => effect.expires > battle.elapsed);
     if (creature.tempExpires && creature.tempExpires <= battle.elapsed) {
@@ -152,6 +157,7 @@ function resetTurn(battle) {
   actor.reactionUsed = false;
   for (const creature of battle.actors) {
     if (creature.slowedBy === actor.id) creature.slowedBy = null;
+    if (creature.helped?.helper === actor.id) delete creature.helped;
   }
   battle.spent = battle.earlyMovement?.[actor.id] ?? 0;
   if (battle.earlyMovement) delete battle.earlyMovement[actor.id];
@@ -160,6 +166,10 @@ function resetTurn(battle) {
   battle.attacksMade = 0;
   battle.bonusUsed = false;
   battle.cast = null;
+  battle.martialAttack = false;
+  battle.flurry = 0;
+  battle.actionSurged = false;
+  actor.steadyAim = false;
   if (actor.hp === 0 && actor.resolveDeath && !actor.stable) {
     log(battle, actor.name + " must make a death saving throw.");
   }
@@ -209,6 +219,10 @@ export function endTurn(battle, random = Math.random) {
     error("Roll this character's death save before ending the turn.");
   }
   if (actor) {
+    for (const creature of battle.actors) {
+      if (creature.conditions) creature.conditions = creature.conditions.filter((effect) =>
+        effect.untilTurn !== actor.id || effect.untilRound > battle.round);
+    }
     for (const effect of actor.conditions ?? []) {
       if (!effect.repeatSave || !actorIsUp(actor)) continue;
       const save = savingThrow(actor,effect.repeatSave,{random});
@@ -259,7 +273,9 @@ export function endInitiative(battle) {
   log(battle, "Initiative ended.");
 }
 
-export const speedOf = (actor) => incapacitated(actor) ? 0 : Math.max(0, actor.speed - (actor.slowedBy ? 10 : 0));
+export const speedOf = (actor) => incapacitated(actor) || actor.steadyAim ? 0 :
+  Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0));
+export const armorClass = (actor) => actor.ac+(actor.bladesong ? Math.max(1,actor.ability.int ?? 0) : 0);
 export const movementBudget = (battle,actor) => speedOf(actor) + (currentActor(battle)?.id === actor.id ? battle.dash : 0);
 export const moveLeft = (battle, actor) => Math.max(0, movementBudget(battle,actor) -
   (currentActor(battle)?.id === actor.id ? battle.spent : (battle.earlyMovement?.[actor.id] ?? 0)));
@@ -442,7 +458,7 @@ export function turnAction(battle, actor, action) {
     return;
   }
   if (action === "bonus-disengage") {
-    if (battle.bonusUsed || !actor.nimbleEscape) error("This token cannot use bonus-action Disengage.");
+    if (battle.bonusUsed || !(actor.nimbleEscape || hasFeature(actor,"Cunning Action"))) error("This token cannot use bonus-action Disengage.");
     actor.disengaged = true;
     battle.bonusUsed = true;
     log(battle, actor.name + " uses a bonus action to disengage.");
@@ -473,6 +489,7 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false, ra
   const remaining = damage - absorbed;
   const before = actor.hp;
   actor.hp = Math.max(0, before - remaining);
+  if (!actor.hp) {delete actor.astralArms;delete actor.astralVisage;}
   if (actor.hp === 0 && remaining > 0) {
     actor.stable = false;
     if (!actor.resolveDeath || remaining - before >= actor.maxHp) actor.dead = true;
@@ -497,7 +514,7 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false, ra
       if (!actorIsUp(actor) || incapacitated(actor)) endConcentration(battle,actor);
       else {
         const dc = Math.max(10,Math.floor(damage/2));
-        const save = savingThrow(actor,"con",{random});
+        const save = savingThrow(actor,"con",{random,extra:actor.bladesong ? actor.ability.int ?? 0 : 0});
         log(battle,actor.name + " concentration save — " + save.total + " vs DC " + dc + ".");
         if (save.total < dc) endConcentration(battle,actor);
       }
@@ -557,8 +574,11 @@ function damageLog(battle, target, expression, type, critical, random, source) {
   return recordDamage(battle,target,roll.total,type,roll.breakdown,critical,random,source);
 }
 
-function savingThrow(actor, ability, {extra = 0, advantage = false, random = Math.random} = {}) {
-  const result = d20((actor.saves[ability] ?? actor.ability[ability] ?? 0) + extra,{advantage,random});
+export function savingThrow(actor, ability, {extra = 0, advantage = false, random = Math.random} = {}) {
+  let bonus = actor.saves[ability] ?? actor.ability[ability] ?? 0;
+  if (ability === "str" && actor.astralArms) bonus = Math.max(bonus,actor.ability.wis ?? 0);
+  const result = d20(bonus + extra,{advantage,random});
+  addInspiration(actor,result,random);
   if (actor.sliver) {
     actor.sliver = null;
     const penalty = rollDice("1d4",{random});
@@ -568,13 +588,23 @@ function savingThrow(actor, ability, {extra = 0, advantage = false, random = Mat
   return result;
 }
 
+export function addInspiration(actor,result,random = Math.random) {
+  if (!actor.inspirationArmed || !actor.inspiration) return;
+  const die = rollDice("1d"+actor.inspiration.faces,{random});
+  result.total += die.total;
+  result.breakdown += " + Bardic Inspiration "+die.total;
+  delete actor.inspiration;
+  delete actor.inspirationArmed;
+}
+
 function attackMode(battle, attacker, target, options, ranged, distance) {
   const obscured = battle.spellZones?.length > 0 && options.map;
   const nearby = ranged && battle.actors.some((other) => other.side !== attacker.side && other.side !== "neutral" &&
     actorIsUp(other) && !incapacitated(other) && !condition(attacker,"Invisible") && occupies(other) && distanceFt(attacker, other) <= 5 &&
     (!obscured || canSee(battle,other,attacker,options.map)));
   return {
-    advantage: Boolean(options.mode === "advantage" || condition(attacker,"Invisible") || incapacitated(target) || target.hp === 0 ||
+    advantage: Boolean(options.mode === "advantage" || attacker.steadyAim || target.helped?.side === attacker.side ||
+      condition(attacker,"Invisible") || incapacitated(target) || condition(target,"Stunned") || target.hp === 0 ||
       (obscured && !canSee(battle,target,attacker,options.map)) ||
       ((target.prone || target.hp === 0) && distance <= 5) ||
       (attacker.packTactics && battle.actors.some((other) => other.id !== attacker.id && other.side === attacker.side &&
@@ -609,10 +639,11 @@ function obscuredCells(zones) {
 }
 
 export function canSee(battle,from,to,map) {
-  if (from.id !== to.id && condition(to,"Invisible")) return false;
+  if (from.id !== to.id && (condition(to,"Invisible") || condition(to,"Hidden") && from.side !== to.side)) return false;
   if (!lineClear(battle,from,to,map,{vision:true})) return false;
   if (!battle.spellZones?.length || from.x === to.x && from.y === to.y) return true;
-  const obscured = obscuredCells(battle.spellZones);
+  const zones = from.astralVisage && distanceFt(from,to) <= 120 ? battle.spellZones.filter((zone) => zone.name !== "Darkness") : battle.spellZones;
+  const obscured = obscuredCells(zones);
   let {x,y} = from;
   const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
   const sx = Math.sign(to.x-x), sy = Math.sign(to.y-y);
@@ -632,14 +663,30 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
   if (attacker.id === target.id) error("Choose a different target.");
   if (charmedBy(attacker,target)) error("This character is charmed by the target.");
   if (!Number.isFinite(weapon.bonus) || !diceTerms(weapon.damage)) error("This action needs a numeric attack bonus and a damage formula.");
-  if (battle.action && battle.action !== "attack") error("This token has used its action.");
-  if (battle.attacksMade >= attacker.swings) error("This token has used its attacks.");
+  const bonusStrike = options.bonusStrike;
+  if (bonusStrike) {
+    if (!weapon.unarmed) error("Choose an unarmed strike.");
+    if (!battle.flurry && (!attacker.classRules?.unarmoredMonk || !battle.martialAttack)) error("Use the Attack action with a monk weapon first.");
+    if (!battle.flurry && battle.bonusUsed) error("This token has used its bonus action.");
+  } else {
+    if (battle.action && battle.action !== "attack") error("This token has used its action.");
+    if (battle.attacksMade >= attacker.swings) error("This token has used its attacks.");
+  }
+  if (options.stun && (!hasFeature(attacker,"Stunning Strike") || weapon.normalRange || !(attacker.resources?.ki?.current > 0))) {
+    error("Stunning Strike needs a melee attack and a ki point.");
+  }
   const distance = distanceFt(attacker, target);
   const ranged = !!weapon.normalRange;
   if (distance > (ranged ? weapon.longRange || weapon.normalRange : weapon.reach || 5)) error("The target is out of range.");
   if (options.cover === "full" || !lineClear(battle,attacker,target,options.map)) error("Full cover blocks the attack.");
-  battle.action = "attack";
-  battle.attacksMade += 1;
+  if (bonusStrike) {
+    if (battle.flurry) battle.flurry -= 1;
+    else battle.bonusUsed = true;
+  } else {
+    battle.action = "attack";
+    battle.attacksMade += 1;
+    if (weapon.monkWeapon || weapon.unarmed) battle.martialAttack = true;
+  }
   return resolveWeaponRoll(battle,attacker,target,weapon,options,random);
 }
 
@@ -650,9 +697,25 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
   const mode = attackMode(battle, attacker, target, options, ranged, distance);
   mode.disadvantage ||= ranged && distance > weapon.normalRange;
   const roll = d20(weapon.bonus, {...mode, random});
+  addInspiration(attacker,roll,random);
+  const bard = roll.kept !== 20 && roll.total >= armorClass(target) && battle.actors.find((ally) =>
+    ally.side === target.side && ally.side !== attacker.side && ally.cuttingWords && hasFeature(ally,"Cutting Words") &&
+    actorIsUp(ally) && !incapacitated(ally) && !ally.reactionUsed && ally.resources?.inspiration?.current > 0 &&
+    distanceFt(ally,attacker) <= 60 && !condition(attacker,"Deafened") &&
+    !storedDamageTypes(attacker.conditionImmune).includes("charmed") && canSee(battle,ally,attacker,options.map));
+  if (bard) {
+    const reduction = rollDice("1d"+bard.classRules.inspirationDie,{random});
+    roll.total -= reduction.total;
+    roll.breakdown += " − Cutting Words "+reduction.total;
+    bard.resources.inspiration.current -= 1;
+    bard.reactionUsed = true;
+    log(battle,bard.name+" uses Cutting Words, reducing the attack by "+reduction.total+".");
+  }
+  if (target.helped?.side === attacker.side) delete target.helped;
+  attacker.steadyAim = false;
   breakInvisibility(battle,attacker);
   attacker.mocked = false;
-  const hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= target.ac + (Number(options.cover) || 0));
+  const hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= armorClass(target) + (Number(options.cover) || 0));
   const critical = hit && (roll.kept === 20 || ((target.hp === 0 || incapacitated(target)) && distance <= 5));
   let damage;
   let prone;
@@ -660,7 +723,39 @@ function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
     (critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   if (hit) {
     const retaliation = !ranged && target.tempHp > 0 ? target.agathys : null;
-    damage = damageLog(battle, target, weapon.damage, weapon.type, critical, random, attacker);
+    const raw = rollDice(weapon.damage,{doubleDice:critical,random});
+    let totalDamage = raw.total;
+    let breakdown = raw.breakdown;
+    const turnKey = battle.round+"|"+currentActor(battle)?.id;
+    const allyNearby = battle.actors.some((ally) => ally.id !== attacker.id && ally.side !== target.side && ally.side !== "neutral" &&
+      actorIsUp(ally) && !incapacitated(ally) && occupies(ally) && distanceFt(ally,target) <= 5);
+    const disadvantaged = mode.disadvantage && !mode.advantage;
+    const sneakEligible = attacker.classRules?.sneakDice && (weapon.finesse || ranged) && attacker.sneakTurn !== turnKey &&
+      !disadvantaged && (mode.advantage && !mode.disadvantage || allyNearby);
+    if (sneakEligible) {
+      const sneak = rollDice(attacker.classRules.sneakDice+"d6",{doubleDice:critical,random});
+      totalDamage += sneak.total;
+      breakdown += " + Sneak Attack "+sneak.breakdown;
+      attacker.sneakTurn = turnKey;
+    }
+    if (ranged && hasFeature(target,"Deflect Missiles") && !target.reactionUsed && !incapacitated(target)) {
+      const reduction = rollDice("1d10",{random}).total+(target.ability.dex ?? 0)+(target.classRules.levels.Monk ?? 0);
+      totalDamage = Math.max(0,totalDamage-reduction);
+      target.reactionUsed = true;
+      log(battle,target.name+" uses Deflect Missiles, reducing damage by "+reduction+".");
+    } else if (hasFeature(target,"Uncanny Dodge") && !target.reactionUsed && !incapacitated(target) && canSee(battle,target,attacker,options.map)) {
+      totalDamage = Math.floor(totalDamage/2);
+      target.reactionUsed = true;
+      log(battle,target.name+" uses Uncanny Dodge to halve the attack’s damage.");
+    }
+    damage = recordDamage(battle,target,totalDamage,weapon.type,breakdown,critical,random,attacker);
+    if (options.stun && actorIsUp(target)) {
+      attacker.resources.ki.current -= 1;
+      const save = savingThrow(target,"con",{random});
+      const dc = attacker.classRules.kiDC;
+      log(battle,target.name+" Constitution save "+save.total+" vs Ki DC "+dc+".");
+      if (save.total < dc) addCondition(battle,target,"Stunned",60,{untilTurn:attacker.id,untilRound:battle.round+1});
+    }
     if (retaliation) recordDamage(battle,attacker,retaliation,"cold","Armor of Agathys",false,random,target);
     if (weapon.proneDC && actorIsUp(target)) {
       const save = savingThrow(target,"str",{random});
@@ -713,6 +808,7 @@ export const spellTargetCount = (effect,casterLevel,rank) => effect.moreTargets 
   effect.missiles ? 2+rank : effect.beams ? 1+[5,11,17].filter((limit) => casterLevel >= limit).length : effect.aid ? 3 : 1;
 
 function breakInvisibility(battle,actor) {
+  removeCondition(actor,condition(actor,"Hidden"));
   const effect = condition(actor,"Invisible");
   if (!effect) return;
   removeCondition(actor,effect);
@@ -721,7 +817,7 @@ function breakInvisibility(battle,actor) {
       other.name === "Invisible" && other.concentration === caster.id))) endConcentration(battle,caster);
 }
 
-function checkCast(battle,caster,level,slotLevel,timing) {
+function checkCast(battle,caster,level,slotLevel,timing,usage) {
   if (!actorIsUp(caster)) error("This token cannot cast at 0 hit points.");
   if (incapacitated(caster)) error("This character is incapacitated.");
   if (!occupies(caster)) error("Place the caster on the grid first.");
@@ -739,12 +835,13 @@ function checkCast(battle,caster,level,slotLevel,timing) {
       error("After a bonus-action spell, another spell on this turn must be a one-action cantrip.");
     }
   }
-  if (level && (!Number.isInteger(slotLevel) || slotLevel < level || !(caster.slots[slotLevel]?.current > 0))) {
+  if (usage?.resource && !(caster.resources?.[usage.resource]?.current > 0)) error("This feature’s spell use is expended.");
+  if (level && !usage && (!Number.isInteger(slotLevel) || slotLevel < level || !(caster.slots[slotLevel]?.current > 0))) {
     error("Choose a slot of the spell’s level or higher with a use remaining.");
   }
 }
 
-function spendCast(battle,caster,level,slotLevel,timing) {
+function spendCast(battle,caster,level,slotLevel,timing,usage) {
   if (battle.round) {
     if (timing === "bonus") battle.bonusUsed = true;
     else if (timing === "reaction") caster.reactionUsed = true;
@@ -757,16 +854,19 @@ function spendCast(battle,caster,level,slotLevel,timing) {
       };
     }
   }
-  if (level) caster.slots[slotLevel].current -= 1;
+  if (usage?.resource) caster.resources[usage.resource].current -= 1;
+  else if (level && !usage) caster.slots[slotLevel].current -= 1;
 }
 
 export function recordSpell(battle,caster,spell,slotLevel) {
   if (!spell.reference || spell.edition !== "2014" || spell.customUse) error("Use the table ruling for this custom or revised spell.");
   if (!["action","bonus","reaction"].includes(spell.timing)) error("Resolve the longer casting time at the table.");
-  checkCast(battle,caster,spell.level,slotLevel,spell.timing);
-  spendCast(battle,caster,spell.level,slotLevel,spell.timing);
+  const usage = spell.castUsage && slotLevel === 0 ? spell.castUsage : undefined;
+  checkCast(battle,caster,spell.level,slotLevel,spell.timing,usage);
+  spendCast(battle,caster,spell.level,slotLevel,spell.timing,usage);
   breakInvisibility(battle,caster);
-  log(battle,caster.name+" casts "+spell.name+(spell.level ? " with a level "+slotLevel+" slot" : "")+" · manual effect.");
+  log(battle,caster.name+" casts "+spell.name+(usage ? " using "+(spell.grantedBy ?? "a class feature") :
+    spell.level ? " with a level "+slotLevel+" slot" : "")+" · manual effect.");
 }
 
 function spellSave(battle, caster, target, effect, options, random) {
@@ -785,9 +885,11 @@ function spellSave(battle, caster, target, effect, options, random) {
 function rangedSpellAttack(battle,caster,target,effect,expression,options,random) {
   const distance = distanceFt(caster,target);
   const result = d20(caster.spellAttack,{...attackMode(battle,caster,target,options,true,distance),random});
+  addInspiration(caster,result,random);
+  if (target.helped?.side === caster.side) delete target.helped;
   breakInvisibility(battle,caster);
   caster.mocked = false;
-  const hit = result.kept === 20 || (result.kept !== 1 && result.total >= target.ac + (Number(options.cover) || 0));
+  const hit = result.kept === 20 || (result.kept !== 1 && result.total >= armorClass(target) + (Number(options.cover) || 0));
   const critical = hit && (result.kept === 20 || ((target.hp === 0 || incapacitated(target)) && distance <= 5));
   log(battle,"Spell attack on "+target.name+" — "+result.breakdown+" = "+result.total+(critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   if (hit) {
@@ -885,7 +987,9 @@ function areaDamage(battle,caster,source,square,effect,map,dice,random) {
   log(battle,effect.name+" damage roll — "+roll.breakdown+" = "+roll.total+".");
   for (const creature of battle.actors.filter((actor) => occupies(actor) && area.has(keyAt(actor.x,actor.y)))) {
     const passed = spellSave(battle,source,creature,effect,{cover:0},random);
-    recordDamage(battle,creature,passed ? Math.floor(roll.total/2) : roll.total,effect.type,passed ? "half on save" : "failed save",false,random,caster);
+    const evasion = effect.save === "dex" && hasFeature(creature,"Evasion") && !incapacitated(creature);
+    const amount = evasion && passed ? 0 : passed || evasion ? Math.floor(roll.total/2) : roll.total;
+    recordDamage(battle,creature,amount,effect.type,evasion ? "Evasion" : passed ? "half on save" : "failed save",false,random,caster);
     if (creature.side === "hostile" && creature.side !== caster.side) joinInitiative(battle,creature,random);
   }
 }
@@ -905,13 +1009,27 @@ function exhaleBreath(battle,caster,options,random) {
 }
 
 export function castSpell(battle,caster,target,spell,slotLevel,options = {},random = Math.random) {
+  const usage = spell.castUsage && slotLevel === 0 ? spell.castUsage : undefined;
+  const original = {spellAbility:caster.spellAbility,spellDC:caster.spellDC,spellAttack:caster.spellAttack};
+  const ability = caster.ability[spell.castingAbility];
+  if (Number.isFinite(ability) && Number.isFinite(caster.proficiency)) {
+    caster.spellAbility = ability;
+    caster.spellDC = 8+caster.proficiency+ability;
+    caster.spellAttack = caster.proficiency+ability;
+  }
+  try {
+    return resolveSpell(battle,caster,target,spell,usage ? spell.level : slotLevel,options,random,usage);
+  } finally {Object.assign(caster,original);}
+}
+
+function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage) {
   const effect = supportedSpell(spell.key);
   if (!effect || spell.edition !== "2014" || spell.customUse) error("This spell needs manual adjudication.");
   if (effect.exhale) return exhaleBreath(battle,caster,options,random);
   const {level = 0, heal:healing} = effect;
   const timing = effect.bonus ? "bonus" : "action";
   if (!battle.round && !effect.exploration) error("Enter combat to cast this spell.");
-  checkCast(battle,caster,level,slotLevel,timing);
+  checkCast(battle,caster,level,slotLevel,timing,usage);
   const tier = 1 + [5,11,17].filter((threshold) => caster.level >= threshold).length;
   const square = options.square;
   const aimed = effect.area || effect.cone || effect.teleport;
@@ -957,12 +1075,13 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
     if (!breathTypes.includes(options.damageType)) error("Choose a damage type for Dragon’s Breath.");
     if (!Number.isFinite(caster.spellDC)) error("Set the spell save DC.");
   }
-  spendCast(battle,caster,level,slotLevel,timing);
+  spendCast(battle,caster,level,slotLevel,timing,usage);
   if (!effect.attack) breakInvisibility(battle,caster);
   if (effect.concentration) startConcentration(battle,caster,spell.name,effect.concentration);
   const destination = aimed ? " at square "+(square.x+1)+", "+(square.y+1) :
     effect.self ? "" : " on "+[...new Set(targets)].map(({name})=>name).join(", ");
-  log(battle,caster.name+" casts "+spell.name+destination+(level ? " · level "+slotLevel+" slot." : "."));
+  log(battle,caster.name+" casts "+spell.name+destination+(usage ? " · "+(spell.grantedBy ?? "class feature")+"." :
+    level ? " · level "+slotLevel+" slot." : "."));
   if (effect.teleport) {
     caster.x=square.x; caster.y=square.y;
     checkSpellTethers(battle,options.map);

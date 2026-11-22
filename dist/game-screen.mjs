@@ -49,6 +49,7 @@ export function gameScreen({
   const categoryList = [
     ["move","Move","footprints"],["weapon","Weapons","shield"],["spell","Spells","sparkles"],
     ["potion","Items","sheet"],
+    ["feature","Abilities","sparkles"],
   ];
   return `<section class="game-screen ${active ? "game-combat" : ""}" aria-label="Wayfarer game">
     <header class="game-top">
@@ -101,6 +102,8 @@ export function gameScreen({
           <span class="game-label">${enemyTurn ? "Enemy turn · game controlled" : movingEarly ? "Shared initiative · move" : active ? "Current turn" : "Selected character"}</span>
           <strong>${escape(selected?.name ?? "Choose a party member")}</strong>
           ${selected?.concentration ? `<span class="game-label">Concentrating · ${escape(selected.concentration.name)}</span>` : ""}
+          ${Object.values(selected?.resources ?? {}).length ? `<span class="game-class-resources">${Object.values(selected.resources).map((pool) =>
+            escape(pool.name)+" "+pool.current+"/"+pool.maximum).join(" · ")}</span>` : ""}
         </div>
         ${enemyTurn ? "" : `<div class="game-move" ${active ? 'aria-label="Movement budget"' : ""}>
           ${active ? `<span><strong>${remaining} ft</strong> left / ${total} ft</span>

@@ -14,6 +14,9 @@ ORIGIN_FIELDS = (
 CLASS_SOURCES = {"PHB", "XPHB", "TCE", "EFA"}
 GENERAL_TRAITS = {"Age", "Alignment", "Size", "Speed", "Darkvision", "Languages", "Ability Score Increase"}
 
+def select(record, fields):
+    return {key: record[key] for key in fields.split() if key in record}
+
 
 def edition(record):
     return "2024" if record.get("edition") == "one" or record.get("source") in {"XPHB", "EFA"} else "2014"
@@ -109,9 +112,118 @@ def spell_table(record, key):
     return []
 
 
-def build(archive):
-    root = next(name for name in archive.namelist() if name.endswith("data/races.json"))[:-len("races.json")]
-    read = lambda filename: json.loads(archive.read(root + filename))
+class RulesSource:
+    def __init__(self, source):
+        self.source = Path(source)
+        self.archive = None if self.source.is_dir() else ZipFile(self.source)
+        self.root = (self.source / "data") if self.source.is_dir() else next(
+            name for name in self.archive.namelist() if name.endswith("data/races.json"))[:-len("races.json")]
+
+    def read(self, filename):
+        raw = (self.root / filename).read_text(encoding="utf-8") if self.archive is None else self.archive.read(self.root + filename)
+        return json.loads(raw)
+
+
+def feature_id(feature, subclass=False):
+    parts = [feature["name"], feature["className"], feature.get("classSource", "PHB")]
+    if subclass:
+        parts += [feature["subclassShortName"], feature.get("subclassSource", feature["source"])]
+    parts += [str(feature["level"]), feature.get("source", "PHB")]
+    return "|".join(parts).lower()
+
+
+def reference_id(uid, subclass=False):
+    parts = uid.split("|")
+    if subclass:
+        name, cls, cls_source, short, sub_source, level, *source = parts
+        return "|".join([name, cls, cls_source or "PHB", short, sub_source or "PHB", level, (source[0] if source else "") or sub_source or "PHB"]).lower()
+    name, cls, cls_source, level, *source = parts
+    return "|".join([name, cls, cls_source or "PHB", level, (source[0] if source else "") or cls_source or "PHB"]).lower()
+
+
+def class_data(read, files):
+    data = [read("class/" + filename) for filename in files]
+    definitions = {}
+    for file in data:
+        for field in ("classFeature", "subclassFeature"):
+            for feature in file.get(field, []):
+                definitions[feature_id(feature, field == "subclassFeature")] = feature
+
+    def expand(node, chain=()):
+        if isinstance(node, list):
+            return [expand(item, chain) for item in node]
+        if not isinstance(node, dict):
+            return node
+        field = "classFeature" if node.get("type") == "refClassFeature" else "subclassFeature" if node.get("type") == "refSubclassFeature" else None
+        if field:
+            uid = reference_id(node[field], field == "subclassFeature")
+            feature = definitions.get(uid)
+            if feature and uid not in chain:
+                return {"type": "entries", "name": feature["name"], "source": feature["source"], "uid": uid,
+                        "entries": expand(feature.get("entries", []), (*chain, uid))}
+        return {key: expand(value, chain) for key, value in node.items()}
+
+    def detail(reference, subclass=False):
+        uid = reference_id(reference, subclass)
+        found = definitions.get(uid)
+        if not found:
+            return None
+        return {**select(found, "name source level consumes isClassFeatureVariant"),
+                "id": uid, "entries": expand(found.get("entries", []), (uid,)),
+                "optional": not subclass and found["source"] != found.get("classSource", "PHB")}
+
+    def linked(refs, subclass=False):
+        result = []
+        for entry in refs:
+            reference = entry.get("subclassFeature" if subclass else "classFeature") if isinstance(entry, dict) else entry
+            if reference:
+                found = detail(reference, subclass)
+                if found:
+                    result.append(found)
+        return result
+
+    classes = []
+    extras = "cantripProgression spellsKnownProgression spellsKnownProgressionFixed preparedSpells preparedSpellsProgression additionalSpells optionalfeatureProgression subclassTitle classTableGroups multiclassing"
+    for file in data:
+        for cls in file.get("class", []):
+            if not cls.get("hd"):
+                continue
+            record = {**select(cls, "name source proficiency casterProgression spellcastingAbility " + extras),
+                      "edition": edition(cls), "hitDie": cls["hd"]["faces"], "featureDetails": linked(cls.get("classFeatures", [])),
+                      "features": features(cls.get("classFeatures", []), cls["source"], 3, "classFeature"),
+                      "slots": spell_table(cls, "classTableGroups")}
+            for key, entries in cls.get("startingProficiencies", {}).items():
+                if key in {"armor", "weapons", "tools", "skills", "toolProficiencies"}:
+                    record[key] = [label(entry) if isinstance(entry, str) else entry for entry in entries]
+            record["subclasses"] = []
+            for sub in file.get("subclass", []):
+                if sub.get("classSource", "PHB") != cls["source"] or not sub.get("subclassFeatures"):
+                    continue
+                record["subclasses"].append({
+                    **select(sub, "name shortName source casterProgression spellcastingAbility additionalSpells optionalfeatureProgression cantripProgression spellsKnownProgression preparedSpells subclassTableGroups"),
+                    "shortName": sub.get("shortName", sub["name"]), "edition": edition(cls),
+                    "features": features(sub["subclassFeatures"], sub["source"], 5, "subclassFeature"),
+                    "featureDetails": linked(sub["subclassFeatures"], True),
+                    "slots": spell_table(sub, "subclassTableGroups"),
+                })
+            classes.append(record)
+
+    optional = [select(record, "name source featureType prerequisite entries consumes additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies")
+                for record in read("optionalfeatures.json").get("optionalfeature", [])]
+    feats = [select(record, "name source prerequisite entries ability additionalSpells skillProficiencies expertise languageProficiencies toolProficiencies")
+             for record in read("feats.json").get("feat", [])]
+    spells = []
+    lookup = read("generated/gendata-spell-source-lookup.json")
+    for filename in read("spells/index.json").values():
+        for spell in read("spells/" + filename).get("spell", []):
+            membership = lookup.get(spell["source"].lower(), {}).get(spell["name"].lower(), {})
+            spells.append({**select(spell, "name source level school"), "edition": edition(spell),
+                           "classes": membership.get("class", {}), "subclasses": membership.get("subclass", {})})
+    return {"classes": classes, "optionalFeatures": optional, "feats": feats, "spells": spells}
+
+
+def build(source):
+    read = source.read
     races = read("races.json")
     base = {(x["name"], x["source"]): x for x in races["race"] if "name" in x}
     species = [origin(resolve(base, record)) for record in base.values()]
@@ -158,29 +270,8 @@ def build(archive):
 
     records = {(x["name"], x["source"]): x for x in read("backgrounds.json")["background"] if "name" in x}
     backgrounds = [origin(resolve(records, record), background=True) for record in records.values()]
-    classes = []
-    for filename in read("class/index.json").values():
-        data = read("class/" + filename)
-        for cls in data.get("class", []):
-            source = cls.get("source")
-            if source not in CLASS_SOURCES or not cls.get("hd"):
-                continue
-            record = {key: cls[key] for key in ("name", "source", "proficiency", "casterProgression", "spellcastingAbility") if key in cls}
-            record.update(edition=edition(cls), hitDie=cls["hd"]["faces"],
-                          features=features(cls.get("classFeatures", []), source, 3, "classFeature"),
-                          slots=spell_table(cls, "classTableGroups"))
-            for key, entries in cls.get("startingProficiencies", {}).items():
-                if key in {"armor", "weapons", "tools", "skills"}:
-                    record[key] = [label(entry) if isinstance(entry, str) else entry for entry in entries]
-            record["subclasses"] = [dict(
-                name=subclass["name"], shortName=subclass.get("shortName", subclass["name"]), source=subclass["source"],
-                features=features(subclass["subclassFeatures"], subclass["source"], 5, "subclassFeature"),
-                casterProgression=subclass.get("casterProgression"), spellcastingAbility=subclass.get("spellcastingAbility"),
-                slots=spell_table(subclass, "subclassTableGroups"),
-            ) for subclass in data.get("subclass", [])
-                if subclass.get("classSource") == source and subclass.get("subclassFeatures") and not subclass.get("isReprinted")]
-            classes.append(record)
-    return {"species": species, "backgrounds": backgrounds, "classes": classes}
+    return {"species": species, "backgrounds": backgrounds,
+            **class_data(read, read("class/index.json").values())}
 
 
 if __name__ == "__main__":
@@ -188,6 +279,5 @@ if __name__ == "__main__":
     parser.add_argument("archive", type=Path)
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parents[1] / "dist" / "character-rules.json")
     args = parser.parse_args()
-    with ZipFile(args.archive) as archive:
-        data = build(archive)
+    data = build(RulesSource(args.archive))
     args.output.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")

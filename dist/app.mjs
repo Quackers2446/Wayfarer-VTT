@@ -365,7 +365,7 @@ document.addEventListener("wayfarer:inspect", (event) => {
     ac:actor.ac, speed:String(actor.speed), initiative:actor.initiative, tempHp:actor.tempHp,
     tokenImage:actor.tokenImage, tokenSession:actor.tokenSession, gameActorId:actor.side === "party" ? actor.id : undefined,
     spellDC:actor.spellDC, spellAttack:actor.spellAttack, spellSlots:actor.slots,
-    attacks:imported?.attacks ?? actor.attacks,
+    attacks:actor.attacks,resources:actor.resources,classRules:actor.classRules,
     items:(imported?.items ?? []).map((item) => ({...item,quantity:potions.get(item.name) ?? item.quantity})),
   });
 });
@@ -576,7 +576,7 @@ document.addEventListener("submit", (event) => {
     const raw = state.characters.find(({id}) => id === character?.id);
     if (!raw) return;
     try {
-      const edits = readSheetEdits(new FormData(event.target),sheetSkills);
+      const edits = readSheetEdits(new FormData(event.target),sheetSkills,character);
       validateSheetEdits(enrichCharacter({...raw,sheetEdits:edits}));
       raw.sheetEdits = edits;
       const saved = save();
@@ -669,6 +669,16 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.classList.contains("feature-choice-search")) {
+    const query = event.target.value.toLowerCase().trim();
+    for (const option of event.target.closest(".feature-choice").querySelectorAll(".feature-choice-option")) {
+      option.hidden = !option.dataset.choiceName.includes(query);
+    }
+    for (const option of event.target.closest(".feature-choice").querySelectorAll("option")) {
+      option.hidden = !option.textContent.toLowerCase().includes(query);
+    }
+    return;
+  }
   if (event.target.id === "catalog-search") {
     search = event.target.value;
     renderResults();

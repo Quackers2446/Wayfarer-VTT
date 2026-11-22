@@ -1,7 +1,7 @@
 import {cellAt, cellCenter, gridGeometry, legacyGeometry, sourceGrid, validGeometry} from "./map-grid.mjs";
 import {diceTerms, makeActor, modifier} from "./combat.mjs";
 import {enrichCharacter} from "./character-rules.mjs";
-import {bestiaryTokenPath, matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey, spellKey} from "./rules-library.mjs";
+import {bestiaryTokenPath, matchSpell, matchWeapon, monsterRecord, readArchive, ruleKey, spellByKey, spellKey} from "./rules-library.mjs";
 
 const types = {S:"slashing", P:"piercing", B:"bludgeoning"};
 const damageTypes = "acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|poison|psychic|radiant|slashing|thunder";
@@ -149,8 +149,11 @@ function attackFromSheet(item) {
   const range = weapon?.range?.split("/").map(Number) ?? [];
   const suffix = String(item.damage || "").match(new RegExp("\\s+(" + damageTypes + ")$", "i"));
   const damage = suffix ? item.damage.slice(0, suffix.index) : item.damage;
-  const result = {name, bonus, damage, type:suffix?.[1]?.toLowerCase() ?? (diceTerms(damage) ? types[weapon?.dmgType] : undefined),
-    reach:weapon?.property?.includes("R") ? 10 : 5};
+  const unarmed = /^unarmed strike\b/i.test(name);
+  const result = {name, bonus, damage, type:suffix?.[1]?.toLowerCase() ?? (unarmed ? "bludgeoning" : diceTerms(damage) ? types[weapon?.dmgType] : undefined),
+    reach:weapon?.property?.includes("R") ? 10 : 5,finesse:weapon?.property?.includes("F"),monkWeapon:weapon?.type === "M" &&
+      (!weapon.property?.includes("H") && !weapon.property?.includes("2H") && weapon.weaponCategory === "simple" || /shortsword/i.test(weapon.name))};
+  if (unarmed) {result.unarmed=true;result.monkWeapon=true;}
   if (weapon?.type === "R") {
     result.normalRange = range[0];
     result.longRange = range[1];
@@ -181,13 +184,17 @@ export function partyActor(record) {
   if (!Number.isFinite(character.maxHp) || !Number.isFinite(character.ac) || speed == null) {
     throw new Error(character.name + " needs maximum HP, AC, and walking speed in the character sheet.");
   }
-  const spells = character.spells.map(({name,level,prepared}) => {
-    const spell = matchSpell(name);
+  const resources = structuredClone(character.resources);
+  const spells = character.spells.map(({name,level,prepared,source,castUsage,castingAbility,grantedBy}) => {
+    const spell = (source && spellByKey(source.toLowerCase()+"|"+ruleKey(name))) || matchSpell(name);
     const note = spell && ruleKey(name) !== ruleKey(spell.name) ? name : "";
-    const customUse = !spell || /without rolling|no spell slot|charges|unlimited|on snakes|infinite cast/i.test(note);
+    const customUse = !spell || !castUsage && /without rolling|no spell slot|charges|unlimited|on snakes|infinite cast/i.test(note);
+    const resource = castUsage?.maximum ? "spell:"+spellKey(spell) : null;
+    if (resource) resources[resource] = {name:spell.name,maximum:castUsage.maximum,current:castUsage.maximum,rest:castUsage.rest};
     return {name:spell?.name ?? name.split(" (")[0], key:ruleKey(spell?.name ?? name),
       edition:spell?.edition, level:spell?.level ?? level, note, customUse, prepared,
-      reference:spell ? spellKey(spell) : "", timing:spell?.time?.[0]?.unit};
+      reference:spell ? spellKey(spell) : "", timing:spell?.time?.[0]?.unit,castUsage:castUsage ? {...castUsage,resource} : undefined,
+      castingAbility,grantedBy};
   });
   const scores = Object.fromEntries(character.abilities.map(({abbr, score, modifier:mod}) => [abbr.toLowerCase(),mod ?? modifier(score)]));
   const saves = Object.fromEntries(character.abilities.map(({abbr, save}) => [abbr.toLowerCase(),save]));
@@ -195,11 +202,23 @@ export function partyActor(record) {
   const spellAbility = typeof character.spellcastingAbility === "number" ? character.spellcastingAbility :
     scores[abilityText] ?? (Number.isFinite(character.spellDC) && Number.isFinite(character.proficiency)
       ? character.spellDC - 8 - character.proficiency : null);
+  const attacks = character.attacks.map(attackFromSheet);
+  if (character.classRules?.unarmoredMonk && character.classRules.martialDie) {
+    const ability = Math.max(scores.str ?? 0,scores.dex ?? 0);
+    const damage = "1d"+character.classRules.martialDie+(ability >= 0 ? "+" : "")+ability;
+    if (!attacks.some((attack) => /^unarmed strike$/i.test(attack.name))) attacks.push({
+      name:"Unarmed Strike",bonus:ability+character.proficiency,damage,type:"bludgeoning",reach:5,unarmed:true,monkWeapon:true,
+    });
+  }
   return makeActor({
     id:"party:" + character.id, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
-    speed, darkvision:character.rulesDetails.darkvision, attacks:character.attacks.map(attackFromSheet), potions:healingItems(character.items),resist:character.resistances,
+    speed, darkvision:character.rulesDetails.darkvision, attacks, potions:healingItems(character.items),resist:character.resistances,
+    classRules:character.classRules,resources,swings:character.classRules?.swings ?? 1,
+    proficiency:character.proficiency,
+    skillBonuses:Object.fromEntries(character.skills.map((skill) => [ruleKey(skill.name),skill.bonus])),
+    proficientSkills:character.rulesDetails.skillTraining.map(ruleKey),
     creatureType:"humanoid",sleepImmune:/\b(?:elf|half-elf|eladrin|shadar-kai|drow)\b/i.test(character.species ?? ""),
     spells:[...new Map(spells.map((spell) => [spell.key,spell])).values()],
     slots:{...Object.fromEntries(spells.filter((spell) => spell.level).map((spell) =>

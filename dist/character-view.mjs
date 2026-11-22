@@ -3,6 +3,7 @@ import {icon} from "./icons.mjs";
 import {tokenPortrait} from "./character-token.mjs";
 import {sheetSkills} from "./character-rules.mjs";
 import {sheetEditor} from "./sheet-editor.mjs";
+import {featureRules} from "./class-feature-view.mjs";
 import {matchSpell, ruleKey, spellByKey, spellKey} from "./rules-library.mjs";
 
 export function sheetPath(character, section = "overview") {
@@ -20,7 +21,7 @@ export function characterProfile(character) {
 function sections(character, embedded) {
   return [
     ["overview", "Overview"],
-    ...(character.attacks.length ? [["actions", "Actions"]] : []),
+    ...(character.attacks.length || character.rulesDetails?.classDetails?.features?.length ? [["actions", "Actions"]] : []),
     ...(character.skills.length || character.abilities.some((ability) => ability.save != null) ? [["skills", "Skills & Saves"]] : []),
     ...(character.items.length || embedded ? [["inventory", "Inventory"]] : []),
     ...(character.spells.length || Object.keys(character.spellSlots ?? {}).length ? [["spells", "Spells"]] : []),
@@ -179,7 +180,7 @@ function rulesContent(character, embedded) {
     }).join("")}</ul></div></div>` : ""}
     ${choices.length ? `<div class="sheet-rule-groups"><div><h3>Options in the rules</h3><ul>${choices.map((choice) => `<li>${escape(choice)}</li>`).join("")}</ul></div></div>` : ""}
     ${rules.sources?.length ? `<p class="sheet-rules-note"><strong>Sources</strong> ${escape(joined(rules.sources))}.</p>` : ""}
-  </section>`;
+  </section>${featureRules(character)}`;
 }
 
 function searchField(label) {
@@ -257,7 +258,7 @@ export function characterPage(character, requestedSection, {embedded = false, to
     actions: () => `<section class="sheet-box" aria-labelledby="actions-heading">
       <header class="sheet-box-heading"><h2 id="actions-heading">Actions</h2></header>
       ${attackList(character.attacks)}
-      </section>`,
+      </section>${featureRules(character)}`,
     skills: () => skillContent(character),
     inventory: inventoryContent,
     spells: () => spellContent(character),

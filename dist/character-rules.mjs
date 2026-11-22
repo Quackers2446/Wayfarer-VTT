@@ -1,4 +1,6 @@
 import {sheetOverrides, wornArmorClass} from "./sheet-editor.mjs";
+import {applySpellChoices, buildClassFeatures, classChosenSpells, classKey, loadFeatureData, selectedFeatNames, subclassKey} from "./class-features.mjs";
+import {ruleKey} from "./rules-library.mjs";
 
 const skills = {
   acrobatics:"dex","animal handling":"wis",arcana:"int",athletics:"str",deception:"cha",history:"int",
@@ -35,8 +37,10 @@ export function loadCharacterRules() {
   return loading ??= fetch("character-rules.json").then((response) => {
     if (!response.ok) throw new Error("Character rules unavailable.");
     return response.json();
-  }).then(({species,backgrounds,classes}) => {
+  }).then((data) => {
+    const {species,backgrounds,classes} = data;
     library = {species:index(species),backgrounds:index(backgrounds),classes:index(classes)};
+    loadFeatureData(data);
   });
 }
 
@@ -68,14 +72,14 @@ function parseClasses(character, edition) {
     if (options.length !== 1) return null;
     const rules = pick(options[0][1],edition);
     if (!rules) return null;
-    const subclass = rules.subclasses.find(({name:full,shortName}) => {
-      return [full,shortName].some((value) => {
+    const selectedSubclass = character.sheetEdits?.subclasses?.[classKey(rules)];
+    const subclass = rules.subclasses.find((entry) => selectedSubclass ? subclassKey(entry) === selectedSubclass : [entry.name,entry.shortName].some((value) => {
         const key = normalize(value);
         return key.length > 2 && ` ${name} `.includes(` ${key} `);
-      });
-    });
+    }));
     const explicit = Number(name.match(/(?:^| )(\d+)$/)?.[1]);
-    const level = parts.length === 1 && levelNumber(character.level) ? character.level : levelNumber(explicit) ? explicit : null;
+    const chosenLevel = character.sheetEdits?.classLevels?.[classKey(rules)];
+    const level = chosenLevel ?? (parts.length === 1 && levelNumber(character.level) ? character.level : levelNumber(explicit) ? explicit : null);
     return {rules,subclass,level};
   });
 }
@@ -165,7 +169,7 @@ export function enrichCharacter(record) {
   if (Number.isFinite(walk)) fill("speed",String(walk),"Walking speed");
 
   const featRefs = fixed(background,"feats");
-  const feats = unique([...featRefs.map(displayName),...(raw.feats ?? [])]);
+  const feats = unique([...featRefs.map(displayName),...(raw.feats ?? []),...selectedFeatNames(raw)]);
   const speciesTraits = species?.traits ?? [];
   character.abilities = (raw.abilities ?? []).map((ability) => {
     const modifier = ability.modifier ?? (Number.isFinite(ability.score) ? Math.floor((ability.score-10)/2) : null);
@@ -284,5 +288,44 @@ export function enrichCharacter(record) {
       }))),
     ].filter(({entries}) => entries.length),
   };
+  const classDetails = buildClassFeatures(character,qualified,mod,pb,edition);
+  character.rulesDetails.classDetails = classDetails;
+  character.classRules = classDetails.mechanics;
+  character.resources = Object.fromEntries(Object.entries(classDetails.pools).map(([key,pool]) =>
+    [key,{...pool,current:Math.min(pool.maximum,raw.sheetEdits?.resources?.[key] ?? pool.maximum)}]));
+  const unarmoredMonk = classDetails.traits.includes("Unarmored Defense") && classDetails.mechanics.levels.Monk &&
+    (!raw.sheetEdits?.armor || raw.sheetEdits.armor === "unarmored") && !raw.sheetEdits?.shield;
+  if (unarmoredMonk && Number.isFinite(mod.dex) && Number.isFinite(mod.wis)) {
+    if (!filled(raw.ac) || raw.sheetEdits?.armor === "unarmored" && raw.sheetEdits.ac == null) {
+      character.ac = 10+mod.dex+mod.wis;
+      derived.add("Monk Unarmored Defense");
+    }
+  }
+  if (!filled(raw.speed) && Number.isFinite(walk) && unarmoredMonk) character.speed = String(walk+classDetails.mechanics.movement);
+  character.classRules.unarmoredMonk = Boolean(unarmoredMonk);
+  character.classRules.bladesongAllowed = !raw.sheetEdits?.shield && !["hide","chain-shirt","scale-mail","breastplate","half-plate","ring-mail","chain-mail","splint","plate"].includes(raw.sheetEdits?.armor);
+  character.rulesDetails.derived = [...derived];
+  for (const choice of classDetails.choices) {
+    if (!["skills","expertise"].includes(choice.kind) || !raw.sheetEdits?.featureChoices?.[choice.id]) continue;
+    for (const name of choice.selected) {
+      if (!(name in skills) || !Number.isFinite(mod[skills[name]]) || !Number.isFinite(pb)) continue;
+      const skill = character.skills.find((entry) => normalize(entry.name) === name);
+      if (skill) {skill.bonus = mod[skills[name]]+(choice.kind === "expertise" ? 2 : 1)*pb;skill.base=null;}
+    }
+  }
+  for (const skill of character.skills) {
+    if (Number.isFinite(skill.bonus) || !Number.isFinite(skill.base)) continue;
+    if (classDetails.traits.includes("Jack of All Trades")) skill.bonus = skill.base+Math.floor(pb/2);
+  }
+  if (raw.passivePerception == null) {
+    const trained = character.skills.find((skill) => normalize(skill.name) === "perception")?.bonus;
+    if (Number.isFinite(trained)) character.passivePerception = 10+trained;
+  }
+  character.spells = applySpellChoices(character.spells,classDetails,raw.sheetEdits);
+  for (const grant of classChosenSpells(classDetails)) {
+    const existing = character.spells.find((spell) => ruleKey(spell.name.split(" (")[0]) === ruleKey(grant.name));
+    if (!existing) character.spells.push(grant);
+    else if (grant.castUsage) Object.assign(existing,{castUsage:grant.castUsage,castingAbility:grant.castingAbility,grantedBy:grant.grantedBy});
+  }
   return character;
 }
