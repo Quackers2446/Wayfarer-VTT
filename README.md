@@ -3,10 +3,12 @@
 [![Standard 5e SRD](https://img.shields.io/badge/5e%20Rules-2014%20%26%202024%20SRD-2d4939.svg)](#)
 [![Zero Build Solo Play](https://img.shields.io/badge/Architecture-Client--First%20Vanilla%20ESM-e8cc8b.svg)](#)
 [![Edge Multiplayer](https://img.shields.io/badge/Multiplayer-Cloudflare%20D1%20%2B%20R2-orange.svg)](#)
+[![Live on Cloudflare](https://img.shields.io/badge/Live-wayfarer--vtt.pages.dev-blue.svg)](https://wayfarer-vtt.pages.dev/)
 
 **Wayfarer** is a client-first 5th Edition D&D campaign organizer and virtual tabletop (VTT). It imports character workbooks, derives official rules, indexes published adventures from 5etools archives, and provides a tactical 2D grid engine with line-of-sight fog of war, automated spell zones, and autonomous monster AI.
 
-For an in-depth breakdown of every subsystem, algorithm, and file, see [WAYFARER_EXPLAINED.md](WAYFARER_EXPLAINED.md).
+- **Live Production App**: [https://wayfarer-vtt.pages.dev/](https://wayfarer-vtt.pages.dev/)
+- For an in-depth breakdown of every subsystem, algorithm, and file, see [WAYFARER_EXPLAINED.md](WAYFARER_EXPLAINED.md).
 
 ---
 

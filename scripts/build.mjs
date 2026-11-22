@@ -14,7 +14,7 @@ for (const name of await readdir(dist)) {
 await cp(new URL("../worker/session.mjs",import.meta.url),new URL("index.js",server));
 await cp(new URL("../worker/session.mjs",import.meta.url),new URL("_worker.js",client));
 await writeFile(new URL("wrangler.json",server),JSON.stringify({
-  name:"wayfarer",main:"index.js",compatibility_date:"2026-05-25",
+  name:"wayfarer-vtt",main:"index.js",compatibility_date:"2026-05-25",
   assets:{directory:"../client",binding:"ASSETS",html_handling:"none"},
   d1_databases:[{binding:"DB",database_id:"af23b966-91b0-416b-87f5-89140e7ddbd2"}],
   r2_buckets:[{binding:"BUCKET",bucket_name:"wayfarer-art"}],

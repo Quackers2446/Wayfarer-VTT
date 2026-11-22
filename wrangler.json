@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "wayfarer",
+  "name": "wayfarer-vtt",
   "main": "worker/session.mjs",
   "compatibility_date": "2026-05-25",
   "assets": {
