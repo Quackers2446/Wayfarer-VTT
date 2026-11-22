@@ -290,10 +290,9 @@ export async function sessionRequest(request, env) {
 }
 
 export default {
-  async fetch(request,env) {
-    const {pathname} = new URL(request.url);
-    if (pathname.startsWith("/api/")) return sessionRequest(request,env);
-    const asset = new URL(pathname === "/" ? "/index.html" : pathname,request.url);
-    return env.ASSETS.fetch(new Request(asset,request));
+  async fetch(request, env) {
+    const { pathname } = new URL(request.url);
+    if (pathname.startsWith("/api/")) return sessionRequest(request, env);
+    return env.ASSETS.fetch(request);
   },
 };

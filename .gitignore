@@ -3,3 +3,4 @@ __pycache__/
 dist/client/
 dist/server/
 .wrangler/
+manifest.json
