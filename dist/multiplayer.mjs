@@ -94,8 +94,7 @@ function sessionPlayers(players, battle, controller) {
 
 export function tablePanel(table, characters, battle, message, needsSignIn, controller) {
   if (!table) return `<h2>Multiplayer</h2><p>Invite up to three friends. Each player can claim a party member.</p>
-    ${needsSignIn ? '<a class="game-button" href="/signin-with-chatgpt?return_to=%2F%23game" target="_top">Sign in to host</a>' :
-      '<button type="button" class="game-button" data-play="host-session">Start shared session</button>'}<p role="status">${escape(message)}</p>`;
+    <button type="button" class="game-button" data-play="host-session">Start shared session</button><p role="status">${escape(message)}</p>`;
   const options = characters.filter((character) => !battle.actors.some(({id}) => id === "party:"+character.id));
   const full = battle.actors.filter(({side}) => side === "party").length >= 4;
   return `<h2>Shared session</h2>

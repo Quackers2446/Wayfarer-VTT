@@ -268,7 +268,6 @@ export async function sessionRequest(request, env) {
   if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) return fail(403,"Open Wayfarer to update this session.");
   try {
     if (!match && request.method === "POST") {
-      if (!request.headers.get("oai-authenticated-user-id")) return fail(401,"Sign in to start a shared session.");
       return await create(request,env);
     }
     // The unlisted, randomly generated session ID is the guest's invitation and access credential.
