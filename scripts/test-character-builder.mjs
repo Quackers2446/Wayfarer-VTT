@@ -34,36 +34,52 @@ const wizard24=newBuilderDraft();Object.assign(wizard24,{name:'Revised wizard',e
 const bookDraft=newBuilderDraft();Object.assign(bookDraft,{name:'Learning limits',classId:'wizard|phb',level:5});const bookContext=complete(bookDraft),book=bookContext.choices.find(c=>c.kind==='spellbook');const highSpells=book.options.filter(s=>s.level===3).slice(0,3),lowSpells=book.options.filter(s=>s.level===1).slice(0,book.count-3);bookDraft.featureChoices[book.id]=[...highSpells,...lowSpells].map(s=>s.id);assert(builderProblems(bookDraft,buildCharacter(bookDraft,db)).some(p=>p.message.includes('level 3 or higher')));
 console.log('Revised spell source fidelity and cumulative wizard spellbook learning limits verified.');
 
-// Verify Shifter ERLW subrace selection and ability increases
+// Verify Shifter ERLW subrace selection and player choice ability increases
 const shifterBase = db.species.find(s => builderId(s) === 'shifter|erlw');
 assert(shifterBase, 'Shifter (ERLW) base species exists');
 assert.equal(shifterBase.subraces?.length, 4, 'Shifter (ERLW) has 4 subraces');
 assert.deepEqual(shifterBase.subraces.map(s => s.id), ['beasthide', 'longtooth', 'swiftstride', 'wildhunt']);
 
-for (const [subId, expectedScores] of [
-  ['beasthide', {str: 16, con: 15, dex: 14}], // Base 15, 14, 13 -> +1 str, +2 con -> 16 str, 15 con
-  ['longtooth', {str: 17, dex: 15, con: 13}], // +2 str, +1 dex -> 17 str, 15 dex
-  ['swiftstride', {dex: 16, cha: 10, str: 15}], // +2 dex, +1 cha (cha 8 -> 9 -> wait: base cha 8 + 1 = 9)
-  ['wildhunt', {wis: 12, dex: 15, str: 15}], // +2 wis, +1 dex (wis 10 + 2 = 12)
-]) {
+// Verify Swiftstride Shifter has player choice ability increases (no automatic fixed bonuses)
+const swiftDraft = newBuilderDraft();
+Object.assign(swiftDraft, {name: 'Swift Shifter', speciesId: 'shifter|erlw', subraceId: 'swiftstride'});
+swiftDraft.abilityOptions['species'] = 0;
+swiftDraft.allocations['species:0'] = 'dex'; // +2 DEX
+swiftDraft.allocations['species:1'] = 'cha'; // +1 CHA
+const swiftChar = complete(swiftDraft);
+assert.deepEqual(builderProblems(swiftDraft, swiftChar), []);
+assert.equal(swiftChar.species.name, 'Swiftstride Shifter');
+assert.deepEqual(swiftChar.abilityInfo.find(i => i.id === 'species').fixed, {}, 'No automatic fixed ability increases');
+assert.equal(swiftChar.character.abilities.find(a => a.abbr === 'DEX').score, 16); // base 14 + 2
+assert.equal(swiftChar.character.abilities.find(a => a.abbr === 'CHA').score, 9);  // base 8 + 1
+
+// Verify Swiftstride Shifter with alternate player choice (+2 CON, +1 STR)
+swiftDraft.allocations['species:0'] = 'con';
+swiftDraft.allocations['species:1'] = 'str';
+const swiftAlt = buildCharacter(swiftDraft, db);
+assert.equal(swiftAlt.character.abilities.find(a => a.abbr === 'CON').score, 15); // base 13 + 2
+assert.equal(swiftAlt.character.abilities.find(a => a.abbr === 'STR').score, 16); // base 15 + 1
+
+// Verify all 4 Shifter ERLW variants have player choice and complete cleanly
+for (const subId of ['beasthide', 'longtooth', 'swiftstride', 'wildhunt']) {
   const d = newBuilderDraft();
   Object.assign(d, {name: 'Shifter ' + subId, speciesId: 'shifter|erlw', subraceId: subId});
   const c = complete(d);
   assert.deepEqual(builderProblems(d, c), []);
   assert(c.species.name.toLowerCase().includes(subId));
-  for (const [abbr, score] of Object.entries(expectedScores)) {
-    if (abbr === 'cha' && subId === 'swiftstride') assert.equal(c.character.abilities.find(a => a.abbr === 'CHA').score, 9);
-    else assert.equal(c.character.abilities.find(a => a.abbr === abbr.toUpperCase()).score, score, `${subId} ${abbr}`);
-  }
+  assert.deepEqual(c.abilityInfo.find(i => i.id === 'species').fixed, {}, 'Subrace has no automatic fixed abilities');
 }
-console.log('Shifter (ERLW) 4 subrace variants and their ability increases verified.');
+console.log('Shifter (ERLW) 4 subrace variants and player choice ability increases verified.');
 
-// Verify Shifter MPMM flexible ability score increases (+2/+1 or +1/+1/+1)
+// Verify Shifter MPMM also has 4 subraces and flexible ability score increases (+2/+1 or +1/+1/+1)
 const shifterMpmm = newBuilderDraft();
-Object.assign(shifterMpmm, {name: 'MPMM Shifter', speciesId: 'shifter|mpmm'});
+Object.assign(shifterMpmm, {name: 'MPMM Shifter', speciesId: 'shifter|mpmm', subraceId: 'swiftstride'});
 const sm = complete(shifterMpmm);
-assert.equal(sm.species.subraces, undefined, 'MPMM Shifter has no subraces');
+assert.equal(sm.species.subraces.length, 4, 'MPMM Shifter has 4 subraces');
+assert.deepEqual(sm.species.subraces.map(s => s.id), ['beasthide', 'longtooth', 'swiftstride', 'wildhunt']);
 assert.equal(sm.abilityInfo[0].alternatives.length, 2, 'MPMM Shifter has 2 ASI options');
+assert.deepEqual(sm.abilityInfo[0].fixed, {}, 'MPMM Shifter has no automatic fixed increases');
+
 // Option 0: +2 and +1
 shifterMpmm.abilityOptions['species'] = 0;
 shifterMpmm.allocations['species:0'] = 'str';

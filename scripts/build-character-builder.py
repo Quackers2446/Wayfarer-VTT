@@ -55,6 +55,8 @@ def make_subrace(parent, sub, all_subs):
                   'additionalSpells', 'entries']:
         if sub.get(field) is not None:
             sub_rec[field] = sub[field]
+    if parent.get('name') == 'Shifter':
+        sub_rec.pop('ability', None)
     return sub_rec
 
 FLEXIBLE_ASI = [
@@ -108,11 +110,17 @@ for r in races['race']:
         ]
     else:
         subs = sub_map.get((r['name'], r['source']), [])
+        if not subs and r['name'] == 'Shifter':
+            subs = sub_map.get(('Shifter', 'ERLW'), [])
         if subs:
             rec['subraces'] = [make_subrace(r, s, subs) for s in subs]
 
-    # Populate flexible ASI for 2014 post-Tasha species with no fixed ASI and no subrace ASIs
-    if rec.get('edition') == '2014':
+    # Populate flexible ASI for Shifter (player choice across all variants) and post-Tasha species
+    if rec['name'] == 'Shifter':
+        rec['ability'] = FLEXIBLE_ASI
+        for sub in rec.get('subraces', []):
+            sub.pop('ability', None)
+    elif rec.get('edition') == '2014':
         has_sub_ability = rec.get('subraces') and any(s.get('ability') for s in rec['subraces'])
         if not rec.get('ability') and not has_sub_ability:
             rec['ability'] = FLEXIBLE_ASI
