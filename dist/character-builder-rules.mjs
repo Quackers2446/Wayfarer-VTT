@@ -8,7 +8,7 @@ export const title=s=>String(s).replace(/\b\w/g,c=>c.toUpperCase());
 export const plain=s=>String(s??'').replace(/\{@\w+ ([^}]+)\}/g,(_,v)=>v.split('|').at(-1)||v.split('|')[0]);
 let loading;
 export const loadBuilderData=()=>loading??=Promise.all([fetch('character-builder-data.json').then(r=>{if(!r.ok)throw Error('Character builder data could not be loaded.');return r.json();}),fetch('character-rules.json').then(r=>r.json()),loadCharacterRules(),loadRules()]).then(([creation,features])=>({...creation,features}));
-export function newBuilderDraft(){return {id:crypto.randomUUID(),step:0,name:'',player:'',edition:'2014',level:1,classId:'fighter|phb',speciesId:'human|phb',backgroundId:'soldier|phb',subclass:'',method:'standard',baseScores:{str:15,dex:14,con:13,int:12,wis:10,cha:8},allocations:{},featureChoices:{},notes:{},equipment:{},gearChoices:{},abilityOptions:{},armor:'',shield:false};}
+export function newBuilderDraft(){return {id:crypto.randomUUID(),step:0,name:'',player:'',edition:'2014',level:1,classId:'fighter|phb',speciesId:'human|phb',subraceId:'standard',backgroundId:'soldier|phb',subclass:'',method:'standard',baseScores:{str:15,dex:14,con:13,int:12,wis:10,cha:8},allocations:{},featureChoices:{},notes:{},equipment:{},gearChoices:{},abilityOptions:{},armor:'',shield:false};}
 export function availableOrigins(db,kind,edition){return db[kind].filter(r=>r.edition===edition && !['UA','PS','WoW','AU'].some(p=>r.source.startsWith(p))).sort((a,b)=>Number(!['PHB','XPHB'].includes(a.source))-Number(!['PHB','XPHB'].includes(b.source))||a.name.localeCompare(b.name)||a.source.localeCompare(b.source));}
 function abilityGroups(source,id,draft){const alternatives=source?.ability??[];if(!alternatives.length)return {fixed:{},groups:[]};const option=Math.min(alternatives.length-1,Number(draft.abilityOptions[id])||0),record=alternatives[option],fixed=Object.fromEntries(abilities.filter(a=>record[a]).map(a=>[a,record[a]])),choose=record.choose,groups=[];
  if(choose?.weighted)for(const [i,amount] of choose.weighted.weights.entries())groups.push({id:id+':'+i,from:choose.weighted.from,amount,distinct:id,max:choose.max??record.max??20,label:source.name+' +'+amount});
@@ -34,13 +34,33 @@ export function startingEquipment(draft,db,cls,background){
 }
 export function describeEquipment(entry){if(typeof entry==='string')return title(entry.split('|')[0]);if(entry.value)return entry.value/100+' gp';return (entry.quantity>1?entry.quantity+' × ':'')+plain(entry.displayName??entry.item?.split('|')[0]??entry.special??equipmentTypeNames[entry.equipmentType]??'Equipment');}
 export function buildCharacter(draft,db){
- const cls=db.features.classes.find(c=>builderId(c)===draft.classId),recipe=db.classes.find(c=>builderId(c)===draft.classId),species=db.species.find(c=>builderId(c)===draft.speciesId),background=db.backgrounds.find(c=>builderId(c)===draft.backgroundId);
+ let species=db.species.find(c=>builderId(c)===draft.speciesId);
+ if(!species){
+  for(const sp of db.species){
+   const match=sp.subraces?.find(s=>
+    (s.name+' '+sp.name+'|'+(s.source||sp.source)).toLowerCase()===draft.speciesId||
+    (s.name+'|'+(s.source||sp.source)).toLowerCase()===draft.speciesId||
+    s.id===draft.speciesId
+   );
+   if(match){draft.speciesId=builderId(sp);draft.subraceId=match.id;species=sp;break;}
+  }
+ }
+ const cls=db.features.classes.find(c=>builderId(c)===draft.classId),recipe=db.classes.find(c=>builderId(c)===draft.classId),background=db.backgrounds.find(c=>builderId(c)===draft.backgroundId);
  if(!cls||!species||!background)throw Error('Choose a class, species, and background for this rules edition.');
+ if(species.subraces?.length){
+  const sub=species.subraces.find(s=>s.id===draft.subraceId)||species.subraces[0];
+  if(sub){
+   if(draft.subraceId!==sub.id)draft.subraceId=sub.id;
+   const mergedAbility=sub.overwrite?.ability?sub.ability:(species.ability&&sub.ability?species.ability.flatMap(a=>sub.ability.map(b=>({...a,...b,...Object.fromEntries(abilities.filter(k=>k in a||k in b).map(k=>[k,(a[k]||0)+(b[k]||0)]))}))):(sub.ability||species.ability));
+   const mergedName=sub.id==='standard'||sub.name==='Standard'?species.name:(sub.name.toLowerCase().includes(species.name.toLowerCase())?sub.name:sub.name+' '+species.name);
+   species={...species,...sub,name:mergedName,baseSpeciesName:species.name,subraceName:sub.name,subraceId:sub.id,subraces:species.subraces,ability:mergedAbility,speed:sub.speed??species.speed,darkvision:Math.max(sub.darkvision??0,species.darkvision??0)||undefined,resist:[...new Set([...(species.resist??[]),...(sub.resist??[])])],skillProficiencies:sub.overwrite?.skillProficiencies?(sub.skillProficiencies??[]):[...(species.skillProficiencies??[]),...(sub.skillProficiencies??[])],languageProficiencies:sub.overwrite?.languageProficiencies?(sub.languageProficiencies??[]):[...(species.languageProficiencies??[]),...(sub.languageProficiencies??[])],toolProficiencies:sub.overwrite?.toolProficiencies?(sub.toolProficiencies??[]):[...(species.toolProficiencies??[]),...(sub.toolProficiencies??[])],weaponProficiencies:sub.overwrite?.weaponProficiencies?(sub.weaponProficiencies??[]):[...(species.weaponProficiencies??[]),...(sub.weaponProficiencies??[])],armorProficiencies:sub.overwrite?.armorProficiencies?(sub.armorProficiencies??[]):[...(species.armorProficiencies??[]),...(sub.armorProficiencies??[])],feats:[...(species.feats??[]),...(sub.feats??[])],additionalSpells:sub.overwrite?.additionalSpells?(sub.additionalSpells??[]):[...(species.additionalSpells??[]),...(sub.additionalSpells??[])],entries:[...(species.entries??[]),...(sub.entries??[])],traits:[...new Set([...(species.traits??[]),...(sub.traits??[])])]};
+  }
+ }
  const choices=structuredClone(draft.featureChoices??{}),abilitySources=[['species',species],['background',background]],abilityInfo=[],scoreBonuses=Object.fromEntries(abilities.map(a=>[a,0]));
  for(const [id,source]of abilitySources){const info=abilityGroups(source,id,draft);abilityInfo.push({id,source,...info});for(const a of abilities)scoreBonuses[a]+=info.fixed[a]??0;for(const g of info.groups){const a=draft.allocations[g.id];if(g.from.includes(a))scoreBonuses[a]+=g.amount;}}
  const proficiencyDatabase={...db.features,languages:db.features.languages.filter(l=>l.source===(draft.edition==='2024'?'XPHB':'PHB'))};
  const originChoices=[],originFixed={skills:[],tools:[],languages:[],weapons:[],armor:[]};
- let raw={id:draft.id,name:draft.name.trim(),player:draft.player??'',sheetName:'Character builder',sourceName:'Character builder',rulesEditionOverride:draft.edition,characterClass:cls.name+' ('+cls.source+')',level:draft.level,species:species.name+' ('+species.source+')',background:background.name+' ('+background.source+')',abilities:[],skills:[],spells:[],items:[],attacks:[],spellSlots:{},languages:[],tools:[],feats:[],skillProficiencies:[],creation:{version:1,size:draft.size??species.size?.[0]??'M',traitChoices:[],classId:draft.classId,speciesId:draft.speciesId,backgroundId:draft.backgroundId,draft:structuredClone(draft),fixedFeats:[],featVariants:{},spellSources:[]},sheetEdits:{subclasses:{[builderId(cls)]:draft.subclass??''},featureChoices:choices,featureNotes:structuredClone(draft.notes??{}),armor:'unarmored',shield:false,fixedHp:true}};
+ let raw={id:draft.id,name:draft.name.trim(),player:draft.player??'',sheetName:'Character builder',sourceName:'Character builder',rulesEditionOverride:draft.edition,characterClass:cls.name+' ('+cls.source+')',level:draft.level,species:species.name+' ('+species.source+')',background:background.name+' ('+background.source+')',abilities:[],skills:[],spells:[],items:[],attacks:[],spellSlots:{},languages:[],tools:[],feats:[],skillProficiencies:[],creation:{version:1,size:draft.size??species.size?.[0]??'M',traitChoices:[],classId:draft.classId,speciesId:draft.speciesId,subraceId:draft.subraceId??'',backgroundId:draft.backgroundId,draft:structuredClone(draft),fixedFeats:[],featVariants:{},spellSources:[]},sheetEdits:{subclasses:{[builderId(cls)]:draft.subclass??''},featureChoices:choices,featureNotes:structuredClone(draft.notes??{}),armor:'unarmored',shield:false,fixedHp:true}};
  // Apply advancement choices to starting scores exactly once; imported sheets keep their existing behavior.
  const unlocked=(cls.featureDetails??[]).filter(f=>f.level<=draft.level&&f.name==='Ability Score Improvement');
  for(const feature of unlocked)if(choices[feature.id]?.includes('asi')){const id='asi:'+feature.id;const info={id,source:{name:'Level '+feature.level+' ability increase'},fixed:{},groups:[0,1].map(i=>({id:id+':'+i,from:abilities,amount:1,label:'Level '+feature.level+' +1'}))};abilityInfo.push(info);for(const g of info.groups){const a=draft.allocations[g.id];if(abilities.includes(a))scoreBonuses[a]++;}}
@@ -102,6 +122,7 @@ export function builderProblems(draft,context){
  if(draft.method==='point' && (scores.some(s=>!(s in cost))||scores.reduce((n,s)=>n+(cost[s]??100),0)>27))problems.push({step:2,message:'Point buy uses at most 27 points with scores from 8 to 15.'});
  if(scores.some(s=>!Number.isInteger(s)||s<3||s>18))problems.push({step:2,message:'Base ability scores must be whole numbers from 3 to 18.'});
  for(const info of context.abilityInfo){const selected=[];for(const g of info.groups){const a=draft.allocations[g.id];if(!g.from.includes(a))problems.push({step:2,message:'Choose '+g.label+'.'});else if(g.distinct&&selected.includes(a))problems.push({step:2,message:info.source.name+' must increase different abilities.'});else selected.push(a);}}
+ if(context.species.subraces?.length&&!draft.subraceId)problems.push({step:1,message:'Choose your subrace or variant.'});
  if(context.species.size?.length>1&&!context.species.size.includes(draft.size))problems.push({step:1,message:'Choose your character’s size.'});
  if(context.character.abilities.some(a=>a.score>Math.max(20,...context.abilityInfo.flatMap(i=>[i.max??20,...i.groups.filter(g=>draft.allocations[g.id]===a.abbr.toLowerCase()).map(g=>g.max??20)]))))problems.push({step:2,message:'An ability increase exceeds its source’s score limit.'});
  const cls=context.character.rulesDetails.classDetails.classes[0];if(cls&&draft.level>=cls.subclassLevel&&!draft.subclass)problems.push({step:1,message:'Choose your '+cls.subclassTitle+'.'});

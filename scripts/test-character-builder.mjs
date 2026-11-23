@@ -33,3 +33,72 @@ console.log('All 13 revised classes, duplicate skill replacement, source ancestr
 const wizard24=newBuilderDraft();Object.assign(wizard24,{name:'Revised wizard',edition:'2024',classId:'wizard|xphb',speciesId:'human|xphb',backgroundId:'soldier|xphb'});const w24=complete(wizard24);const acid=partyActor(w24.raw).spells.find(s=>s.name==='Acid Splash');assert.equal(acid?.reference,'xphb|acid splash','Selected revised spells retain their actual source in play');
 const bookDraft=newBuilderDraft();Object.assign(bookDraft,{name:'Learning limits',classId:'wizard|phb',level:5});const bookContext=complete(bookDraft),book=bookContext.choices.find(c=>c.kind==='spellbook');const highSpells=book.options.filter(s=>s.level===3).slice(0,3),lowSpells=book.options.filter(s=>s.level===1).slice(0,book.count-3);bookDraft.featureChoices[book.id]=[...highSpells,...lowSpells].map(s=>s.id);assert(builderProblems(bookDraft,buildCharacter(bookDraft,db)).some(p=>p.message.includes('level 3 or higher')));
 console.log('Revised spell source fidelity and cumulative wizard spellbook learning limits verified.');
+
+// Verify Shifter ERLW subrace selection and ability increases
+const shifterBase = db.species.find(s => builderId(s) === 'shifter|erlw');
+assert(shifterBase, 'Shifter (ERLW) base species exists');
+assert.equal(shifterBase.subraces?.length, 4, 'Shifter (ERLW) has 4 subraces');
+assert.deepEqual(shifterBase.subraces.map(s => s.id), ['beasthide', 'longtooth', 'swiftstride', 'wildhunt']);
+
+for (const [subId, expectedScores] of [
+  ['beasthide', {str: 16, con: 15, dex: 14}], // Base 15, 14, 13 -> +1 str, +2 con -> 16 str, 15 con
+  ['longtooth', {str: 17, dex: 15, con: 13}], // +2 str, +1 dex -> 17 str, 15 dex
+  ['swiftstride', {dex: 16, cha: 10, str: 15}], // +2 dex, +1 cha (cha 8 -> 9 -> wait: base cha 8 + 1 = 9)
+  ['wildhunt', {wis: 12, dex: 15, str: 15}], // +2 wis, +1 dex (wis 10 + 2 = 12)
+]) {
+  const d = newBuilderDraft();
+  Object.assign(d, {name: 'Shifter ' + subId, speciesId: 'shifter|erlw', subraceId: subId});
+  const c = complete(d);
+  assert.deepEqual(builderProblems(d, c), []);
+  assert(c.species.name.toLowerCase().includes(subId));
+  for (const [abbr, score] of Object.entries(expectedScores)) {
+    if (abbr === 'cha' && subId === 'swiftstride') assert.equal(c.character.abilities.find(a => a.abbr === 'CHA').score, 9);
+    else assert.equal(c.character.abilities.find(a => a.abbr === abbr.toUpperCase()).score, score, `${subId} ${abbr}`);
+  }
+}
+console.log('Shifter (ERLW) 4 subrace variants and their ability increases verified.');
+
+// Verify Shifter MPMM flexible ability score increases (+2/+1 or +1/+1/+1)
+const shifterMpmm = newBuilderDraft();
+Object.assign(shifterMpmm, {name: 'MPMM Shifter', speciesId: 'shifter|mpmm'});
+const sm = complete(shifterMpmm);
+assert.equal(sm.species.subraces, undefined, 'MPMM Shifter has no subraces');
+assert.equal(sm.abilityInfo[0].alternatives.length, 2, 'MPMM Shifter has 2 ASI options');
+// Option 0: +2 and +1
+shifterMpmm.abilityOptions['species'] = 0;
+shifterMpmm.allocations['species:0'] = 'str';
+shifterMpmm.allocations['species:1'] = 'dex';
+const smOpt0 = buildCharacter(shifterMpmm, db);
+assert.equal(smOpt0.character.abilities.find(a => a.abbr === 'STR').score, 17); // 15 + 2
+assert.equal(smOpt0.character.abilities.find(a => a.abbr === 'DEX').score, 15); // 14 + 1
+// Reject duplicate pick on distinct weighted ASI
+shifterMpmm.allocations['species:1'] = 'str';
+assert(builderProblems(shifterMpmm, buildCharacter(shifterMpmm, db)).some(p => p.message.includes('different abilities')));
+
+// Option 1: +1 to 3 different abilities
+shifterMpmm.abilityOptions['species'] = 1;
+shifterMpmm.allocations['species:0'] = 'str';
+shifterMpmm.allocations['species:1'] = 'dex';
+shifterMpmm.allocations['species:2'] = 'con';
+const smOpt1 = buildCharacter(shifterMpmm, db);
+assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'STR').score, 16); // 15 + 1
+assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'DEX').score, 15); // 14 + 1
+assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'CON').score, 14); // 13 + 1
+assert.deepEqual(builderProblems(shifterMpmm, smOpt1), []);
+console.log('Post-Tasha flexible ASIs (+2/+1 and +1/+1/+1) and duplicate protection verified.');
+
+// Verify base race + subrace combined ability increases (Mountain Dwarf, High Elf, Wood Elf)
+const dwarf = newBuilderDraft();
+Object.assign(dwarf, {name: 'Mountain Dwarf', speciesId: 'dwarf|phb', subraceId: 'mountain-dwarf'});
+const dw = complete(dwarf);
+assert.equal(dw.character.abilities.find(a => a.abbr === 'CON').score, 15); // 13 + 2
+assert.equal(dw.character.abilities.find(a => a.abbr === 'STR').score, 17); // 15 + 2
+
+const woodElf = newBuilderDraft();
+Object.assign(woodElf, {name: 'Wood Elf', speciesId: 'elf|phb', subraceId: 'wood-elf'});
+const we = complete(woodElf);
+assert.equal(we.character.abilities.find(a => a.abbr === 'DEX').score, 16); // 14 + 2
+assert.equal(we.character.abilities.find(a => a.abbr === 'WIS').score, 11); // 10 + 1
+assert.equal(partyActor(we.raw).speed, 35, 'Wood Elf speed 35');
+console.log('Combined base + subrace ability scores (Mountain Dwarf, Wood Elf) and traits verified.');
+
