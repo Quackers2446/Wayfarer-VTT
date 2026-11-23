@@ -394,10 +394,32 @@ async function listRooms(request,env,url) {
 export async function sessionRequest(request, env) {
   const url = new URL(request.url);
   const match = sessionPath.exec(url.pathname);
-  if (url.pathname !== api && url.pathname !== "/api/rooms" && !match) return fail(404,"Session endpoint not found.");
+  if (url.pathname !== api && url.pathname !== "/api/rooms" && url.pathname !== "/api/ai/forecast" && !match) return fail(404,"Session endpoint not found.");
   if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) return fail(403,"Open Wayfarer to update this session.");
   try {
     if(url.pathname==="/api/rooms") return await listRooms(request,env,url);
+    if(url.pathname==="/api/ai/forecast") {
+      if (request.method !== "POST") return fail(405, "This action is unavailable.");
+      const apiKey = request.headers.get("x-gemini-key")?.trim();
+      if (!apiKey) return fail(400, "A Gemini API key is required.");
+      const model = request.headers.get("x-gemini-model") || "gemini-3.8-flash";
+      const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const body = await request.text();
+      const geminiRes = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body
+      });
+      const data = await geminiRes.text();
+      return new Response(data, {
+        status: geminiRes.status,
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store"
+        }
+      });
+    }
     if (!match && request.method === "POST") {
       return await create(request,env);
     }

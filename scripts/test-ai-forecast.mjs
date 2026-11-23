@@ -188,4 +188,55 @@ await assert.rejects(
 );
 console.log('✓ Invalid API key error handling verified');
 
+// 6. Proxy fallback test when direct fetch fails (TypeError: Failed to fetch)
+let fallbackCalled = false;
+const mockFallbackFetch = async (url, options) => {
+  if (url.includes('generativelanguage.googleapis.com')) {
+    throw new TypeError('Failed to fetch');
+  }
+  if (url === '/api/ai/forecast') {
+    fallbackCalled = true;
+    assert.equal(options.headers['x-gemini-key'], 'fallback-key');
+    assert.equal(options.headers['x-gemini-model'], 'gemini-3.8-flash');
+    return {
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({ walls: [[0, 0, 100, 100]], doors: [] })
+            }]
+          }
+        }]
+      })
+    };
+  }
+  throw new Error('Unexpected URL: ' + url);
+};
+
+const fallbackResult = await callGeminiVision({
+  base64: 'fakebase64',
+  apiKey: 'fallback-key',
+  fetchImpl: mockFallbackFetch
+});
+assert.equal(fallbackCalled, true);
+assert.equal(fallbackResult.walls.length, 1);
+console.log('✓ Automatic relay fallback on browser fetch block verified');
+
+// 7. Blocked API key test (403)
+const mock403Fetch = async () => ({
+  ok: false,
+  status: 403,
+  statusText: 'Forbidden',
+  json: async () => ({
+    error: { message: 'Requests to this API are blocked.' }
+  })
+});
+
+await assert.rejects(
+  () => callGeminiVision({ base64: 'fakebase64', apiKey: 'blocked-key', fetchImpl: mock403Fetch }),
+  /Gemini API key is blocked \(403\)/
+);
+console.log('✓ 403 blocked key guidance verified');
+
 console.log('\nAll AI Forecast engine tests passed successfully!');

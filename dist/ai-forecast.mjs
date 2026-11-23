@@ -163,11 +163,32 @@ Output ONLY straight line segments as 4-tuples: [x1, y1, x2, y2].`;
     }
   };
 
-  const response = await fetchImpl(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (directErr) {
+    // If direct browser fetch is blocked (by ad-blocker, Brave Shields, or CORS):
+    // Fall back to same-origin relay
+    try {
+      response = await fetchImpl('/api/ai/forecast', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-key': key,
+          'x-gemini-model': model
+        },
+        body: JSON.stringify(payload)
+      });
+    } catch {
+      throw new Error(
+        'Connection to Gemini API failed. If you have an ad blocker (e.g. uBlock Origin or Brave Shields) active, please disable it for this page, or check your internet connection.'
+      );
+    }
+  }
 
   if (!response.ok) {
     let errorDetail = '';
@@ -178,7 +199,20 @@ Output ONLY straight line segments as 4-tuples: [x1, y1, x2, y2].`;
       errorDetail = response.statusText;
     }
     if (response.status === 400 && /api[ _]?key/i.test(errorDetail)) {
-      throw new Error('Invalid Gemini API key. Please verify your key.');
+      throw new Error('Invalid Gemini API key. Please check your key in Google AI Studio.');
+    }
+    if (response.status === 403) {
+      if (/blocked/i.test(errorDetail) || /permission/i.test(errorDetail)) {
+        throw new Error(
+          'Gemini API key is blocked (403): Generative Language API is not enabled for this key. In Google Cloud Console, allow "Generative Language API" in API restrictions, or create a free key in Google AI Studio (https://aistudio.google.com/app/apikey).'
+        );
+      }
+      throw new Error(`Gemini API permission denied (403): ${errorDetail}`);
+    }
+    if (response.status === 404) {
+      throw new Error(
+        `Gemini model not found (404): ${errorDetail}. Please check that the model name is available on your account.`
+      );
     }
     if (response.status === 429) {
       throw new Error('Gemini API quota or rate limit exceeded. Please wait a moment and try again.');
