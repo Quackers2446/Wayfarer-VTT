@@ -188,4 +188,20 @@ await assert.rejects(
 );
 console.log('✓ Invalid API key error handling verified');
 
+// 6. Blocked API service error test (403)
+const mockBlockedFetch = async () => ({
+  ok: false,
+  status: 403,
+  statusText: 'Forbidden',
+  json: async () => ({
+    error: { message: 'Requests to this API generativelanguage.googleapis.com method google.ai.generativelanguage.v1beta.GenerativeService.GenerateContent are blocked.' }
+  })
+});
+
+await assert.rejects(
+  () => callGeminiVision({ base64: 'fakebase64', apiKey: 'blocked-key', fetchImpl: mockBlockedFetch }),
+  /Gemini API key is blocked/
+);
+console.log('✓ 403 blocked API key error handling verified');
+
 console.log('\nAll AI Forecast engine tests passed successfully!');

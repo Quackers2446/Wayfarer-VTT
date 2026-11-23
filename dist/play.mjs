@@ -1,41 +1,41 @@
-import {loadSpellRules,setSpellRuleContext,customSpellRule} from './spell-rule-store.mjs';
-import {customSpellCells,moveCustomSphere} from './custom-spells.mjs';
-import {commitRoomState,normalizeRoomState,roomBattle,travelRoom,roomMapChoices} from "./room-state.mjs";
-import {prepareMonsterRewards} from "./encounter-rewards.mjs";
-import {takeLoot,lootContents,carryBody,placeBody,syncRewardSheets,bodyWeight,initializeTreasure,releaseRevivedBodies} from "./world-interactions.mjs";
-import {createFloatingPanels} from "./floating-panels.mjs";
-import {createWallEditor} from './wall-editor.mjs';
-import {getApiKey, setApiKey, clearApiKey, hasApiKey, isKeyRemembered, renderScaledMap, callGeminiVision, processForecastGeometry} from './ai-forecast.mjs';
-import {fogSettings,visionSettings,viewerVision,viewerMemory} from './dynamic-fog.mjs';
-import {knownRooms, forgetRoom, rememberRoom, rememberRooms, roomList} from './adventure-rooms.mjs';
-import {turnView, canTakeTurn, sharedTurnGroup, turnBudgetStamp} from './combat.mjs';
-import {tokenSize,actorCells,containsCell,touchesArea} from './actor-space.mjs';
-import {drawMonsterArtwork, monsterArtwork} from "./monster-art.mjs";
-import {characterTokenArtwork, localTokenBlob, uploadSessionToken} from "./character-token.mjs";
-import {enrichCharacter} from "./character-rules.mjs";
-import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
-import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
-import {gameScreen} from "./game-screen.mjs";
-import {createHealthPresentation} from "./health-presentation.mjs";
-import {createCombatCues} from "./combat-cues.mjs";
-import {createTokenHover} from "./token-hover.mjs";
-import {createTokenMotion} from './token-motion.mjs';
-import {createGameChat} from "./game-chat.mjs";
-import {withActionEvent} from "./action-events.mjs";
-import {fogOfWarEnabled} from "./game-settings.mjs";
-import {buildActionBar, entryReason, renderActionBar, renderActionResources} from "./action-bar.mjs";
-import {classActions, classSkillCheck, classWeapons, migratePactResources, restParty, syncClassResources, useClassAction} from "./class-actions.mjs";
-import {canRescue, discoverStory, rescueSildar, storyPanel, storyVersion} from "./adventure-story.mjs";
-import {enemyTurnPending, runEnemyTurns} from "./enemy-turn.mjs";
-import {enemyInSight, engageEnemy, noticesEnemy, partyEscaped, partyVision, rememberVision} from "./exploration.mjs";
-import {exploredCells, hasExplored, saveExplored,forgetExploration} from "./fog-memory.mjs";
-import {addDoor, addWall, doorAt, mapFloor, mapWalls, removeDoor, removeWall, segKey, toggleDoor} from "./map-walls.mjs";
-import {escape, plural, signed, text} from "./format.mjs";
-import {icon} from "./icons.mjs";
-import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord} from "./rules-library.mjs";
-import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap} from "./encounters.mjs";
-import {defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt} from "./grid-view.mjs";
-import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
+import { loadSpellRules, setSpellRuleContext, customSpellRule } from './spell-rule-store.mjs';
+import { customSpellCells, moveCustomSphere } from './custom-spells.mjs';
+import { commitRoomState, normalizeRoomState, roomBattle, travelRoom, roomMapChoices } from "./room-state.mjs";
+import { prepareMonsterRewards } from "./encounter-rewards.mjs";
+import { takeLoot, lootContents, carryBody, placeBody, syncRewardSheets, bodyWeight, initializeTreasure, releaseRevivedBodies } from "./world-interactions.mjs";
+import { createFloatingPanels } from "./floating-panels.mjs";
+import { createWallEditor } from './wall-editor.mjs';
+import { getApiKey, setApiKey, clearApiKey, hasApiKey, isKeyRemembered, renderScaledMap, callGeminiVision, processForecastGeometry } from './ai-forecast.mjs';
+import { fogSettings, visionSettings, viewerVision, viewerMemory } from './dynamic-fog.mjs';
+import { knownRooms, forgetRoom, rememberRoom, rememberRooms, roomList } from './adventure-rooms.mjs';
+import { turnView, canTakeTurn, sharedTurnGroup, turnBudgetStamp } from './combat.mjs';
+import { tokenSize, actorCells, containsCell, touchesArea } from './actor-space.mjs';
+import { drawMonsterArtwork, monsterArtwork } from "./monster-art.mjs";
+import { characterTokenArtwork, localTokenBlob, uploadSessionToken } from "./character-token.mjs";
+import { enrichCharacter } from "./character-rules.mjs";
+import { alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState } from "./map-grid.mjs";
+import { areaKey, populateScene, rosterTokens } from "./scene-populate.mjs";
+import { gameScreen } from "./game-screen.mjs";
+import { createHealthPresentation } from "./health-presentation.mjs";
+import { createCombatCues } from "./combat-cues.mjs";
+import { createTokenHover } from "./token-hover.mjs";
+import { createTokenMotion } from './token-motion.mjs';
+import { createGameChat } from "./game-chat.mjs";
+import { withActionEvent } from "./action-events.mjs";
+import { fogOfWarEnabled } from "./game-settings.mjs";
+import { buildActionBar, entryReason, renderActionBar, renderActionResources } from "./action-bar.mjs";
+import { classActions, classSkillCheck, classWeapons, migratePactResources, restParty, syncClassResources, useClassAction } from "./class-actions.mjs";
+import { canRescue, discoverStory, rescueSildar, storyPanel, storyVersion } from "./adventure-story.mjs";
+import { enemyTurnPending, runEnemyTurns } from "./enemy-turn.mjs";
+import { enemyInSight, engageEnemy, noticesEnemy, partyEscaped, partyVision, rememberVision } from "./exploration.mjs";
+import { exploredCells, hasExplored, saveExplored, forgetExploration } from "./fog-memory.mjs";
+import { addDoor, addWall, doorAt, mapFloor, mapWalls, removeDoor, removeWall, segKey, toggleDoor } from "./map-walls.mjs";
+import { escape, plural, signed, text } from "./format.mjs";
+import { icon } from "./icons.mjs";
+import { attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord } from "./rules-library.mjs";
+import { cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap } from "./encounters.mjs";
+import { defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt } from "./grid-view.mjs";
+import { createCamera, mapControls, mapHint, mapViewport } from "./map-camera.mjs";
 import {
   listRooms, deleteRoom, artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
   syncSessionPlayers, tablePanel, writeSession
@@ -1244,6 +1244,15 @@ function openAiForecastDialog() {
         <span>Remember API key in this browser</span>
       </label>
 
+      <label style="margin-top:8px;">
+        <strong>Vision Model</strong>
+        <select name="model" id="ai-model-select" class="input" style="width:100%;margin-top:4px;">
+          <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (Recommended)</option>
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+          <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+        </select>
+      </label>
+
       ${existingCount > 0 ? `
         <fieldset class="ai-merge-options">
           <legend>Existing Map Walls (${existingCount} segments)</legend>
@@ -1263,7 +1272,7 @@ function openAiForecastDialog() {
   if (!dialog.open) dialog.showModal();
 }
 
-async function runAiForecast({ apiKey, remember, mode = 'replace' } = {}) {
+async function runAiForecast({ apiKey, remember, mode = 'replace', model = 'gemini-2.5-flash' } = {}) {
   if (apiKey) setApiKey(apiKey, remember);
   const key = getApiKey();
   if (!key) { openAiForecastDialog(); return; }
@@ -1285,7 +1294,8 @@ async function runAiForecast({ apiKey, remember, mode = 'replace' } = {}) {
     const result = await callGeminiVision({
       base64: scaled.base64,
       mimeType: scaled.mimeType,
-      apiKey: key
+      apiKey: key,
+      model
     });
 
     const processed = processForecastGeometry({
@@ -2193,13 +2203,13 @@ document.addEventListener("click", (event) => {
     }
     return;
   }
-  if (play === "dice-effects") {combatCues.toggleDice();redraw();return;}
-  if(play==='game-chat'){partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;(table?.chat ?? localChat)?.toggle();redraw();return;}
-  if(play==='game-party'){partyOpen=!partyOpen;toolsOpen=false;tableOpen=false;storyOpen=false;redraw();return;}
-  if(play==='game-tools'){partyOpen=false;toolsOpen=!toolsOpen;tableOpen=false;storyOpen=false;if(!toolsOpen){tool='move';gridDraft=null;}redraw();return;}
-  if(play==='edit-walls'){toolsOpen=false;tool='move';resetActionSelection();wallEditor.setMode('draw');redraw();return;}
-  if(play==='ai-forecast'){openAiForecastDialog();return;}
-  if(play==='reset-fog-memory'){void interact(()=>{forgetExploration(battle);delete battle.fogMemoryByActor;rememberVision(battle,map);saveExplored(battle,map);},{cosmetic:true});return;}
+  if (play === "dice-effects") { combatCues.toggleDice(); redraw(); return; }
+  if (play === 'game-chat') { partyOpen = false; toolsOpen = false; tableOpen = false; storyOpen = false; (table?.chat ?? localChat)?.toggle(); redraw(); return; }
+  if (play === 'game-party') { partyOpen = !partyOpen; toolsOpen = false; tableOpen = false; storyOpen = false; redraw(); return; }
+  if (play === 'game-tools') { partyOpen = false; toolsOpen = !toolsOpen; tableOpen = false; storyOpen = false; if (!toolsOpen) { tool = 'move'; gridDraft = null; } redraw(); return; }
+  if (play === 'edit-walls') { toolsOpen = false; tool = 'move'; resetActionSelection(); wallEditor.setMode('draw'); redraw(); return; }
+  if (play === 'ai-forecast') { openAiForecastDialog(); return; }
+  if (play === 'reset-fog-memory') { void interact(() => { forgetExploration(battle); delete battle.fogMemoryByActor; rememberVision(battle, map); saveExplored(battle, map); }, { cosmetic: true }); return; }
   if (play === "toggle-fog") {
     void interact(() => { battle.fogEnabled = !(battle.fogEnabled ?? fogOfWarEnabled); }, { cosmetic: true }); return;
   }
@@ -2766,7 +2776,7 @@ document.addEventListener("submit", (event) => {
   });
 });
 
-document.addEventListener('click',event=>{
+document.addEventListener('click', event => {
   if (event.target.id === 'ai-toggle-key-visibility') {
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -2791,26 +2801,27 @@ document.addEventListener('click',event=>{
     event.target.remove();
     return;
   }
-  const button=event.target.closest?.('[data-wall-editor]');if(button){event.preventDefault();event.stopImmediatePropagation();void wallEditor.action(button.dataset.wallEditor);}
-},true);
-document.addEventListener('submit',event=>{
-  const form=event.target;
-  if(form.id==='ai-forecast-form'){
+  const button = event.target.closest?.('[data-wall-editor]'); if (button) { event.preventDefault(); event.stopImmediatePropagation(); void wallEditor.action(button.dataset.wallEditor); }
+}, true);
+document.addEventListener('submit', event => {
+  const form = event.target;
+  if (form.id === 'ai-forecast-form') {
     event.preventDefault();
     event.stopImmediatePropagation();
-    const values=new FormData(form);
-    const key=values.get('apiKey')?.trim() || '';
-    const remember=values.has('remember');
-    const mode=values.get('mode') || 'replace';
-    const dialog=document.querySelector('#dialog');
+    const values = new FormData(form);
+    const key = values.get('apiKey')?.trim() || '';
+    const remember = values.has('remember');
+    const mode = values.get('mode') || 'replace';
+    const model = values.get('model') || 'gemini-2.5-flash';
+    const dialog = document.querySelector('#dialog');
     dialog?.close();
-    void runAiForecast({ apiKey: key, remember, mode });
+    void runAiForecast({ apiKey: key, remember, mode, model });
     return;
   }
-  if(form.id!=='fog-settings' && !form.matches?.('[data-vision-actor]'))return;event.preventDefault();event.stopImmediatePropagation();const values=new FormData(form);
- if(form.id==='fog-settings')void interact(()=>{battle.fogSettings={sharedVision:values.has('sharedVision'),remember:values.has('remember'),blockMovement:values.has('blockMovement'),opacity:Number(values.get('opacity'))/100,exploredOpacity:Number(values.get('exploredOpacity'))/100,softness:Number(values.get('softness'))};rememberVision(battle,map);saveExplored(battle,map);},{cosmetic:true});
- else {const id=form.dataset.visionActor;void interact(()=>{const actor=battle.actors.find(a=>a.id===id);if(actor){actor.vision={enabled:values.has('enabled'),range:Number(values.get('range')),angle:Number(values.get('angle')),facing:Number(values.get('facing'))};rememberVision(battle,map);saveExplored(battle,map);}},{cosmetic:true});}
-},true);
+  if (form.id !== 'fog-settings' && !form.matches?.('[data-vision-actor]')) return; event.preventDefault(); event.stopImmediatePropagation(); const values = new FormData(form);
+  if (form.id === 'fog-settings') void interact(() => { battle.fogSettings = { sharedVision: values.has('sharedVision'), remember: values.has('remember'), blockMovement: values.has('blockMovement'), opacity: Number(values.get('opacity')) / 100, exploredOpacity: Number(values.get('exploredOpacity')) / 100, softness: Number(values.get('softness')) }; rememberVision(battle, map); saveExplored(battle, map); }, { cosmetic: true });
+  else { const id = form.dataset.visionActor; void interact(() => { const actor = battle.actors.find(a => a.id === id); if (actor) { actor.vision = { enabled: values.has('enabled'), range: Number(values.get('range')), angle: Number(values.get('angle')), facing: Number(values.get('facing')) }; rememberVision(battle, map); saveExplored(battle, map); } }, { cosmetic: true }); }
+}, true);
 
 document.addEventListener('wayfarer:activity-placement', event => { if (event.detail === 'chat') setEventLogMode('compact'); setActivityPlacement(event.detail); });
 document.addEventListener('wayfarer:chat-visibility', event => root()?.querySelector('[data-play=game-chat]')?.setAttribute('aria-pressed', String(event.detail)));
