@@ -1,4 +1,4 @@
-import {actorIsUp, condition, currentActor, hasFeature, incapacitated, moveLeft, speedOf, supportedSpell} from "./combat.mjs";
+import {turnView, canTakeTurn, actorIsUp, condition, currentActor, hasFeature, incapacitated, moveLeft, movementGroup, speedOf, supportedSpell} from "./combat.mjs";
 import {classActions} from "./class-actions.mjs";
 import {escape} from "./format.mjs";
 import {icon} from "./icons.mjs";
@@ -45,12 +45,14 @@ function baseReason(actor,battle,canAct) {
   if(!actorIsUp(actor)) return "This character is unconscious or defeated.";
   if(incapacitated(actor)) return "This character is incapacitated.";
   if(battle.classReaction || battle.movement) return "Resolve the pending reaction first.";
-  if(battle.round && currentActor(battle)?.id!==actor.id) return "Wait for this character’s action turn.";
+  if(battle.round && !canTakeTurn(battle,actor)) return "Wait for this character’s action turn.";
   return "";
 }
 
 export function entryReason(actor,battle,entry,canAct=true) {
+  battle=turnView(battle,actor);
   if(entry.inspect) return "";
+  if(entry.mode==='move' && canAct && actorIsUp(actor) && !incapacitated(actor) && !battle.classReaction && !battle.movement && (!battle.round || movementGroup(battle).includes(actor))) return battle.round && moveLeft(battle,actor)<=0 ? 'No movement remains.' : '';
   const blocked=baseReason(actor,battle,canAct);
   if(blocked) return blocked;
   if(entry.mode==="move") return battle.round && moveLeft(battle,actor)<=0 ? "No movement remains." : "";
@@ -95,6 +97,7 @@ export function entryReason(actor,battle,entry,canAct=true) {
 }
 
 export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter=""}={}) {
+  battle=turnView(battle,actor);
   if(!actor) return [];
   const entries=[{id:"common:move",name:"Move",mode:"move",tab:"common",timing:"move",symbol:"footprints",
     description:"Select a square on the map. Movement is free outside combat; in combat, your path shows the distance and movement remaining."}];
@@ -198,6 +201,7 @@ export function renderActionBar(entries,actor,{tab="all",filter="",selected="",e
 }
 
 export function renderActionResources(actor,battle,filter="") {
+  battle=turnView(battle,actor);
   if(!actor) return "";
   const chip=(id,label,tone,used=false)=>`<button type="button" class="hotbar-resource resource-${tone}${used ? ' spent' : ''}" data-play="hotbar-filter" data-id="${escape(id)}" aria-pressed="${filter===id}" aria-label="Filter ${escape(label)}"><i></i><span>${escape(label)}</span></button>`;
   const attacks=battle.action==="attack" ? Math.max(0,actor.swings-battle.attacksMade) : 0;

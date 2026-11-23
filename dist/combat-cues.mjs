@@ -5,10 +5,12 @@ import {createDiceTheatre} from "./dice-theatre.mjs";
 import {fogOfWarEnabled} from "./game-settings.mjs";
 
 const clamp = (value,min,max) => Math.min(Math.max(value,min),Math.max(min,max));
-const visibleAt = (sight, event) => !fogOfWarEnabled || event.side === "party" || sight.has(keyAt(event.x,event.y));
+export const movementEvent=event=>event.kind==='move' || /^Moved /.test(event.action ?? '');
+export const cueDuration=event=>movementEvent(event) ? 0 : event.outcome ? event.side==='party' ? event.outcome==='Critical hit' ? 6500 : 5200 : 3600 : event.rolls?.length ? event.side==='party' ? 4000 : 2800 : 1800;
+const visibleAt = (sight, event, fogEnabled=fogOfWarEnabled) => !fogEnabled || event.side === "party" || sight.has(keyAt(event.x,event.y));
 
-function visibleEvent(event,sight) {
-  const visible=visibleAt(sight,event);
+function visibleEvent(event,sight,fogEnabled) {
+  const visible=visibleAt(sight,event,fogEnabled);
   if (!visible && !event.outcome) return null;
   if (visible) return {...event,visible};
   // An attack from fog may be shown without revealing the attacker or weapon.
@@ -16,10 +18,10 @@ function visibleEvent(event,sight) {
     rolls:(event.rolls ?? []).map(roll=>({...roll,label:"Attack roll"})),impacts:[]};
 }
 
-function groupActions(events, sight) {
+function groupActions(events, sight,fogEnabled) {
   const cues = [];
   for (const raw of events) {
-    const event=visibleEvent(raw,sight);
+    const event=visibleEvent(raw,sight,fogEnabled);
     if (!event) continue;
     if (event.kind === "initiative" && event.side !== "party") continue;
     const visible=event.visible;
@@ -66,6 +68,7 @@ function cueText(event) {
   const word=impactWord(event);
   const messages=event.visible ? (event.messages ?? []).filter(message=>!message.includes(" · "+event.action+" vs ")).slice(-2) : [];
   return `${word ? `<div class="combat-impact" aria-hidden="true">${word}</div>` : ""}<div class="combat-cue-heading"><strong>${escape(name)}</strong>
+    <button type="button" class="cue-dismiss" aria-label="Dismiss action message">×</button>
     ${outcome ? `<span class="combat-cue-result ${result}">${escape(outcome)}</span>` : ""}</div>
     ${reaction ? '<div class="combat-cue-note">Opportunity attack</div>' : ""}
     <div>${escape(action)}${target ? " vs " + escape(target) : ""}</div>
@@ -91,15 +94,21 @@ export function createCombatCues() {
   let view;
   let timer;
   let showing=false;
+  let revealedAt=0;
   let impacts=[];
+  bubble.addEventListener('click',event=>{if(event.target.closest('.cue-dismiss')) {event.stopPropagation();clearTimeout(timer);playNext();}});
 
   function appendFeed(events, pending=false) {
+    const scroller=feed.closest('.game-event-body');
+    const following=scroller && scroller.scrollHeight-scroller.clientHeight-scroller.scrollTop<24;
     for (const event of events) {
-      const visible=visibleEvent(event,view.sight);
+      const visible=visibleEvent(event,view.sight,view.fogEnabled);
       if(!visible) continue;
+      if(movementEvent(event)) for(const line of feed.children) if(line.dataset.kind==='move' && line.dataset.actor===event.actor) line.remove();
       const item=Array.from(feed.children).find(item=>item.dataset.event===String(event.id)) ?? document.createElement("div");
       item.className="game-event-line";
       item.dataset.event=event.id;
+      item.dataset.kind=movementEvent(event) ? 'move' : event.kind ?? '';item.dataset.actor=event.actor;
       const heading=document.createElement("strong"),message=document.createElement("span");
       heading.textContent=visible.name+" · "+visible.action;
       const roll=visible.rolls?.find(roll=>roll.kept != null) ?? visible.rolls?.[0];
@@ -107,7 +116,8 @@ export function createCombatCues() {
         visible.messages?.at(-1) ?? (visible.damage ? visible.damage.damage+" damage" : "")].filter(Boolean).join(" · ");
       item.replaceChildren(heading,message);if(!item.parentElement) feed.append(item);
     }
-    while(feed.childElementCount>3) feed.firstElementChild.remove();
+    while(feed.childElementCount>48) feed.firstElementChild.remove();
+    if(following) scroller.scrollTop=scroller.scrollHeight;
   }
 
   function placeImpacts() {
@@ -117,7 +127,11 @@ export function createCombatCues() {
       const [x,y]=cellCenter(view.map,impact);
       element.style.left=(grid.left-origin.left+x/view.map.width*grid.width)+"px";
       element.style.top=(grid.top-origin.top+y/view.map.height*grid.height)-22+"px";
-      view.layer.append(element);
+      if(element.parentElement!==view.layer) {
+        // Repositioning is not a new event. Keep the original animation age across redraws.
+        element.style.animationDelay=(revealedAt-performance.now())+'ms';
+        view.layer.append(element);
+      }
     }
   }
 
@@ -130,7 +144,7 @@ export function createCombatCues() {
     const [worldX,worldY] = cellCenter(map,active);
     const x = surface.left + worldX/map.width*surface.width;
     const y = surface.top + worldY/map.height*surface.height;
-    const onToken = active.visible && visibleAt(sight,active) &&
+    const onToken = active.visible && visibleAt(sight,active,view.fogEnabled) &&
       x >= board.left && x <= board.right && y >= board.top && y <= board.bottom;
     const width = bubble.offsetWidth;
     const height = bubble.offsetHeight;
@@ -159,7 +173,7 @@ export function createCombatCues() {
 
   function reveal() {
     if(!active || !view) return;
-    showing=true;
+    showing=true;revealedAt=performance.now();
     appendFeed(active.partyEvents ?? [active]);
     bubble.innerHTML = cueText(active);
     bubble.dataset.side=active.side ?? "hostile";
@@ -175,7 +189,7 @@ export function createCombatCues() {
       return {element,impact};
     });
     place();
-    timer = setTimeout(playNext,active.rolls?.length || active.outcome ? 2600 : 1500);
+    timer = setTimeout(playNext,cueDuration(active));
   }
 
   function playNext() {
@@ -183,7 +197,13 @@ export function createCombatCues() {
     bubble.remove();showing=false;
     active = queue.shift();
     if (!active || !view) return;
-    // Enemy initiative is readable in the turn order; avoid a long opening queue.
+    startActive();
+  }
+
+  function startActive() {
+    if(!active || !view) return;
+    const wait=Math.max(view.motion?.remaining(active.actor) ?? 0,view.motion?.remaining(active.targetActor) ?? 0);
+    if(wait>0) {const pending=active;timer=setTimeout(()=>{if(active===pending) startActive();},wait+20);return;}
     if(active.rolls?.some(roll=>roll.dice?.length) && (active.kind!=="initiative" || active.side==="party")) dice.play(active,reveal);
     else reveal();
   }
@@ -222,17 +242,21 @@ export function createCombatCues() {
         cursor = latest;
         return;
       }
-      if(view.feed) view.feed.append(feed);
-      if(!feed.childElementCount && latest===cursor) appendFeed(events.slice(-3));
+      if(view.feed && feed.parentElement!==view.feed) view.feed.append(feed);
+      if(!feed.childElementCount && latest===cursor) appendFeed(events);
       if (latest > cursor) {
         const fresh=events.filter(({id}) => id > cursor);
         appendFeed(fresh,true);
-        queue.push(...groupActions(fresh,view.sight));
+        queue.push(...groupActions(fresh.filter(event=>!movementEvent(event)),view.sight,view.fogEnabled));
         queue=queue.slice(-12);
         cursor = latest;
       }
       if (active && showing) {
-        view.layer.append(bubble);
+        if(bubble.parentElement!==view.layer) {
+          const word=bubble.querySelector('.combat-impact');
+          if(word) word.style.animationDelay=(revealedAt-performance.now())+'ms';
+          view.layer.append(bubble);
+        }
         place();
       } else if (!active && queue.length) playNext();
     },

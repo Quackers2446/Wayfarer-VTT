@@ -1,4 +1,5 @@
 import {crossesMapWall, mapFloor, mapLineClear, mapWalls} from "./map-walls.mjs";
+import {matchWeapon} from './rules-library.mjs';
 import {tokenSize,sizeRank,actorCells,containsCell,overlaps,spaceDistance,touchesArea} from './actor-space.mjs';
 import {captureImpact, captureMessage, captureRoll, recordAction, withActionEvent} from "./action-events.mjs";
 
@@ -57,7 +58,49 @@ export function d20(modifier, {advantage = false, disadvantage = false, random =
 
 export const distanceFt = spaceDistance;
 export const keyAt = (x, y) => x + ":" + y;
-export const currentActor = (battle) => battle.actors.find(({id}) => id === battle.order[battle.turn]);
+const initiativeActor = battle => battle.actors.find(({id}) => id === battle.order[battle.turn]);
+export const currentActor = battle => battle.actors.find(({id}) => id === (battle.actingActorId ?? battle.order[battle.turn]));
+const turnFields=['spent','dash','action','attacksMade','bonusUsed','cast','martialAttack','kiAction','flurry','actionSurged','deathRolled'];
+const freshTurn=(spent=0)=>({spent,dash:0,action:null,attacksMade:0,bonusUsed:false,cast:null,martialAttack:false,kiAction:false,flurry:0,actionSurged:false,deathRolled:false});
+const turnViews=new WeakMap(),viewRoots=new WeakMap();
+export function sharedTurnGroup(battle) {
+  if(!battle.round || initiativeActor(battle)?.side!=='party') return [];
+  let start=battle.turn,end=battle.turn;
+  const partyAt=index=>battle.actors.find(a=>a.id===battle.order[index])?.side==='party';
+  // Older saves already finished characters before the cursor; do not reopen those turns.
+  while(battle.sharedEnded && start>0 && partyAt(start-1)) start--;
+  while(end+1<battle.order.length && partyAt(end+1)) end++;
+  return battle.order.slice(start,end+1).map(id=>battle.actors.find(a=>a.id===id)).filter(a=>a && !a.dead);
+}
+export const canTakeTurn=(battle,actor)=>Boolean(actor && battle.round && !battle.sharedEnded?.[actor.id] &&
+  (actor.side==='party' ? sharedTurnGroup(battle).includes(actor) : initiativeActor(battle)?.id===actor.id));
+// A rules view redirects only turn budgets; actors, events and the initiative cursor remain shared.
+export function turnView(battle,actor) {
+  battle=viewRoots.get(battle) ?? battle;
+  if(!actor || actor.side!=='party' || !sharedTurnGroup(battle).includes(actor) || initiativeActor(battle)?.id===actor.id) return battle;
+  const states=battle.sharedTurns ??= {};
+  states[actor.id] ??= freshTurn(battle.earlyMovement?.[actor.id] ?? 0);
+  let views=turnViews.get(battle);if(!views) turnViews.set(battle,views=new Map());
+  if(!views.has(actor.id)) {
+    const view=new Proxy(battle,{
+      get(target,key) {
+        if(key==='actingActorId') return actor.id;
+        return turnFields.includes(key) && initiativeActor(target)?.id!==actor.id ? (target.sharedTurns[actor.id] ??= freshTurn())[key] : Reflect.get(target,key);
+      },
+      set(target,key,value) {
+        if(turnFields.includes(key) && initiativeActor(target)?.id!==actor.id) {
+          (target.sharedTurns[actor.id] ??= freshTurn())[key]=value;
+          if(key==='spent') (target.earlyMovement ??= {})[actor.id]=value;
+          return true;
+        }
+        return Reflect.set(target,key,value);
+      },
+    });
+    views.set(actor.id,view);viewRoots.set(view,battle);
+  }
+  return views.get(actor.id);
+}
+export const turnBudgetStamp=(battle,actor)=>{const view=turnView(battle,actor);return JSON.stringify(turnFields.map(key=>view[key]));};
 export const actorIsUp = (actor) => Boolean(actor && actor.hp > 0 && !actor.dead);
 export const occupies = (actor) => !actor.dead && actor.x != null && actor.y != null;
 export const modifier = (score) => score == null ? null : Math.floor((score - 10) / 2);
@@ -66,17 +109,10 @@ export const condition = (actor,name) => actor?.conditions?.find((effect) => eff
 export const incapacitated = (actor) => Boolean(condition(actor,"Paralyzed") || condition(actor,"Asleep") || condition(actor,"Stunned"));
 
 export function movementGroup(battle) {
-  const first = currentActor(battle);
-  if (!battle.round || !first) return [];
-  const group = [first];
-  if (first.side === "party" && Number.isFinite(first.initiativeRoll)) {
-    for (const id of battle.order.slice(battle.turn+1)) {
-      const actor = battle.actors.find((entry) => entry.id === id);
-      if (actor?.side !== "party" || actor.initiativeRoll !== first.initiativeRoll) break;
-      if (actorIsUp(actor) && occupies(actor) && !incapacitated(actor)) group.push(actor);
-    }
-  }
-  return group;
+  const first=initiativeActor(battle);
+  if(!battle.round || !first) return [];
+  if(first.side!=='party') return [first];
+  return sharedTurnGroup(battle).filter(actor=>!battle.sharedEnded?.[actor.id] && actorIsUp(actor) && occupies(actor) && !incapacitated(actor));
 }
 
 export function newBattle() {
@@ -157,31 +193,24 @@ export function advanceTime(battle, seconds) {
   }
 }
 
+function resetActorTurn(battle,actor) {
+  actor.dodging=false;actor.disengaged=false;actor.reactionUsed=false;actor.steadyAim=false;
+  for(const creature of battle.actors) {
+    if(creature.slowedBy===actor.id) creature.slowedBy=null;
+    if(creature.helped?.helper===actor.id) delete creature.helped;
+  }
+}
 function resetTurn(battle) {
-  const actor = currentActor(battle);
-  if (!actor) return;
-  actor.dodging = false;
-  actor.disengaged = false;
-  actor.reactionUsed = false;
-  for (const creature of battle.actors) {
-    if (creature.slowedBy === actor.id) creature.slowedBy = null;
-    if (creature.helped?.helper === actor.id) delete creature.helped;
+  const actor=initiativeActor(battle);if(!actor) return;
+  Object.assign(battle,freshTurn(battle.earlyMovement?.[actor.id] ?? 0));
+  battle.sharedTurns={};battle.sharedEnded={};
+  resetActorTurn(battle,actor);
+  for(const member of sharedTurnGroup(battle)) if(member.id!==actor.id) {
+    resetActorTurn(battle,member);
+    battle.sharedTurns[member.id]=freshTurn(battle.earlyMovement?.[member.id] ?? 0);
   }
-  battle.spent = battle.earlyMovement?.[actor.id] ?? 0;
-  if (battle.earlyMovement) delete battle.earlyMovement[actor.id];
-  battle.dash = 0;
-  battle.action = null;
-  battle.attacksMade = 0;
-  battle.bonusUsed = false;
-  battle.cast = null;
-  battle.martialAttack = false;
-  battle.kiAction = false;
-  battle.flurry = 0;
-  battle.actionSurged = false;
-  actor.steadyAim = false;
-  if (actor.hp === 0 && actor.resolveDeath && !actor.stable) {
-    log(battle, actor.name + " must make a death saving throw.");
-  }
+  delete battle.earlyMovement;
+  if(actor.hp===0 && actor.resolveDeath && !actor.stable) log(battle,actor.name+' must make a death saving throw.');
 }
 
 export function startInitiative(battle, random = Math.random, participantIds = null) {
@@ -222,12 +251,15 @@ export function joinInitiative(battle, actor, random = Math.random) {
   log(battle,actor.name+" joins initiative with "+actor.initiativeRoll+".");
 }
 
-export function endTurn(battle, random = Math.random) {
+export function endTurn(battle, random = Math.random, selected = currentActor(battle)) {
+  battle=viewRoots.get(battle) ?? battle;
   if (!battle.round) error("Start initiative first.");
   if (battle.movement) error("Resolve the opportunity attack before ending the turn.");
   if (battle.classReaction) error("Resolve Deflect Missiles before ending the turn.");
-  const actor = currentActor(battle);
-  if (actor?.hp === 0 && actor.resolveDeath && !actor.dead && !actor.stable && !battle.deathRolled) {
+  const actor=selected;
+  if(!canTakeTurn(battle,actor)) error('This character cannot end a turn at the current initiative.');
+  const budget=turnView(battle,actor);
+  if (actor?.hp === 0 && actor.resolveDeath && !actor.dead && !actor.stable && !budget.deathRolled) {
     error("Roll this character's death save before ending the turn.");
   }
   if (actor) {
@@ -246,10 +278,26 @@ export function endTurn(battle, random = Math.random) {
       });
       if (passed) removeCondition(actor,effect);
     }
-    if (actor.concentration?.bolt && battle.action && battle.action !== "witch-bolt") endConcentration(battle,actor);
+    if (actor.concentration?.bolt && budget.action && budget.action !== "witch-bolt") endConcentration(battle,actor);
     actor.mocked = false;
     for (const creature of battle.actors) {
       if (creature.sliver?.caster === actor.id && creature.sliver.round <= battle.round) creature.sliver = null;
+    }
+  }
+  if(actor.side==='party') {
+    battle.sharedEnded ??= Object.fromEntries(battle.order.slice(0,battle.turn).map(id=>[id,true]));
+    battle.sharedEnded[actor.id]=true;
+    const pending=sharedTurnGroup(battle).filter(member=>!battle.sharedEnded[member.id]);
+    if(pending.length) {
+      if(battle.sharedEnded[initiativeActor(battle)?.id]) {
+        const next=pending[0],nextBudget=Object.fromEntries(turnFields.map(key=>[key,turnView(battle,next)[key]]));
+        battle.sharedTurns ??= {};
+        battle.sharedTurns[initiativeActor(battle).id]=Object.fromEntries(turnFields.map(key=>[key,battle[key]]));
+        battle.turn=battle.order.indexOf(next.id);Object.assign(battle,nextBudget);
+        delete battle.sharedTurns[next.id];
+        if(battle.earlyMovement) delete battle.earlyMovement[next.id];
+      }
+      return initiativeActor(battle);
     }
   }
   for (let checked = 0; checked < battle.order.length; checked++) {
@@ -257,7 +305,7 @@ export function endTurn(battle, random = Math.random) {
     if (battle.turn === battle.order.length) {
       battle.turn = 0;
       battle.round += 1;
-      delete battle.earlyMovement;
+      delete battle.earlyMovement;delete battle.sharedEnded;delete battle.sharedTurns;
       advanceTime(battle,6);
     }
     const next = currentActor(battle);
@@ -266,7 +314,7 @@ export function endTurn(battle, random = Math.random) {
         if (entry.slowedBy === next.id) entry.slowedBy = null;
       }
     }
-    if (next && !next.dead) {
+    if (next && !next.dead && !battle.sharedEnded?.[next.id]) {
       battle.deathRolled = false;
       resetTurn(battle);
       log(battle, "Round " + battle.round + " · " + next.name + "’s turn.");
@@ -284,16 +332,16 @@ export function endInitiative(battle) {
   battle.order = [];
   battle.round = 0;
   battle.turn = 0;
-  delete battle.earlyMovement;
+  delete battle.earlyMovement;delete battle.sharedTurns;delete battle.sharedEnded;
   log(battle, "Initiative ended.");
 }
 
 export const speedOf = (actor) => incapacitated(actor) || actor.steadyAim ? 0 :
   Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0));
 export const armorClass = (actor) => actor.ac+(actor.bladesong ? Math.max(1,actor.ability.int ?? 0) : 0);
-export const movementBudget = (battle,actor) => speedOf(actor) + (currentActor(battle)?.id === actor.id ? battle.dash : 0);
-export const moveLeft = (battle, actor) => Math.max(0, movementBudget(battle,actor) -
-  (currentActor(battle)?.id === actor.id ? battle.spent : (battle.earlyMovement?.[actor.id] ?? 0)));
+export const movementBudget=(battle,actor)=>speedOf(actor)+(canTakeTurn(battle,actor) ? turnView(battle,actor).dash : 0);
+export const moveLeft=(battle,actor)=>battle.sharedEnded?.[actor.id] ? 0 : Math.max(0,movementBudget(battle,actor)-
+  (canTakeTurn(battle,actor) ? turnView(battle,actor).spent : battle.earlyMovement?.[actor.id] ?? 0));
 
 export function placeToken(battle, actor, x, y, board) {
   if (actor.dead) error("This token is defeated.");
@@ -362,6 +410,7 @@ export function approachPath(battle, actor, board, goal) {
 }
 
 export function previewMovement(battle, actor, x, y, board) {
+  battle=turnView(battle,actor);
   if (!actorIsUp(actor) || !occupies(actor) || incapacitated(actor) || battle.movement || x < 0 || y < 0 || x >= board.cols || y >= board.rows) return null;
   if (battle.round && !movementGroup(battle).includes(actor)) return null;
   try {return findPath(battle, actor, x, y, board, battle.round === 0);} catch {return null;}
@@ -371,10 +420,12 @@ export function exploreToken(battle, actor, x, y, board, stopAt) {
   if (battle.round || !actorIsUp(actor) || !occupies(actor)) error("Choose a party member who can explore.");
   const result = previewMovement(battle, actor, x, y, board);
   if (!result) error("That square is blocked or occupied.");
+  const from={x:actor.x,y:actor.y},travelled=[];
   let distance = 0;
   for (const step of result.path) {
     advanceTime(battle,30/Math.max(5,speedOf(actor)));
     actor.x = step.x; actor.y = step.y;
+    travelled.push({x:step.x,y:step.y});
     distance = step.cost;
     // A route can cross friendly squares. The token must stop in a free square.
     if (battle.actors.some((other) => other.id !== actor.id && occupies(other) && overlaps({...actor,...step},other))) continue;
@@ -382,14 +433,14 @@ export function exploreToken(battle, actor, x, y, board, stopAt) {
   }
   if (distance) {
     log(battle,actor.name+" moves "+distance+" ft.");
-    recordAction(battle,actor,{action:"Moved "+distance+" ft",kind:"move"});
+    recordAction(battle,actor,{action:"Moved "+distance+" ft",kind:"move",distance,from,path:travelled});
   }
 }
 
 function assertTurn(battle, actor) {
   if (battle.movement) error("Resolve the opportunity attack before continuing.");
   if (battle.classReaction) error("Resolve Deflect Missiles before continuing.");
-  if (!battle.round || currentActor(battle)?.id !== actor.id) error("It is not this token’s turn.");
+  if (!canTakeTurn(battle,actor)) error("It is not this token’s turn.");
   if (!actorIsUp(actor)) error("This token cannot take actions at 0 hit points.");
   if (incapacitated(actor)) error("This character is incapacitated.");
 }
@@ -402,7 +453,14 @@ function reactionWeapons(actor) {
 }
 
 function walkRemaining(battle, actor, board) {
+  battle=turnView(battle,actor);
   const walk = battle.movement;
+  const start=walk.index,from={x:actor.x,y:actor.y};
+  const recordMovement=()=>{
+    if(walk.index<=start) return;
+    const distance=(walk.path[walk.index-1]?.cost ?? 0)-(walk.path[start-1]?.cost ?? 0);
+    recordAction(battle,actor,{action:'Moved '+distance+' ft',kind:'move',distance,from,path:walk.path.slice(start,walk.index).map(({x,y})=>({x,y}))});
+  };
   while (walk.index < walk.path.length && actorIsUp(actor)) {
     const next = walk.path[walk.index];
     const disengaged = currentActor(battle)?.id === actor.id && actor.disengaged;
@@ -415,6 +473,7 @@ function walkRemaining(battle, actor, board) {
       }));
     if (foe) {
       walk.foe = foe.id;
+      recordMovement();
       return;
     }
     actor.x = next.x;
@@ -431,12 +490,13 @@ function walkRemaining(battle, actor, board) {
       movement[actor.id] = (movement[actor.id] ?? 0)+distance;
     }
     log(battle, actor.name + " moves " + distance + " ft.");
-    recordAction(battle,actor,{action:"Moved " + distance + " ft"});
+    recordMovement();
   }
   battle.movement = null;
 }
 
 export function moveToken(battle, actor, x, y, board) {
+  battle=turnView(battle,actor);
   if (!battle.round) return placeToken(battle, actor, x, y, board);
   if (battle.movement) error("Resolve the opportunity attack before continuing.");
   if (battle.classReaction) error("Resolve Deflect Missiles before moving.");
@@ -480,6 +540,7 @@ export function resolveOpportunity(battle, attackIndex, random = Math.random, bo
 }
 
 export function turnAction(battle, actor, action) {
+  battle=turnView(battle,actor);
   assertTurn(battle, actor);
   if (action === "stand") {
     if (!actor.prone) error("This token is already standing.");
@@ -628,12 +689,13 @@ export function resolveDeflection(battle,actor,target,{map,fits=false}={},random
 }
 
 export function deathSave(battle, actor, random = Math.random) {
+  battle=turnView(battle,actor);
   return withActionEvent(battle,actor,{action:"Death saving throw",kind:"save"},() => resolveDeathSave(battle,actor,random));
 }
 
 function resolveDeathSave(battle, actor, random) {
   if (!battle.round || currentActor(battle)?.id !== actor.id || !actor.resolveDeath ||
-      actor.hp !== 0 || actor.dead || actor.stable || battle.deathRolled) error("This character cannot make a death save right now.");
+      actor.hp !== 0 || actor.dead || actor.stable || !canTakeTurn(battle,actor) || battle.deathRolled) error("This character cannot make a death save right now.");
   const result = savingThrow(actor,null,{random});
   battle.deathRolled = true;
   if (result.kept === 20) heal(actor, 1);
@@ -757,6 +819,7 @@ export function canSee(battle,from,to,map) {
 }
 
 export function rollStrike(battle, attacker, target, weapon, options = {}, random = Math.random) {
+  battle=turnView(battle,attacker);
   assertTurn(battle, attacker);
   validTarget(attacker, target);
   if (attacker.id === target.id) error("Choose a different target.");
@@ -796,13 +859,14 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
 }
 
 function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
+  if(!weapon.finesse && matchWeapon(weapon.baseName ?? weapon.name)?.property?.includes('F')) weapon={...weapon,finesse:true};
   if(attacker.classRules?.unarmoredMonk && (weapon.monkWeapon || weapon.unarmed)) {
     const dice=diceTerms(weapon.damage)?.filter(term=>term.faces);
     if(dice?.length===1 && dice[0].count===1 && dice[0].sign===1 && attacker.classRules.martialDie>dice[0].faces) {
       weapon={...weapon,damage:weapon.damage.replace(/\d*d\d+/i,'1d'+attacker.classRules.martialDie)};
     }
   }
-  return withActionEvent(battle,attacker,{action:weapon.name,kind:"attack",target:target.name},
+  return withActionEvent(battle,attacker,{action:weapon.name,kind:"attack",target:target.name,targetActor:target.id},
     () => weaponRoll(battle,attacker,target,weapon,options,random));
 }
 
@@ -842,7 +906,7 @@ function weaponRoll(battle, attacker, target, weapon, options, random) {
   breakInvisibility(battle,attacker);
   attacker.mocked = false;
   const hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= armorClass(target) + (Number(options.cover) || 0));
-  const critical = hit && (roll.kept === 20 || ((target.hp === 0 || incapacitated(target)) && distance <= 5));
+  const critical = hit && roll.kept === 20;
   let damage;
   let prone;
   log(battle, attacker.name + " · " + weapon.name + " vs " + target.name + " — " + roll.breakdown + " = " + roll.total +
@@ -853,16 +917,17 @@ function weaponRoll(battle, attacker, target, weapon, options, random) {
     let totalDamage = raw.total;
     let breakdown = raw.breakdown;
     const turnKey = battle.round+"|"+currentActor(battle)?.id;
-    const allyNearby = battle.actors.some((ally) => ally.id !== attacker.id && ally.side !== target.side && ally.side !== "neutral" &&
+    const allyNearby = battle.actors.some((ally) => ally.id !== attacker.id && ally.id!==target.id && ally.side === attacker.side && ally.side!==target.side &&
       actorIsUp(ally) && !incapacitated(ally) && occupies(ally) && distanceFt(ally,target) <= 5);
     const disadvantaged = mode.disadvantage && !mode.advantage;
     const sneakEligible = attacker.classRules?.sneakDice && (weapon.finesse || ranged) && attacker.sneakTurn !== turnKey &&
       !disadvantaged && (mode.advantage && !mode.disadvantage || allyNearby);
     if (sneakEligible) {
-      const sneak = rollDice(attacker.classRules.sneakDice+"d6",{doubleDice:critical,random});
+      const sneak = rollDice(attacker.classRules.sneakDice+"d6",{doubleDice:critical,random,label:"Sneak Attack"});
       totalDamage += sneak.total;
       breakdown += " + Sneak Attack "+sneak.breakdown;
       attacker.sneakTurn = turnKey;
+      log(battle,attacker.name+" adds Sneak Attack"+(allyNearby ? " — an ally is within 5 ft of "+target.name : " with advantage")+".");
     }
     if (ranged && !weapon.spellAttack && hasFeature(target,"Deflect Missiles") && !target.reactionUsed && !incapacitated(target)) {
       const bonus=(target.ability.dex ?? 0)+(target.classRules.levels.Monk ?? 0);
@@ -1005,6 +1070,7 @@ function spendCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
 }
 
 export function recordSpell(battle,caster,spell,slotLevel,options={}) {
+  battle=turnView(battle,caster);
   if (!spell.reference || spell.edition !== "2014" || spell.customUse) error("Use the table ruling for this custom or revised spell.");
   if (!["action","bonus","reaction"].includes(spell.timing)) error("Resolve the longer casting time at the table.");
   const usage = spell.castUsage && slotLevel === 0 ? spell.castUsage : undefined;
@@ -1037,7 +1103,7 @@ function rangedSpellAttack(battle,caster,target,effect,expression,options,random
   breakInvisibility(battle,caster);
   caster.mocked = false;
   const hit = result.kept === 20 || (result.kept !== 1 && result.total >= armorClass(target) + (Number(options.cover) || 0));
-  const critical = hit && (result.kept === 20 || ((target.hp === 0 || incapacitated(target)) && distance <= 5));
+  const critical = hit && result.kept === 20;
   log(battle,"Spell attack on "+target.name+" — "+result.breakdown+" = "+result.total+(critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   recordAction(battle,caster,{outcome:critical ? "Critical hit" : hit ? "Hit" : "Miss",roll:result.breakdown,total:result.total});
   if (hit) {
@@ -1105,13 +1171,14 @@ function boltTarget(battle,caster,map) {
 export function checkSpellTethers(battle,map) {
   for (const caster of battle.actors) {
     if (caster.concentration?.bolt &&
-        (!boltTarget(battle,caster,map) || currentActor(battle) === caster && battle.action && battle.action !== "witch-bolt")) {
+        (!boltTarget(battle,caster,map) || canTakeTurn(battle,caster) && turnView(battle,caster).action && turnView(battle,caster).action !== "witch-bolt")) {
       endConcentration(battle,caster);
     }
   }
 }
 
 export function sustainWitchBolt(battle,caster,map,random = Math.random) {
+  battle=turnView(battle,caster);
   return withActionEvent(battle,caster,{action:"Sustain Witch Bolt",kind:"spell"},() => resolveWitchBolt(battle,caster,map,random));
 }
 
@@ -1125,6 +1192,7 @@ function resolveWitchBolt(battle,caster,map,random) {
 }
 
 export function wakeCreature(battle,actor,target) {
+  battle=turnView(battle,actor);
   assertTurn(battle,actor);
   const sleep = condition(target,"Asleep");
   if (!sleep || !occupies(target) || distanceFt(actor,target) > 5 || battle.action) error("Choose a sleeping creature within reach and use your action.");
@@ -1162,6 +1230,7 @@ function exhaleBreath(battle,caster,options,random) {
 }
 
 export function castSpell(battle,caster,target,spell,slotLevel,options = {},random = Math.random) {
+  battle=turnView(battle,caster);
   const usage = spell.castUsage && slotLevel === 0 ? spell.castUsage : undefined;
   const original = {spellAbility:caster.spellAbility,spellDC:caster.spellDC,spellAttack:caster.spellAttack};
   const ability = caster.ability[spell.castingAbility];
@@ -1171,7 +1240,7 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
     caster.spellAttack = caster.proficiency+ability;
   }
   try {
-    return withActionEvent(battle,caster,{action:spell.name,kind:"spell",target:target?.name},
+    return withActionEvent(battle,caster,{action:spell.name,kind:"spell",target:target?.name,targetActor:target?.id},
       () => resolveSpell(battle,caster,target,spell,usage ? spell.level : slotLevel,options,random,usage));
   } finally {Object.assign(caster,original);}
 }
@@ -1329,6 +1398,7 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
 }
 
 export function drinkPotion(battle, actor, item, random = Math.random) {
+  battle=turnView(battle,actor);
   return withActionEvent(battle,actor,{action:item?.name ?? "Use item",kind:"heal"},() => resolvePotion(battle,actor,item,random));
 }
 

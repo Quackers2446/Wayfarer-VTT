@@ -1,10 +1,11 @@
+import {diceTable,diceCamera} from '../../dist/dice-layout.mjs';
 import {
-  WebGLRenderer,Scene,PerspectiveCamera,Group,Mesh,BufferGeometry,Float32BufferAttribute,CanvasTexture,
+  WebGLRenderer,Scene,OrthographicCamera,Vector3,Group,Mesh,BufferGeometry,Float32BufferAttribute,CanvasTexture,
   MeshStandardMaterial,MeshPhysicalMaterial,PlaneGeometry,ShadowMaterial,HemisphereLight,DirectionalLight,
   Quaternion,PCFShadowMap,SRGBColorSpace,ACESFilmicToneMapping,
 } from 'three';
 import {World,Body,Vec3,Plane,ConvexPolyhedron,Material,ContactMaterial,SAPBroadphase} from 'cannon-es';
-import {diceModel,faceFrame,faceSymmetries,restingOrientation,cameraFacingOrientation,rotateVector,multiplyQuaternion,dot,sub,cross,unit,mean} from '../../dist/dice-geometry.mjs';
+import {diceModel,faceFrame,faceSymmetries,restingOrientation,restingFrame,rotateVector,multiplyQuaternion,dot,sub,cross,unit,mean} from '../../dist/dice-geometry.mjs';
 
 const random=()=>crypto.getRandomValues(new Uint32Array(1))[0]/4294967296;
 
@@ -29,7 +30,7 @@ function faceTexture(model,index,palette) {
     }
   } else {
     ctx.font=`600 ${face.indices.length===3 ? 166 : 190}px Georgia,serif`;
-    ctx.fillText(String(face.value),size/2,size*.51);
+    ctx.fillText(String(face.value),size/2,size*.5);
     if(face.value===6 || face.value===9) {ctx.shadowBlur=0;ctx.fillRect(size*.44,size*.69,size*.12,5);}
   }
   const texture=new CanvasTexture(canvas);texture.colorSpace=SRGBColorSpace;
@@ -38,7 +39,7 @@ function faceTexture(model,index,palette) {
 
 // Inset the real faces, join each edge with a bevel, and cap each vertex.
 // The twenty large d20 faces remain equilateral triangles.
-function dieGeometry(model) {
+export function dieGeometry(model) {
   const main=new BufferGeometry(),trim=new BufferGeometry(),positions=[],uvs=[],bevel=[],edges=new Map(),corners=model.vertices.map(()=>[]);
   const triangle=(list,a,b,c)=>dot(cross(sub(b,a),sub(c,a)),mean([a,b,c]))>=0 ? list.push(...a,...b,...c) : list.push(...a,...c,...b);
   for(const [index,face] of model.faces.entries()) {
@@ -53,7 +54,7 @@ function dieGeometry(model) {
       const a=face.indices[i],b=face.indices[(i+1)%points.length],p=points[i],q=points[(i+1)%points.length],key=[a,b].sort((a,b)=>a-b).join(':');
       corners[a].push(p);
       const other=edges.get(key);
-      if(other) {triangle(bevel,p,other.q,other.p);triangle(bevel,p,q,other.q);}
+      if(other) {triangle(bevel,p,other.q,other.p);triangle(bevel,p,other.p,q);}
       else edges.set(key,{p,q});
     }
   }
@@ -87,11 +88,10 @@ function chooseNumbering(model,value,orientation) {
 // Precompute the physical throw, then orient the printed die by an exact hull
 // symmetry. The same fixed face labels are used for every frame of the replay.
 // Presentation randomness cannot alter any recorded attack or damage value.
-export function simulateThrow(values,{width=1000,height=280,quiet=false,random:throwRandom=random}={}) {
+export function simulateThrow(values,{width=1000,height=280,quiet=false,insets={},random:throwRandom=random}={}) {
   const random=throwRandom;
     const physical=values.filter(value=>diceModel(value.faces));
-    const radius=Math.min(.96,2.2/Math.sqrt(Math.max(1,physical.length)));
-    const halfX=Math.max(3.2,width/height*2.2),halfZ=2.2;
+    const table=diceTable(physical.length,width,height,insets),{radius,halfX,halfZ,columns,rows}=table;
     const world=new World({gravity:new Vec3(0,-30,0),allowSleep:true});world.broadphase=new SAPBroadphase(world);world.solver.iterations=12;
     const surface=new Material('table'),resin=new Material('dice');world.addContactMaterial(new ContactMaterial(surface,resin,{friction:.62,restitution:.22}));
     world.addContactMaterial(new ContactMaterial(resin,resin,{friction:.32,restitution:.25}));
@@ -102,19 +102,27 @@ export function simulateThrow(values,{width=1000,height=280,quiet=false,random:t
       const model=diceModel(value.faces);
       const body=new Body({mass:1,material:resin,angularDamping:.48,linearDamping:.24,allowSleep:true,sleepSpeedLimit:.12,sleepTimeLimit:.2,
         shape:new ConvexPolyhedron({vertices:model.vertices.map(v=>new Vec3(...v.map(x=>x*radius))),faces:model.faces.map(face=>face.indices)})});
-      body.position.set(-halfX+radius+.3+(index%4)*radius*.35,2.1+(index%3)*.4,(index%2 ? 1 : -1)*.45);
+      body.position.set((index%columns-(columns-1)/2)*radius*2.25-halfX*.18,2.1+(index%3)*.3,(Math.floor(index/columns)-(rows-1)/2)*radius*2.25);
       body.velocity.set(4.2+random()*1.4,-1.2-random()*0.5,(random()-.5)*1.4);
       body.quaternion.setFromEuler(random()*6,random()*6,random()*6);
       body.angularVelocity.set(3.5+random()*5,(random()-.5)*6,3+random()*5);world.addBody(body);
       return {...value,model,body,radius,numbering:[0,0,0,1]};
     });
     let frames=[],duration=0;
-    const snapshot=()=>dice.map(die=>[...die.body.position.toArray(),...die.body.quaternion.toArray()]);
+    const snapshot=()=>dice.map(die=>{
+      // Bound the entire rotating hull, including interpolation and small contact penetration.
+      const x=die.body.position.x,z=die.body.position.z;
+      die.body.position.x=Math.max(-halfX+radius,Math.min(halfX-radius,x));
+      die.body.position.z=Math.max(-halfZ+radius,Math.min(halfZ-radius,z));
+      if(die.body.position.x!==x && die.body.velocity.x*x>0) die.body.velocity.x*=-.22;
+      if(die.body.position.z!==z && die.body.velocity.z*z>0) die.body.velocity.z*=-.22;
+      return [...die.body.position.toArray(),...die.body.quaternion.toArray()];
+    });
     if(quiet) {
       duration=0;
       for(let i=0;i<dice.length;i++) {
         const die=dice[i],q=restingOrientation(die.model,die.value);
-        die.body.quaternion.set(...q);die.body.position.set((i-(dice.length-1)/2)*radius*2.2,radius,0);
+        die.body.quaternion.set(...q);die.body.position.set((i%columns-(columns-1)/2)*radius*2.7,radius,(Math.floor(i/columns)-(rows-1)/2)*radius*2.7);
         // A die rests on a face, not on the sphere bounding its corners.
         die.body.position.y=-Math.min(...die.model.vertices.map(v=>rotateVector(q,v)[1]))*radius;
       }
@@ -153,20 +161,20 @@ export function simulateThrow(values,{width=1000,height=280,quiet=false,random:t
         die.body.position.y=restY;
       }
     }
-    return {dice,frames,duration};
+    return {dice,frames,duration,table};
 }
 
 export function createDiceScene(canvas) {
   const renderer=new WebGLRenderer({canvas,alpha:true,antialias:true,powerPreference:'low-power'});
   renderer.setClearColor(0,0);renderer.outputColorSpace=SRGBColorSpace;renderer.toneMapping=ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
   renderer.shadowMap.enabled=true;renderer.shadowMap.type=PCFShadowMap;
-  const scene=new Scene(),camera=new PerspectiveCamera(32,1,.1,80);
-  camera.position.set(0,6.5,3.8);camera.lookAt(0,0,0);
+  const scene=new Scene(),camera=new OrthographicCamera(-10,10,6,-6,.1,100);
+  camera.up.set(0,0,-1);camera.position.set(0,20,0);camera.lookAt(0,0,0);
   scene.add(new HemisphereLight(0xffe8d1,0x1a303b,2.1));
   const key=new DirectionalLight(0xffecd1,3.4);key.position.set(-4,9,5);key.castShadow=true;key.shadow.mapSize.set(1024,1024);key.shadow.camera.left=-14;key.shadow.camera.right=14;key.shadow.camera.top=8;key.shadow.camera.bottom=-8;key.shadow.normalBias=.035;key.shadow.bias=-.0001;key.shadow.radius=3;scene.add(key);
   const rim=new DirectionalLight(0xc3dfff,2.2);rim.position.set(5,5,-5);scene.add(rim);
-  const floor=new Mesh(new PlaneGeometry(60,40),new ShadowMaterial({opacity:.26}));floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
-  const cache=new Map();let dice=[],frames=[],duration=0,rollDuration=0,lost=false,width=1,height=1,layoutAspect=1;
+  const floor=new Mesh(new PlaneGeometry(400,400),new ShadowMaterial({opacity:.26}));floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
+  const cache=new Map();let dice=[],frames=[],duration=0,rollDuration=0,lastElapsed=0,lost=false,width=1,height=1,table=diceTable(1,1000,700),insets={};
   const qa=new Quaternion(),qb=new Quaternion(),numbering=new Quaternion();
   canvas.dataset.renderer='webgl';
   canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();lost=true;});
@@ -180,23 +188,28 @@ export function createDiceScene(canvas) {
     const result={geometry,materials,trim};cache.set(id,result);return result;
   }
 
-  function resize(w,h) {
-    width=Math.max(1,w);height=Math.max(1,h);renderer.setPixelRatio(Math.min(2,devicePixelRatio || 1));renderer.setSize(width,height,false);
-    camera.aspect=width/height;
-    camera.fov=frames.length ? Math.min(85,2*Math.atan(Math.tan(16*Math.PI/180)*Math.max(1,layoutAspect/camera.aspect))*180/Math.PI) : 32;
-    camera.updateProjectionMatrix();
+  function resize(w,h,safeInsets={}) {
+    width=Math.max(1,w);height=Math.max(1,h);insets=safeInsets;
+    renderer.setPixelRatio(Math.min(2,devicePixelRatio || 1));renderer.setSize(width,height,false);
+    const view=diceCamera(width,height,table,insets);
+    Object.assign(camera,{left:view.left,right:view.right,top:view.top,bottom:view.bottom});
+    camera.position.set(view.x,20,view.z);camera.lookAt(view.x,0,view.z);camera.updateProjectionMatrix();camera.updateMatrixWorld();
+    const extent=Math.max(table.halfX,table.halfZ)+4;
+    Object.assign(key.shadow.camera,{left:-extent,right:extent,top:extent,bottom:-extent});key.shadow.camera.updateProjectionMatrix();
+    canvas.dataset.projection='orthographic-overhead';
+    delete canvas.dataset.bounds;delete canvas.dataset.facing;
+    if(dice.length && dice.every(die=>die.group?.isGroup)) draw(lastElapsed);
   }
 
   function clear() {
     for(const die of dice) {scene.remove(die.group);for(const material of die.discardMaterials ?? []) material.dispose();}
-    dice=[];frames=[];delete canvas.dataset.facing;renderer.clear();
+    dice=[];frames=[];lastElapsed=0;delete canvas.dataset.facing;delete canvas.dataset.bounds;renderer.clear();
   }
 
   function prepare(values,quiet=false) {
     clear();
-    layoutAspect=width/height;camera.fov=32;camera.updateProjectionMatrix();
-    ({dice,frames,duration:rollDuration}=simulateThrow(values,{width,height,quiet}));
-    duration=rollDuration;
+    ({dice,frames,duration:rollDuration,table}=simulateThrow(values,{width,height,quiet,insets}));
+    duration=rollDuration;resize(width,height,insets);
     for(const die of dice) {
       const res=resources(die.model,die.group===0 ? 0 : 1),group=new Group();group.scale.setScalar(die.radius);
       const main=new Mesh(res.geometry.main,res.materials),trim=new Mesh(res.geometry.trim,res.trim);
@@ -205,7 +218,7 @@ export function createDiceScene(canvas) {
     }
     for(const die of dice) if(die.discarded) {
       for(const mesh of die.group.children) {
-        const clone=material=>{const copy=material.clone();copy.transparent=true;die.discardMaterials.push(copy);return copy;};
+        const clone=material=>{const copy=material.clone();copy.transparent=false;copy.userData.baseColor=copy.color.clone();die.discardMaterials.push(copy);return copy;};
         mesh.material=Array.isArray(mesh.material) ? mesh.material.map(clone) : clone(mesh.material);
       }
     }
@@ -218,14 +231,28 @@ export function createDiceScene(canvas) {
   }
 
   function draw(elapsed) {
+    lastElapsed=elapsed;
     if(lost || !frames.length) return;
     const t=rollDuration ? Math.min(1,Math.max(0,elapsed/rollDuration))*(frames.length-1) : 0,index=Math.floor(t),blend=t-index;
+    const facing=[],bounds=[],vertex=new Vector3();
     for(let i=0;i<dice.length;i++) {
       const die=dice[i],a=frames[index][i],b=(frames[index+1] ?? frames[index])[i];
       die.group.position.set(a[0]+(b[0]-a[0])*blend,a[1]+(b[1]-a[1])*blend,a[2]+(b[2]-a[2])*blend);
       qa.fromArray(a,3);qb.fromArray(b,3);numbering.fromArray(die.numbering);die.group.quaternion.slerpQuaternions(qa,qb,blend).multiply(numbering);
-      for(const material of die.discardMaterials) material.opacity=elapsed>=duration ? .28 : 1;
+      const q=die.group.quaternion.toArray();
+      if(elapsed>=duration) {
+        const frame=restingFrame(die.model,die.value);
+        facing.push({faces:die.faces,value:die.value,cameraAlignment:dot(rotateVector(q,frame.n),[0,1,0]),uprightAlignment:dot(rotateVector(q,frame.v),[0,0,-1])});
+      }
+      const points=die.model.vertices.map(point=>{
+        vertex.fromArray(rotateVector(q,point)).multiplyScalar(die.radius).add(die.group.position).project(camera);
+        return [(vertex.x+1)*width/2,(1-vertex.y)*height/2];
+      });
+      bounds.push({faces:die.faces,value:die.value,left:Math.min(...points.map(p=>p[0])),right:Math.max(...points.map(p=>p[0])),top:Math.min(...points.map(p=>p[1])),bottom:Math.max(...points.map(p=>p[1]))});
+      for(const material of die.discardMaterials) material.color.copy(material.userData.baseColor).multiplyScalar(elapsed>=duration ? .55 : 1);
     }
+    canvas.dataset.bounds=JSON.stringify(bounds);
+    if(elapsed>=duration) canvas.dataset.facing=JSON.stringify(facing);
     renderer.render(scene,camera);
   }
   function dispose() {

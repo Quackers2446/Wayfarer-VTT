@@ -1,3 +1,4 @@
+import {drawTokenHealth} from './token-health.mjs';
 import {drawMonsterArtwork} from "./monster-art.mjs";
 import {keyAt, occupies} from "./combat.mjs";
 import {regionAt} from "./encounters.mjs";
@@ -64,8 +65,27 @@ function fogTexture(visible,memory) {
   return texture;
 }
 
-function drawFog(context,map,{visible,memory}) {
-  const texture = fogTexture(visible,memory);
+const dynamicTextures=new WeakMap();
+function dynamicFogTexture(map,{visible,memory,polygons,settings}) {
+  const signature=JSON.stringify(settings),old=dynamicTextures.get(memory);
+  if(old?.visible===visible && old.revision===memory.revision && old.signature===signature)return old.texture;
+  const scale=Math.min(1,2048/Math.max(map.cols*(map.cellWidth??map.size),map.rows*(map.cellHeight??map.size)));
+  const width=Math.max(1,Math.ceil(map.cols*(map.cellWidth??map.size)*scale)),height=Math.max(1,Math.ceil(map.rows*(map.cellHeight??map.size)*scale));
+  const texture=document.createElement('canvas');texture.width=width;texture.height=height;const c=texture.getContext('2d'),sx=width/map.cols,sy=height/map.rows;
+  c.fillStyle=`rgba(16,26,25,${settings.opacity})`;c.fillRect(0,0,width,height);
+  c.fillStyle=`rgba(16,26,25,${settings.exploredOpacity})`;
+  if(settings.remember)for(let y=0;y<map.rows;y++)for(let x=0;x<map.cols;x++)if(hasExplored(memory,x,y)){c.clearRect(x*sx,y*sy,sx,sy);c.fillRect(x*sx,y*sy,sx,sy);}
+  const mask=document.createElement('canvas');mask.width=width;mask.height=height;const m=mask.getContext('2d'),path=new Path2D();
+  for(const points of polygons){if(!points.length)continue;path.moveTo(points[0].x*sx,points[0].y*sy);for(const p of points.slice(1))path.lineTo(p.x*sx,p.y*sy);path.closePath();}
+  m.fillStyle='#fff';m.fill(path);
+  // Feather inward: the clipping path prevents the blur from revealing beyond a wall.
+  c.save();c.clip(path);c.globalCompositeOperation='destination-out';c.filter=`blur(${Math.max(0,settings.softness)/5*Math.min(sx,sy)}px)`;c.drawImage(mask,0,0);c.restore();
+  dynamicTextures.set(memory,{visible,revision:memory.revision,signature,texture});return texture;
+}
+
+function drawFog(context,map,options) {
+  const {visible,memory}=options;
+  const texture = options.polygons ? dynamicFogTexture(map,options) : fogTexture(visible,memory);
   const [x,y,cellWidth,cellHeight] = cellBounds(map,{x:0,y:0});
   const width = cellWidth*map.cols, height = cellHeight*map.rows;
   const border = new Path2D();
@@ -141,7 +161,7 @@ function drawToken(c,map,actor,portrait,highlight) {
   }
 }
 
-export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, overlay = "artwork"}) {
+export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, tokenPositions, movementLabels, overlay = "artwork", wallEditor}) {
   // Match the display density while keeping the backing buffer bounded by the visible area.
   const ratio = rasterPixelRatio(view.width,view.height,view.ratio);
   const pixelsWide = Math.max(1,Math.floor(view.width*ratio));
@@ -258,11 +278,19 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
     c.fillText({treasure:"◆",object:"◈",hazard:"!",trap:"!",creature:"?"}[marker.type] ?? "·",x,y);
   }
 
-  const tokens = visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors;
+  const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
   // Living tokens appear on top when they move through a defeated creature's square.
   for (const actor of tokens.filter(defeatedCreature)) drawToken(c,map,actor,tokenImages?.get(actor.id));
   for (const actor of tokens.filter(occupies)) drawToken(c,map,actor,tokenImages?.get(actor.id),
     actor.id === selected ? "#ffeead" : actor.id === target ? "#ffd3c8" : "");
+  for(const actor of tokens.filter(actor=>occupies(actor)||defeatedCreature(actor)))drawTokenHealth(c,map,actor,mapScaleX,mapScaleY,{selected:actor.id===selected});
+  for(const actor of tokens) {
+    const label=movementLabels?.get(actor.id);if(!label) continue;
+    const [x,y]=cellCenter(map,actor),top=y-tokenRadius(map,actor)-map.size*.12;
+    c.font='600 '+map.size*.18+'px system-ui';c.textAlign='center';c.textBaseline='bottom';
+    const width=c.measureText(label.text).width+map.size*.16;
+    c.fillStyle='#122b23ed';c.fillRect(x-width/2,top-map.size*.24,width,map.size*.29);c.fillStyle='#f5e7c6';c.fillText(label.text,x,top);
+  }
 
   if (cursor) {
     if (cursor.edge && (cursor.tool === "wall" || cursor.tool === "door" || cursor.tool === "erase-wall")) {
@@ -288,6 +316,7 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
       c.strokeRect(x+.04*width,y+.04*height,.92*width,.92*height);
     }
   }
+  wallEditor?.draw(c,map,mapScaleX,mapScaleY);
   c.restore();
 }
 

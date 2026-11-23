@@ -16,12 +16,12 @@ const navItems = [
   ["overview", "Overview", "home"],
   ["characters", "Character sheets", "users"],
   ["library", "Adventure library", "book"],
-  ["play", "Play", "dice"],
+  ["play", "Rooms", "dice"],
 ];
 const featured = [
-  {id:"LMoP", image:"forest", detail:"Follow the trail from Phandalin into the wilds of the Sword Coast."},
-  {id:"CoS", image:"castle", detail:"Venture into mistbound Barovia and face its vampire lord."},
-  {id:"ToA", image:"jungle", detail:"Brave the jungles of Chult in search of the source of a death curse."},
+  {id:"LMoP", image:"lmop-cover.webp", detail:"Follow the trail from Phandalin into the wilds of the Sword Coast."},
+  {id:"CoS", image:"cos-cover-art.webp", detail:"Venture into mistbound Barovia and face its vampire lord."},
+  {id:"ToA", image:"toa-jungle.webp", detail:"Brave the jungles of Chult in search of the source of a death curse."},
 ];
 const groupNames = {
   supplement:"Supplement", "supplement-alt":"Standalone & short adventures", core:"Core rules", setting:"Campaign setting",
@@ -122,7 +122,7 @@ function adventureCard(entry, feature) {
   const level = levels(entry);
   const isAdventure = Boolean(entry.maps);
   return `<button class="adventure-card ${image ? "" : "compact-card"}" type="button" data-action="adventure" data-id="${escape(entry.id)}">
-    ${image ? `<span class="card-art"><img src="assets/${image}.jpg" alt="" width="760" height="506"></span>`
+    ${image ? `<span class="card-art"><img src="assets/${image}" alt="" width="760" height="506"></span>`
              : `<span class="cover-mark">${icon(isAdventure ? "compass" : "book", 22)}</span>`}
     <span class="adventure-card-body">
       <strong>${escape(entry.name)}</strong>
@@ -142,7 +142,7 @@ function activeAdventure() {
       <h3>${escape(entry.name)}</h3>
       <p>${[levels(entry), plural(entry.chapters.length, "chapter")].filter(Boolean).map(escape).join(" · ")}</p>
       ${button("View adventure", "adventure", "book", "outline small", entry.id)}
-      <a class="text-link" href="#play">Open encounter grid</a>
+      <a class="text-link" href="#play">Open adventure rooms</a>
     </div>`;
   }
   return `<div class="active-content">
@@ -441,7 +441,7 @@ function adventureDialog(entry) {
   const facts = [levels(entry), entry.storyline, (entry.published ?? "").slice(0,4), entry.author].filter(Boolean);
   const grids = {square:"Square grid", hexColsOdd:"Hex grid", hexColsEven:"Hex grid", hexRowsOdd:"Hex grid", hexRowsEven:"Hex grid"};
   openDialog(entry.name, facts.join(" · "), `
-    ${feature ? '<img class="detail-image" src="assets/' + feature.image + '.jpg" alt="">' : ""}
+    ${feature ? '<img class="detail-image" src="assets/' + feature.image + '" alt="">' : ""}
     ${feature ? '<p class="module-description">' + escape(feature.detail) + '</p>' : ""}
     <details open><summary>Chapters <small>${entry.chapters.length}</small></summary>
       <ol class="chapter-list">${entry.chapters.map((chapter) => '<li>' + escape(chapter) + '</li>').join("")}</ol>

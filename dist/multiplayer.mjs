@@ -40,8 +40,8 @@ async function request(path, init, acceptConflict = false) {
   return data;
 }
 
-export function createSession(map, state, artwork, tokens) {
-  const payload = JSON.stringify({map,state});
+export function createSession(map, state, artwork, tokens, controller) {
+  const payload = JSON.stringify({map,state,controller});
   if (!artwork && !tokens.size) return request(api,{method:"POST",body:payload,headers:{"Content-Type":"application/json"}});
   const body = new FormData();
   body.set("session",payload);
@@ -49,6 +49,10 @@ export function createSession(map, state, artwork, tokens) {
   for (const [id,blob] of tokens) body.set("token-"+id,blob);
   return request(api,{method:"POST",body});
 }
+
+export const listRooms = controller => request("/api/rooms?controller="+encodeURIComponent(controller));
+
+export const deleteRoom=(id,controller,revision)=>request(`${api}/${id}`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({controller,revision})});
 
 export const readSession = (id, after) => request(`${api}/${id}${after == null ? "" : "?after=" + after}`);
 
@@ -70,9 +74,9 @@ export function joinPanel() {
   const recent = recentSession();
   return `<section class="play-panel session-join" aria-label="Multiplayer">
     <form id="session-join-form" class="session-inline">
-      <label class="play-field">Join a shared session<input id="session-invite" placeholder="Paste an invite link or code" autocomplete="off" required></label>
-      <button class="button outline small" type="submit">Join session</button>
-      ${recent ? `<a class="button outline small" href="${sessionHash(recent)}">Resume last session</a>` : ""}
+      <label class="play-field">Join a room<input id="session-invite" placeholder="Paste an invite link or code" autocomplete="off" required></label>
+      <button class="button outline small" type="submit">Join room</button>
+      ${recent ? `<a class="button outline small" href="${sessionHash(recent)}">Resume last room</a>` : ""}
     </form>
     <p id="session-join-error" role="status"></p>
   </section>`;
@@ -97,13 +101,13 @@ export function tablePanel(table, characters, battle, message, needsSignIn, cont
     <button type="button" class="game-button" data-play="host-session">Start shared session</button><p role="status">${escape(message)}</p>`;
   const options = characters.filter((character) => !battle.actors.some(({id}) => id === "party:"+character.id));
   const full = battle.actors.filter(({side}) => side === "party").length >= 4;
-  return `<h2>Shared session</h2>
+  return `<h2>${escape(table.state?.room?.name || "Adventure room")}</h2>
     <p class="session-connection" role="status">${escape(message || (table.online ? "Connected" : "Reconnecting…"))}</p>
     <label class="play-field" for="session-link">Invite link</label>
     <div class="session-inline"><input id="session-link" type="url" readonly value="${escape(inviteURL(table.id))}">
       <button type="button" class="game-button" data-play="copy-session">Copy link</button></div>
     ${sessionPlayers(table.players,battle,controller)}
-    <p>Share the invite link and use Claim on a party portrait to choose a character.</p>
+    <p>Progress saves automatically. Share the invite link and use Claim on a party portrait to choose a character.</p>
     ${full ? "<p>The party has four characters. Claim an available portrait to play.</p>" : `<form id="session-party-form" class="session-inline">
       ${options.length ? `<label class="play-field">Your character<select id="session-character">${options.map(({id,name}) =>
         `<option value="${escape(id)}">${escape(name)}</option>`).join("")}</select></label>

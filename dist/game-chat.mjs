@@ -15,6 +15,8 @@ export function createGameChat(id, sender) {
       </button>
     </header>
     <div id="game-chat-content" class="chat-content" hidden>
+      <label class="chat-activity-control"><input type="checkbox" class="chat-activity-toggle"> Include activity log</label>
+      <div class="chat-activity-slot" hidden></div>
       <div class="chat-history" role="log" aria-label="Chat messages" tabindex="0">
         <p class="chat-empty">No messages yet.</p>
       </div>
@@ -138,6 +140,7 @@ export function createGameChat(id, sender) {
     send.disabled = submitting || !body.value.trim();
   }
 
+  panel.querySelector('.chat-activity-toggle').addEventListener('change',event=>document.dispatchEvent(new CustomEvent('wayfarer:activity-placement',{detail:event.target.checked?'chat':'hidden'})));
   toggle.addEventListener("click",() => setOpen(!open));
   history.addEventListener("scroll",rememberScroll);
   body.addEventListener("input",updateSend);
@@ -180,6 +183,13 @@ export function createGameChat(id, sender) {
       slot.classList.toggle("chat-open",open);
       author.textContent = "Sending as " + name;
       if (open) history.scrollTop = following ? history.scrollHeight : scrollTop;
+    },
+    show:()=>setOpen(true),
+    setActivity(enabled,log){
+      panel.querySelector('.chat-activity-toggle').checked=enabled;
+      const activity=panel.querySelector('.chat-activity-slot');activity.hidden=!enabled;
+      if(enabled && log)activity.replaceChildren(log);else activity.replaceChildren();
+      slot?.classList.toggle('chat-with-activity',enabled);
     },
     rememberScroll,
     refresh,

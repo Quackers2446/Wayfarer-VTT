@@ -1,11 +1,9 @@
-import {actorIsUp, canSee, condition, distanceFt, hasFeature, keyAt, occupies, startInitiative} from "./combat.mjs";
+import {visionData,rememberDynamicVision} from './dynamic-fog.mjs';
+import {actorIsUp, canSee, condition, distanceFt, keyAt, occupies, startInitiative} from "./combat.mjs";
 import {cellCenter, regionAt} from "./encounters.mjs";
-import {exploredCells, rememberCells} from "./fog-memory.mjs";
-import {mapFloor, mapWalls} from "./map-walls.mjs";
+import {mapWalls} from "./map-walls.mjs";
 
 const roomGrids = new WeakMap();
-const cachedVision = new WeakMap();
-const visionDistance = actor => actor.astralVisage || hasFeature(actor,"Devil's Sight") ? 120 : Number.isFinite(actor.darkvision) ? Math.max(30,Math.min(120,actor.darkvision)) : 30;
 const roomNeighbors = [[-1,0],[1,0],[0,-1],[0,1]];
 const mapGeometry = (map) => [map.cols,map.rows,map.offsetX,map.offsetY,map.cellWidth ?? map.size,map.cellHeight ?? map.size].join(":");
 
@@ -38,30 +36,8 @@ export function inSight(battle, map, partyMember, target, maxDistance = 30) {
   return roomNeighbors.some(([dx,dy]) => roomId(map,{x:target.x+dx,y:target.y+dy}) === friendRoom);
 }
 
-export function partyVision(battle,map) {
-  const heroes = battle.actors.filter((actor) => actor.side === "party" && actorIsUp(actor) && occupies(actor) && !condition(actor,"Asleep"));
-  const signature = [mapGeometry(map),battle.wallRevision ?? 0,(battle.wallData?.doors ?? []).map(d => `${d.id}:${d.state}`).join(","),...heroes.map((actor) => `${actor.x}:${actor.y}:${visionDistance(actor)}`),
-    ...Object.keys(battle.terrain).filter((cell) => battle.terrain[cell] === "wall")].join("/");
-  const cached = cachedVision.get(battle);
-  if (cached?.map === map && cached.signature === signature && cached.zones === battle.spellZones) return cached.visible;
-  const visible = new Set();
-  for (const actor of heroes) {
-    const distance = visionDistance(actor);
-    const cells = Math.ceil(distance/5);
-    for (let y = Math.max(0,actor.y-cells); y <= Math.min(map.rows-1,actor.y+cells); y++) {
-      for (let x = Math.max(0,actor.x-cells); x <= Math.min(map.cols-1,actor.x+cells); x++) {
-        if (mapFloor(map,x,y,battle) && inSight(battle,map,actor,{x,y},distance)) visible.add(keyAt(x,y));
-      }
-    }
-  }
-  cachedVision.set(battle,{map,signature,visible,zones:battle.spellZones});
-  return visible;
-}
-
-export function rememberVision(battle,map) {
-  const visible = partyVision(battle,map);
-  if (visible.size) rememberCells(exploredCells(battle,map),visible);
-}
+export function partyVision(battle,map) {return visionData(battle,map).all;}
+export function rememberVision(battle,map) {rememberDynamicVision(battle,map);}
 
 export function noticesEnemy(battle,map,partyMember,enemy) {
   return hostile(enemy) && inSight(battle,map,partyMember,enemy,condition(partyMember,"Invisible") ? 5 : enemy.sight ?? 30);

@@ -1,4 +1,4 @@
-import {actorIsUp, currentActor, movementBudget, movementGroup, moveLeft} from "./combat.mjs";
+import {canTakeTurn, sharedTurnGroup, actorIsUp, currentActor, movementBudget, movementGroup, moveLeft} from "./combat.mjs";
 import {escape} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {mapControls, mapHint, mapViewport} from "./map-camera.mjs";
@@ -27,22 +27,36 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
         </span>
       </button>
       ${(!inCombat || movers.includes(character)) && (!owner || mine) && actorIsUp(character) && selected?.id !== character.id
-        ? button(inCombat ? "Move" : "Control","", "control-party", `data-id="${id}" aria-label="${inCombat ? "Select to move " + name : "Control"}"`) : ""}
+        ? button("Control","", "control-party", `data-id="${id}" aria-label="${inCombat ? "Control " + name : "Control"}"`) : ""}
       ${controllers && (!owner || mine) ? button(mine ? "Release" : "Claim","","claim-party",`data-id="${id}" aria-label="${mine ? "Release" : "Claim"} ${name}"`) : ""}
     </div>`;
   }).join("") : '<a class="game-link" href="#play">Add a party member</a>';
 }
 
+function activityLog(history,mode) {
+  const expanded=mode==='expanded',collapsed=mode==='collapsed';
+  return `<aside class="game-event-slot" data-log-mode="${mode}" aria-label="Activity log">
+    <header class="game-event-header">
+      <button type="button" class="event-log-toggle" data-play="event-log-toggle" aria-controls="game-event-body" aria-expanded="${!collapsed}" aria-label="${collapsed ? 'Show activity log' : 'Minimize activity log'}">${icon('book',14)}<span>Activity log</span>${icon('down',12)}</button>
+      <button type="button" class="event-log-size" data-play="event-log-expand" aria-controls="game-event-body" aria-pressed="${expanded}" aria-label="${expanded ? 'Compact activity log' : 'Expand activity log'}" title="${expanded ? 'Compact log' : 'Expand log'}">${icon(expanded ? 'minus' : 'fit',15)}</button>
+    </header>
+    <div id="game-event-body" class="game-event-body" tabindex="0" aria-label="Log history" ${collapsed ? 'hidden' : ''}>
+      <div class="game-live-log" ${expanded ? 'hidden' : ''}></div>
+      <ol class="game-complete-log" aria-label="Combat log" ${expanded ? '' : 'hidden'}>${history.length ? history.map(line=>'<li>'+escape(line)+'</li>').join('') : '<li>No actions recorded yet.</li>'}</ol>
+    </div>
+  </aside>`;
+}
+
 export function gameScreen({
-  map, battle, selected, party, category, actions, tacticalTools, room, status, artworkNote,
-  logOpen, toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,hotbar,resourceControls,
+  map, battle, roomName, saveStatus, selected, party, category, actions, tacticalTools, room, status, artworkNote,
+  logOpen, logHistory=battle.log, eventLogMode="compact", eventLogPlacement="separate", toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,hotbar,resourceControls,
   destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
 }) {
   const active = battle.round > 0;
   const turn = currentActor(battle);
   const movers = movementGroup(battle);
   const reacting=Boolean(battle.classReaction);
-  const movingEarly = active && selected && selected !== turn && !reacting;
+  const movingEarly = active && selected && !canTakeTurn(battle,selected) && !reacting;
   const enemyTurn = active && selected?.side === "hostile";
   const online = players.filter((player) => player.online).length;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
@@ -50,11 +64,12 @@ export function gameScreen({
   return `<section class="game-screen ${active ? "game-combat" : ""}" aria-label="Wayfarer game">
     <header class="game-top">
       <div class="game-location">
-        <a href="#play" class="game-button game-exit">${icon("home",16)}<span>${shared ? "Leave" : "Setup"}</span></a>
+        <a href="#play" class="game-button game-exit" aria-label="${shared ? "Rooms" : "Setup"}">${icon("home",16)}<span>${shared ? "Rooms" : "Setup"}</span></a>
         <span class="game-top-divider"></span>
-        <div><h1>${escape(map.title)}</h1>${adventureName ? `<p>${escape(adventureName)}</p>` : ""}</div>
+        <div><h1>${escape(roomName || map.title)}</h1>${roomName || adventureName ? `<p>${escape(roomName ? map.title : adventureName)}</p>` : ""}</div>
       </div>
       <div class="game-top-right">
+        ${shared ? `<span class="game-save-status" role="status">${escape(saveStatus || 'Saved')}</span>` : ''}
         <span class="game-phase" aria-live="polite"><i></i>${active ? "Combat · Round " + battle.round : "Exploring"}</span>
         ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"${shared ?
           ` data-online="${online}" aria-label="Session" aria-description="${online} ${online === 1 ? "player" : "players"} online"` : ""}`)}
@@ -79,14 +94,11 @@ export function gameScreen({
         }).join("")}</div>` : ""}
         ${mapViewport(map,true)}
         <div class="combat-cues" aria-live="polite" aria-atomic="true"></div>
-        <div class="game-event-slot"></div>
+        <div class="game-activity-home" data-activity-placement="${eventLogPlacement}">${activityLog(logHistory,eventLogMode)}</div>
         <div class="game-board-meta">
           <div><p id="game-move-preview" class="game-move-preview">${escape(canAct && destination || '')}</p><p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>${mapHint()}</div>
           ${mapControls(hasToken)}
         </div>
-        ${logOpen ? `<aside class="game-flyout play-panel" aria-label="Combat log"><h2>Combat log</h2>
-          ${battle.log.length ? `<ol class="play-log">${battle.log.slice(-25).reverse().map((entry) => "<li>"+escape(entry)+"</li>").join("")}</ol>` : '<p>No rolls recorded.</p>'}
-        </aside>` : ""}
         ${storyOpen ? `<aside class="game-flyout play-panel story-flyout" aria-label="Story journal">${storyContent}</aside>` : ""}
         ${toolsOpen ? `<aside class="game-flyout tools-flyout play-panel" aria-label="Table tools">${tacticalTools}</aside>` : ""}
         ${tableOpen ? `<aside class="game-flyout tools-flyout play-panel session-panel" aria-label="Multiplayer">${tableContent}</aside>` : ""}
@@ -96,7 +108,7 @@ export function gameScreen({
     <footer class="game-hud" aria-busy="${busy}">
       <div class="game-hud-top">
         <div class="game-active">
-          <span class="game-label">${reacting ? "Reaction · Deflect Missiles" : enemyTurn ? "Enemy turn · game controlled" : movingEarly ? "Shared initiative · move" : active ? "Current turn" : "Selected character"}</span>
+          <span class="game-label">${reacting ? "Reaction · Deflect Missiles" : enemyTurn ? "Enemy turn · game controlled" : movingEarly ? "Waiting for next turn" : active ? sharedTurnGroup(battle).length>1 ? "Shared turn" : "Current turn" : "Selected character"}</span>
           <strong>${escape(selected?.name ?? "Choose a party member")}</strong>
           ${selected?.concentration ? `<span class="game-label">Concentrating · ${escape(selected.concentration.name)}</span>` : ""}
         </div>

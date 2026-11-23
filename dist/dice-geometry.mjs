@@ -81,18 +81,26 @@ export function faceSymmetries(mesh,from,to) {
     .filter(q=>mesh.vertices.every(vertex=>{const p=rotateVector(q,vertex);return mesh.vertices.some(v=>Math.hypot(...sub(p,v))<1e-5);}));
 }
 
-export function restingOrientation(mesh,value) {
+export function restingFrame(mesh,value) {
   if(mesh.sides===4) {
     const n=unit(mesh.vertices[value-1]),v=unit(cross(n,[1,.1,0]));
-    return frameRotation({u:cross(v,n),v,n},{u:[1,0,0],v:[0,0,-1],n:[0,1,0]});
+    return {u:cross(v,n),v,n};
   }
-  const index=mesh.faces.findIndex(face=>face.value===value);
-  return frameRotation(faceFrame(mesh,index),{u:[1,0,0],v:[0,0,-1],n:[0,1,0]});
+  return faceFrame(mesh,mesh.faces.findIndex(face=>face.value===value));
+}
+
+export function restingOrientation(mesh,value) {
+  return frameRotation(restingFrame(mesh,value),{u:[1,0,0],v:[0,0,-1],n:[0,1,0]});
+}
+
+export function resultFrame(mesh,value) {
+  // A d4 is read at its top vertex; keep that corner at the top of the front triangle.
+  const index=mesh.sides===4 ? mesh.faces.findIndex(face=>face.indices.includes(value-1)) : mesh.faces.findIndex(face=>face.value===value);
+  return faceFrame(mesh,index,mesh.sides===4 ? mesh.faces[index].indices.indexOf(value-1) : 0);
 }
 
 export function cameraFacingOrientation(mesh,value,position,cameraPosition,cameraUp) {
   const n=unit(sub(cameraPosition,position));
   const v=unit(cameraUp.map((x,i)=>x-n[i]*dot(cameraUp,n)));
-  const index=mesh.faces.findIndex(face=>face.value===value);
-  return frameRotation(faceFrame(mesh,index),{u:unit(cross(v,n)),v,n});
+  return frameRotation(resultFrame(mesh,value),{u:unit(cross(v,n)),v,n});
 }

@@ -10,7 +10,7 @@ const panBuffer = 64;
 const mapCenter = {x:.5,y:.5};
 
 export function mapViewport(map, game = false) {
-  const instructions = game ? "Use the arrow keys and Enter to act on a square." :
+  const instructions = game ? "Use WASD or arrow keys to move the selected character. Shift and arrow keys pan the map." :
     "Use the arrow keys and Enter to apply the grid tool.";
   return `<div class="board-frame${game ? " game-board" : ""}" style="--map-ratio:${map.width}/${map.height}">
     <div class="board-content"><div id="play-grid" tabindex="0" role="application"
@@ -180,6 +180,7 @@ export function createCamera(frame, controls, map, saved, onView) {
     for (const id of pointers.keys()) frame.setPointerCapture(id);
   }
   frame.addEventListener("pointerdown", (event) => {
+    if(event.target.closest?.('.wall-editor-host'))return;
     if (![0,1].includes(event.button) || pointers.size >= 2 || (pointers.size && event.pointerType !== "touch")) return;
     pointers.set(event.pointerId,event);
     if (pointers.size === 1) {

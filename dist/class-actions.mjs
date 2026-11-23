@@ -1,5 +1,5 @@
 import {
-  actorIsUp, addCondition, addInspiration, advanceTime, canSee, condition, currentActor, d20, distanceFt, hasFeature, heal, incapacitated,
+  turnView, canTakeTurn, actorIsUp, addCondition, addInspiration, advanceTime, canSee, condition, currentActor, d20, distanceFt, hasFeature, heal, incapacitated,
   log, occupies, rollDice, savingThrow, speedOf, applyDamage,
 } from "./combat.mjs";
 import {captureImpact, recordAction, withActionEvent} from "./action-events.mjs";
@@ -16,6 +16,7 @@ export function migratePactResources(actor) {
 }
 
 export function classWeapons(actor,battle) {
+  battle=turnView(battle,actor);
   const attacks = [...actor.attacks];
   if (actor.astralArms && hasFeature(actor,"Arms of the Astral Self")) {
     const wisdom = actor.ability.wis ?? 0;
@@ -75,6 +76,7 @@ const definitions = [
 ];
 
 export function classActions(actor,battle) {
+  battle=turnView(battle,actor);
   return definitions.filter((entry) => hasFeature(actor,entry.feature) &&
     (entry.id !== "martial-arts" || actor.classRules.unarmoredMonk) &&
     (entry.id !== "flurry-strike" || battle.flurry > 0)).map(entry=>({...entry,
@@ -83,10 +85,10 @@ export function classActions(actor,battle) {
 }
 
 function requireAction(battle,actor,definition) {
-  if (!battle.round || currentActor(battle)?.id !== actor.id || !actorIsUp(actor) || incapacitated(actor)) {
+  if (!canTakeTurn(battle,actor) || !actorIsUp(actor) || incapacitated(actor)) {
     throw new Error("Use this ability on this character’s turn.");
   }
-  if (battle.movement) throw new Error("Resolve the opportunity attack first.");
+  if (battle.movement || battle.classReaction) throw new Error("Resolve the pending reaction first.");
   if (definition.timing === "action" && battle.action) throw new Error("This character has used their action.");
   if (definition.timing === "bonus" && battle.bonusUsed) throw new Error("This character has used their bonus action.");
   if (definition.resource && !(actor.resources?.[definition.resource]?.current >= definition.cost)) {
@@ -107,6 +109,7 @@ function hide(battle,actor,map,random) {
 }
 
 export function useClassAction(battle,actor,id,options = {},random = Math.random) {
+  battle=turnView(battle,actor);
   const definition = classActions(actor,battle).find((entry) => entry.id === id);
   return withActionEvent(battle,actor,{action:definition?.name ?? id,kind:"ability",target:options.target?.name},
     () => resolveClassAction(battle,actor,id,options,random));

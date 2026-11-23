@@ -5,7 +5,7 @@ let seed=12345;const random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/4
 const values=[4,6,8,10,12,20].flatMap(faces=>Array.from({length:faces},(_,i)=>({faces,value:i+1,group:0})));
 for(const value of values) {
   const {dice,frames}=simulateThrow([value],{random});const die=dice[0];
-  const orientation=multiplyQuaternion(die.body.quaternion.toArray(),die.numbering);
+  const orientation=multiplyQuaternion(frames.at(-1)[0].slice(3),die.numbering);
   const faces=die.faces===4 ? die.model.vertices.map((v,i)=>({value:i+1,normal:v})) : die.model.faces;
   const upper=faces.map(face=>({value:face.value,height:rotateVector(orientation,face.normal)[1]})).sort((a,b)=>b.height-a.height)[0];
   assert.equal(upper.value,value.value);assert.ok(upper.height>.95);

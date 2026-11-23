@@ -33,18 +33,33 @@ function validMap(map) {
       region.points.every((point) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite)));
 }
 
+function validRoom(room) {
+  return room==null || record(room) && typeof room.name==='string' && room.name.trim().length>0 && room.name.length<=80 &&
+    !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(room.name) &&
+    [room.adventure,room.adventureName].every(value=>value==null || typeof value==='string' && value.length<=160) &&
+    [room.createdAt,room.updatedAt].every(value=>value==null || Number.isSafeInteger(value) && value>0);
+}
+
+const optionalRange=(o,k,min,max)=>o[k]==null || Number.isFinite(o[k]) && o[k]>=min && o[k]<=max;
+function validVision(v){return v==null || record(v) && (v.enabled==null || typeof v.enabled==='boolean') && optionalRange(v,'range',0,300) && optionalRange(v,'angle',1,360) && optionalRange(v,'facing',0,360);}
+function validWalls(v){return v==null || record(v) && ['walls','doors'].every(type=>v[type]==null || Array.isArray(v[type]) && v[type].length<=2000 && v[type].every(s=>record(s) && ['x1','y1','x2','y2'].every(k=>Number.isFinite(s[k]) && Math.abs(s[k])<=90000) && (type!=='doors' || typeof s.id==='string' && ['open','closed','locked','secret'].includes(s.state))));}
+function validFogSettings(v){return v==null || record(v) && ['sharedVision','remember','blockMovement'].every(k=>v[k]==null || typeof v[k]==='boolean') && optionalRange(v,'opacity',0,1) && optionalRange(v,'exploredOpacity',0,1) && optionalRange(v,'softness',0,5);}
+
 function validState(state) {
   const battle = state?.battle;
   const alignment = state?.alignment;
-  return record(battle) && Array.isArray(battle.actors) && battle.actors.length <= 500 &&
+  return validRoom(state?.room) && record(battle) && Array.isArray(battle.actors) && battle.actors.length <= 500 &&
     battle.actors.every((actor) => record(actor) && typeof actor.id === "string" && typeof actor.name === "string" &&
-      [actor.hp,actor.maxHp,actor.ac,actor.speed].every(Number.isFinite) && ["party","hostile","neutral"].includes(actor.side) &&
+      validVision(actor.vision) && [actor.hp,actor.maxHp,actor.ac,actor.speed].every(Number.isFinite) && ["party","hostile","neutral"].includes(actor.side) &&
       [actor.tempHp,actor.successes,actor.failures].every((value) => value == null || Number.isFinite(value)) &&
       (actor.tokenImage == null || actor.side === "party" && typeof actor.tokenImage === "string" && tokenIdPattern.test(actor.tokenImage)) &&
       (actor.initiativeRoll == null || Number.isFinite(actor.initiativeRoll)) &&
       [actor.x,actor.y].every((value) => value == null || Number.isInteger(value)) &&
       [actor.attacks,actor.spells].every(Array.isArray) && record(actor.slots)) &&
     Array.isArray(battle.order) && battle.order.every((id) => typeof id === "string") &&
+    validWalls(battle.wallData) && validFogSettings(battle.fogSettings) &&
+    (battle.fogEnabled==null || typeof battle.fogEnabled==='boolean') &&
+    (battle.fogMemoryByActor==null || record(battle.fogMemoryByActor) && Object.keys(battle.fogMemoryByActor).length<=500 && Object.entries(battle.fogMemoryByActor).every(([id,m])=>battle.actors.some(a=>a.id===id && a.side==='party') && record(m) && validFogMemory(m))) &&
     (battle.fogMemory == null || validFogMemory(battle.fogMemory)) &&
     (battle.explored == null || Array.isArray(battle.explored) && battle.explored.length <= 4096 &&
       battle.explored.every((key) => typeof key === "string" && /^\d+:\d+$/.test(key))) &&
@@ -162,6 +177,8 @@ async function create(request, env) {
     } else input = JSON.parse(await body.text());
   } catch {return fail(400,"The session could not be read.");}
   if (!validMap(input?.map) || !validState(input?.state)) return fail(400,"The encounter could not be shared.");
+  if(input.state.room) input.state.room={...input.state.room,name:input.state.room.name.trim(),createdAt:Date.now(),updatedAt:Date.now()};
+  if(input.controller && uuid.test(input.controller) && input.state.room)input.state.room.ownerController=input.controller;
   const map = JSON.stringify(input.map), state = JSON.stringify(input.state);
   if (bytes(map) > maxMapBytes || bytes(state) > maxStateBytes) return fail(413,"The encounter is too large to share.");
   if (artwork && (!(artwork instanceof Blob) || !imageTypes.has(artwork.type) || artwork.size > maxImageBytes || !artwork.size)) {
@@ -205,8 +222,9 @@ async function get(env, id, after) {
     return reply({map:JSON.parse(row.map),state:JSON.parse(row.state),revision:row.revision,hasArtwork:Boolean(row.artwork_type)});
   }
   if (!/^\d+$/.test(after) || !Number.isSafeInteger(Number(after))) return fail(400,"The session revision was invalid.");
-  const row = await env.DB.prepare("SELECT state,revision FROM game_sessions WHERE id=? AND revision>?").bind(id,Number(after)).first();
-  return row ? reply({state:JSON.parse(row.state),revision:row.revision}) : new Response(null,{status:204,headers});
+  const row = await env.DB.prepare("SELECT CASE WHEN revision>? THEN state END AS state,revision FROM game_sessions WHERE id=?").bind(Number(after),id).first();
+  if(!row)return fail(404,'This adventure room was deleted or is no longer available.');
+  return row.revision>Number(after) ? reply({state:JSON.parse(row.state),revision:row.revision}) : new Response(null,{status:204,headers});
 }
 
 async function update(request, env, id) {
@@ -217,6 +235,12 @@ async function update(request, env, id) {
   if (!Number.isSafeInteger(input?.revision) || input.revision < 0 || !validState(input.state)) {
     return fail(400,"The update was invalid.");
   }
+  const metadata=await env.DB.prepare("SELECT json_extract(state,'$.room') AS room FROM game_sessions WHERE id=?").bind(id).first();
+  if(metadata?.room) {
+    const original=JSON.parse(metadata.room);
+    input.state.room={...original,...input.state.room,createdAt:original.createdAt,ownerController:original.ownerController};
+  }
+  if(input.state.room) input.state.room={...input.state.room,name:input.state.room.name.trim(),updatedAt:Date.now()};
   const state = JSON.stringify(input.state);
   if (bytes(state) > maxStateBytes) return fail(413,"The encounter is too large to share.");
   const result = await env.DB.prepare("UPDATE game_sessions SET state=?, revision=revision+1 WHERE id=? AND revision=?")
@@ -305,12 +329,61 @@ async function sessionChat(request, env, id, after) {
   return new Response(null,{status:204,headers});
 }
 
+async function removeRoom(request,env,id){
+  let input;try{input=await request.json();}catch{return fail(400,'The deletion request was invalid.');}
+  if(!uuid.test(input?.controller??'') || !Number.isSafeInteger(input?.revision))return fail(400,'The deletion request was invalid.');
+  const room=await env.DB.prepare(`SELECT revision,COALESCE(json_extract(state,'$.room.ownerController'),(SELECT controller FROM session_players WHERE session_id=? ORDER BY joined_at,rowid LIMIT 1)) AS ownerController FROM game_sessions WHERE id=?`).bind(id,id).first();
+  if(!room)return fail(404,'This room has already been deleted.');
+  if(room.ownerController!==input.controller)return fail(403,'Only the room creator can delete this adventure.');
+  const live='EXISTS (SELECT 1 FROM game_sessions WHERE id=? AND revision=?)';
+  const statements=[
+    env.DB.prepare(`DELETE FROM session_chat WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
+    env.DB.prepare(`DELETE FROM session_players WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
+  ];
+  if(!env.BUCKET)statements.push(
+    env.DB.prepare(`DELETE FROM session_image_chunks WHERE asset_id IN (SELECT asset_id FROM session_images WHERE asset_key=? OR asset_key LIKE ?) AND ${live}`).bind(id,id+'/%',id,input.revision),
+    env.DB.prepare(`DELETE FROM session_images WHERE (asset_key=? OR asset_key LIKE ?) AND ${live}`).bind(id,id+'/%',id,input.revision),
+  );
+  statements.push(env.DB.prepare('DELETE FROM game_sessions WHERE id=? AND revision=?').bind(id,input.revision));
+  const results=await env.DB.batch(statements);
+  if(!results.at(-1).meta.changes)return fail(409,'The room changed while you were confirming deletion. Review it and try again.');
+  if(env.BUCKET){let cursor;do{const page=await env.BUCKET.list({prefix:id,...(cursor?{cursor}:{})});if(page.objects.length)await env.BUCKET.delete(page.objects.map(o=>o.key));cursor=page.truncated?page.cursor:null;}while(cursor);}
+  return new Response(null,{status:204,headers});
+}
+
+async function listRooms(request,env,url) {
+  if(request.method!=='GET') return fail(405,'This action is unavailable.');
+  const controller=url.searchParams.get('controller');
+  if(!controller || !uuid.test(controller)) return fail(400,'The player ID was invalid.');
+  const {results}=await env.DB.prepare(`SELECT s.id,
+    json_extract(s.state,'$.room') AS room,
+    json_extract(s.map,'$.title') AS mapName,
+    json_extract(s.map,'$.key') AS mapKey,
+    json_extract(s.map,'$.module') AS adventure,
+    json_extract(s.state,'$.battle.round') AS round,
+    (SELECT json_group_array(json_extract(value,'$.name')) FROM json_each(s.state,'$.battle.actors')
+      WHERE json_extract(value,'$.side')='party') AS party,
+    COALESCE(json_extract(s.state,'$.room.ownerController'),(SELECT controller FROM session_players WHERE session_id=s.id ORDER BY joined_at,rowid LIMIT 1)) AS ownerController,
+    p.joined_at AS joinedAt,p.last_seen AS lastVisited
+    FROM game_sessions s JOIN session_players p ON p.session_id=s.id
+    WHERE p.controller=? ORDER BY COALESCE(json_extract(s.state,'$.room.updatedAt'),p.last_seen) DESC LIMIT 100`)
+    .bind(controller).all();
+  return reply({rooms:results.map(row=>{
+    const room=row.room ? JSON.parse(row.room) : {};
+    return {id:row.id,canDelete:row.ownerController===controller,name:room.name || row.mapName,adventure:room.adventure || row.adventure,
+      adventureName:room.adventureName || row.adventure,mapName:row.mapName,mapKey:row.mapKey,
+      party:JSON.parse(row.party || '[]'),round:row.round,createdAt:room.createdAt || row.joinedAt,
+      updatedAt:room.updatedAt || row.lastVisited,lastVisited:row.lastVisited};
+  })});
+}
+
 export async function sessionRequest(request, env) {
   const url = new URL(request.url);
   const match = sessionPath.exec(url.pathname);
-  if (url.pathname !== api && !match) return fail(404,"Session endpoint not found.");
+  if (url.pathname !== api && url.pathname !== "/api/rooms" && !match) return fail(404,"Session endpoint not found.");
   if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) return fail(403,"Open Wayfarer to update this session.");
   try {
+    if(url.pathname==="/api/rooms") return await listRooms(request,env,url);
     if (!match && request.method === "POST") {
       return await create(request,env);
     }
@@ -325,6 +398,7 @@ export async function sessionRequest(request, env) {
       return artwork ? new Response(artwork.body,{headers:{...headers,"Content-Type":row.artwork_type}}) : fail(404,"No shared map artwork.");
     }
     if (match && !match[2] && request.method === "GET") return await get(env,match[1],url.searchParams.get("after"));
+    if (match && !match[2] && request.method === "DELETE") return await removeRoom(request,env,match[1]);
     if (match && !match[2] && request.method === "PUT") return await update(request,env,match[1]);
     return fail(405,"This action is unavailable.");
   } catch (error) {

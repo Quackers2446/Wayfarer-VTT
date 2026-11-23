@@ -69,3 +69,5 @@ export function saveExplored(battle,map) {
   memory.legacy = undefined;
   memory.dirty = false;
 }
+
+export function forgetExploration(battle){delete battle.fogMemory;delete battle.explored;remembered.delete(battle);}

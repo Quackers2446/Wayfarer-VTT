@@ -1,3 +1,4 @@
+import {segmentsBlock} from './wall-geometry.mjs';
 // Calibrated against the 30 × 21 printed grid in both Cragmaw Hideout images.
 // Each row lists inclusive spans of walkable columns, in source-grid coordinates.
 const hideoutRows = [
@@ -20,7 +21,7 @@ const hideout = {rows:hideoutRows,edges:hideoutEdges,screen:hideoutScreen};
 
 export function mapWalls(map, battle) {
   const custom = getWallData(map, battle);
-  if (custom && (custom.walls?.length || custom.doors?.length)) return custom;
+  if (custom && (custom.manual || custom.walls?.length || custom.doors?.length)) return custom;
   return map?.module === "LMoP" && map.id === "1ab" && map.cols >= 30 && map.cols <= 31 && map.rows >= 21 && map.rows <= 22 ?
     hideout : null;
 }
@@ -29,13 +30,8 @@ export function getWallData(map, battle) {
   return battle?.wallData ?? map?.wallData ?? null;
 }
 
-function ccw(ax, ay, bx, by, cx, cy) {
-  return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
-}
-
-export function linesIntersect(p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) {
-  return ccw(p1x, p1y, p3x, p3y, p4x, p4y) !== ccw(p2x, p2y, p3x, p3y, p4x, p4y) &&
-         ccw(p1x, p1y, p2x, p2y, p3x, p3y) !== ccw(p1x, p1y, p2x, p2y, p4x, p4y);
+export function linesIntersect(ax,ay,bx,by,cx,cy,dx,dy) {
+  return segmentsBlock({x:ax,y:ay},{x:bx,y:by},{x:cx,y:cy},{x:dx,y:dy});
 }
 
 export function normSeg(x1, y1, x2, y2) {
@@ -170,26 +166,9 @@ function cellSharedEdge(a, b) {
   return null;
 }
 
-function edgeBlocked(wallData, a, b) {
-  const edge = cellSharedEdge(a, b);
-  if (!edge) return false;
-  // Check if there is a door on this edge
-  const key = segKey(edge);
-  const door = wallData.doors?.find(d => segKey(d) === key);
-  if (door) {
-    return door.state !== "open";
-  }
-  // Check if any wall segment blocks this edge
-  return (wallData.walls ?? []).some(w => {
-    // Does edge lie on w?
-    if (w.x1 === w.x2 && edge.x1 === edge.x2 && edge.x1 === w.x1) {
-      return edge.y1 >= Math.min(w.y1, w.y2) && edge.y2 <= Math.max(w.y1, w.y2);
-    }
-    if (w.y1 === w.y2 && edge.y1 === edge.y2 && edge.y1 === w.y1) {
-      return edge.x1 >= Math.min(w.x1, w.x2) && edge.x2 <= Math.max(w.x1, w.x2);
-    }
-    return linesIntersect(a.x + 0.5, a.y + 0.5, b.x + 0.5, b.y + 0.5, w.x1, w.y1, w.x2, w.y2);
-  });
+function edgeBlocked(wallData,a,b) {
+  return [...(wallData.walls ?? []),...(wallData.doors ?? []).filter(d=>d.state!=='open')].some(w=>
+    w.blocksMovement!==false && linesIntersect(a.x+.5,a.y+.5,b.x+.5,b.y+.5,w.x1,w.y1,w.x2,w.y2));
 }
 
 function crossesScreen(walls, from, to) {
@@ -200,7 +179,7 @@ function crossesScreen(walls, from, to) {
 
 export function mapFloor(map,x,y, battle) {
   const custom = getWallData(map, battle);
-  if (custom && (custom.walls?.length || custom.doors?.length)) {
+  if (custom && (custom.manual || custom.walls?.length || custom.doors?.length)) {
     return x >= 0 && y >= 0 && x < map.cols && y < map.rows;
   }
   const walls = mapWalls(map, battle);
@@ -209,7 +188,8 @@ export function mapFloor(map,x,y, battle) {
 
 export function crossesMapWall(map, from, to, battle) {
   const custom = getWallData(map, battle);
-  if (custom && (custom.walls?.length || custom.doors?.length)) {
+  if(battle?.fogSettings?.blockMovement===false) return false;
+  if (custom && (custom.manual || custom.walls?.length || custom.doors?.length)) {
     if (to.x < 0 || to.y < 0 || to.x >= map.cols || to.y >= map.rows) return true;
     if (from.x === to.x || from.y === to.y) {
       return edgeBlocked(custom, from, to);
@@ -217,7 +197,7 @@ export function crossesMapWall(map, from, to, battle) {
     // Diagonal move: blocked if shared corner is pinched by walls
     const across = {x:to.x, y:from.y};
     const down = {x:from.x, y:to.y};
-    return edgeBlocked(custom, from, across) || edgeBlocked(custom, across, to) ||
+    return edgeBlocked(custom,from,to) || edgeBlocked(custom, from, across) || edgeBlocked(custom, across, to) ||
            edgeBlocked(custom, from, down) || edgeBlocked(custom, down, to);
   }
   const walls = mapWalls(map, battle);
@@ -231,31 +211,25 @@ export function crossesMapWall(map, from, to, battle) {
 
 export function mapLineClear(map, from, to, wallAt, vision, battle) {
   const custom = getWallData(map, battle);
-  if (custom && (custom.walls?.length || custom.doors?.length)) {
+  if (custom && (custom.manual || custom.walls?.length || custom.doors?.length)) {
     const rx1 = from.x + 0.5, ry1 = from.y + 0.5;
     const rx2 = to.x + 0.5, ry2 = to.y + 0.5;
     // Check closed doors
     for (const d of custom.doors ?? []) {
-      if (d.state !== "open" && linesIntersect(rx1, ry1, rx2, ry2, d.x1, d.y1, d.x2, d.y2)) {
+      if (d.state !== "open" && d.blocksVision!==false && linesIntersect(rx1, ry1, rx2, ry2, d.x1, d.y1, d.x2, d.y2)) {
         return false;
       }
     }
     // Check walls
     for (const w of custom.walls ?? []) {
-      if (linesIntersect(rx1, ry1, rx2, ry2, w.x1, w.y1, w.x2, w.y2)) {
+      if (w.blocksVision!==false && linesIntersect(rx1, ry1, rx2, ry2, w.x1, w.y1, w.x2, w.y2)) {
         return false;
       }
     }
     // Also check any painted terrain walls along the ray
-    let {x, y} = from;
-    const dx = Math.abs(to.x - x), dy = -Math.abs(to.y - y);
-    const signX = x < to.x ? 1 : -1, signY = y < to.y ? 1 : -1;
-    let residual = dx + dy;
-    while (x !== to.x || y !== to.y) {
-      const step = residual * 2;
-      if (step >= dy) {residual += dy; x += signX;}
-      if (step <= dx) {residual += dx; y += signY;}
-      if (wallAt && wallAt(x, y)) return false;
+    const steps=Math.max(1,Math.ceil(Math.hypot(rx2-rx1,ry2-ry1)*4));
+    for(let i=1;i<=steps;i++) {
+      const t=i/steps;if(wallAt?.(Math.floor(rx1+(rx2-rx1)*t),Math.floor(ry1+(ry2-ry1)*t)))return false;
     }
     return true;
   }

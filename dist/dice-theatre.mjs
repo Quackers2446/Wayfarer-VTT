@@ -1,12 +1,14 @@
+import {diceTable,diceCamera} from './dice-layout.mjs';
 import {escape} from './format.mjs';
-import {diceModel,restingOrientation,cameraFacingOrientation,rotateVector,faceFrame,dot} from './dice-geometry.mjs';
+import {diceModel,restingOrientation,rotateVector,faceFrame,dot} from './dice-geometry.mjs';
 
 let rendererModule;
 const loadRenderer=()=>rendererModule ??= import('./dice-scene.mjs');
-const view=[0,.8638,.5039];
-const project=p=>[p[0],-.5039*p[1]+.8638*p[2]];
+const view=[0,1,0];
+const project=p=>[p[0],p[2]];
 
 export function diceNotation(roll) {
+  if(roll.diceKinds) return roll.diceKinds.map(die=>(die.sign<0 ? '− ' : '')+die.count+'d'+die.faces).join(' + ').replace(/\+ − /g,'− ');
   const counts=new Map();
   for(const die of roll.dice ?? []) {
     const key=(die.sign<0 ? '-' : '')+'d'+die.faces;
@@ -29,11 +31,11 @@ export function visualDice(rolls,limit=16) {
 // A readable, correctly numbered static die also works without WebGL.
 function fallbackDie(ctx,die,x,y,radius) {
   const model=diceModel(die.faces);if(!model) return;
-  const q=die.faces===20 ? cameraFacingOrientation(model,die.value,[0,0,0],view,[0,.5039,-.8638]) : restingOrientation(model,die.value);
+  const q=restingOrientation(model,die.value);
   const vertices=model.vertices.map(v=>rotateVector(q,v));
   const faces=model.faces.map((face,i)=>({...face,i,normal:rotateVector(q,face.normal)}))
     .filter(face=>dot(face.normal,view)>0).sort((a,b)=>dot(a.normal,view)-dot(b.normal,view));
-  ctx.save();ctx.translate(x,y);ctx.globalAlpha=die.discarded ? .3 : 1;
+  ctx.save();ctx.translate(x,y);ctx.globalAlpha=1;
   for(const face of faces) {
     const points=face.indices.map(i=>project(vertices[i]).map(n=>n*radius));
     ctx.beginPath();points.forEach(([x,y],i)=>i ? ctx.lineTo(x,y) : ctx.moveTo(x,y));ctx.closePath();
@@ -61,9 +63,10 @@ function fallbackDie(ctx,die,x,y,radius) {
 
 export function createDiceTheatre() {
   const panel=document.createElement('section');panel.className='dice-theatre';panel.setAttribute('aria-label','Dice roll');
-  panel.innerHTML='<div class="dice-heading"><div><small></small><strong></strong></div><button type="button" class="game-button">Skip animation</button></div><canvas aria-hidden="true"></canvas><div class="dice-tallies" aria-live="polite"></div>';
+  panel.innerHTML='<div class="dice-heading"><div><small></small><strong></strong></div><button type="button" class="dice-skip" aria-label="Skip animation" title="Skip animation">Skip</button></div><canvas aria-hidden="true"></canvas><div class="dice-tallies" aria-live="polite"></div>';
   let canvas=panel.querySelector('canvas');const tallies=panel.querySelector('.dice-tallies');
-  let frame,finish,active,started,phaseStarted,scene,ctx,attempted=false,generation=0,dice=[],width=1,height=1,duration=0,quiet=false;
+  let frame,finish,active,started,phaseStarted,scene,ctx,attempted=false,generation=0,dice=[],width=1,height=1,duration=0,quiet=false,pace=1;
+  let fallbackTable,viewportInsets={};
   let enabled=true;
   try {enabled=localStorage.getItem('wayfarer-dice-fx')!=='off';} catch {}
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
@@ -75,8 +78,16 @@ export function createDiceTheatre() {
   panel.querySelector('button').addEventListener('click',stop);
 
   function resize() {
-    const rect=canvas.getBoundingClientRect();width=Math.max(160,rect.width);height=Math.max(100,rect.height);
-    if(scene) scene.resize(width,height);
+    const viewport=window.visualViewport;
+    Object.assign(panel.style,{width:(viewport?.width ?? innerWidth)+'px',height:(viewport?.height ?? innerHeight)+'px',left:(viewport?.offsetLeft ?? 0)+'px',top:(viewport?.offsetTop ?? 0)+'px'});
+    const rect=canvas.getBoundingClientRect();width=Math.max(1,rect.width);height=Math.max(1,rect.height);
+    const heading=panel.querySelector('.dice-heading').getBoundingClientRect(),results=tallies.getBoundingClientRect();
+    const hud=document.querySelector('.game-hud')?.getBoundingClientRect();
+    const playBottom=hud?.top ?? height;
+    const resultTop=Math.min(height-results.height-12,Math.max(heading.bottom+40,Math.min(height*.64,playBottom-results.height-24)));
+    tallies.style.top=resultTop+'px';
+    viewportInsets={top:heading.bottom-rect.top+16,bottom:Math.max(16,height-resultTop+20),left:16,right:16};
+    if(scene) scene.resize(width,height,viewportInsets);
     else if(ctx) {const ratio=Math.min(2,devicePixelRatio || 1);canvas.width=width*ratio;canvas.height=height*ratio;ctx.setTransform(ratio,0,0,ratio,0,0);}
   }
 
@@ -88,24 +99,29 @@ export function createDiceTheatre() {
         <div><span class="dice-natural">${phase==='rolling' ? '…' : base}</span>
         <span class="dice-modifier">${modifier<0 ? '−' : '+'} ${Math.abs(modifier)}</span><span class="dice-equals">=</span>
         <strong class="dice-total">${roll.total}</strong></div><span class="dice-formula">${escape(roll.breakdown)}</span></div>`;
-    }).join('')+(active.rolls.length>6 ? '<small class="dice-overflow">More rolls are recorded in the combat log.</small>' : '');
+    }).join('')+(active.rolls.length>6 ? '<small class="dice-overflow">More rolls are recorded in the combat log.</small>' : '')+
+      (active.rolls.reduce((n,r)=>n+(r.diceCount ?? r.dice.length),0)>dice.length ? '<small class="dice-overflow">Showing '+dice.length+' of '+active.rolls.reduce((n,r)=>n+(r.diceCount ?? r.dice.length),0)+' dice. Full results are in the combat log.</small>' : '');
   }
 
   function animate(now) {
     if(!active) return;
     const elapsed=Math.max(0,now-started);
-    if(scene) scene.draw(elapsed);
+    if(scene) scene.draw(elapsed/pace);
     else if(ctx) {
       ctx.clearRect(0,0,width,height);
-      const supported=dice.filter(die=>diceModel(die.faces)),columns=Math.min(supported.length,6),rows=Math.ceil(supported.length/Math.max(1,columns));
-      supported.forEach((die,i)=>fallbackDie(ctx,die,width*((i%columns)+.5)/columns,height*(Math.floor(i/columns)+.5)/rows,Math.min(65,width/(columns*2.5),height/(rows*2.5))));
+      const supported=dice.filter(die=>diceModel(die.faces));
+      fallbackTable=diceTable(supported.length,width,height,viewportInsets);
+      const view=diceCamera(width,height,fallbackTable,viewportInsets),{columns,rows,radius}=fallbackTable;
+      supported.forEach((die,i)=>fallbackDie(ctx,die,
+        width/2+((i%columns-(columns-1)/2)*radius*2.7-view.x)*view.scale,
+        height/2+((Math.floor(i/columns)-(rows-1)/2)*radius*2.7-view.z)*view.scale,radius*view.scale));
     }
     const phase=panel.dataset.phase;
     if(quiet) tally('total');
     else if(phase==='rolling' && elapsed>=duration) {tally('natural');phaseStarted=now;}
-    else if(phase==='natural' && now-phaseStarted>=350) {tally('modifier');phaseStarted=now;}
-    else if(phase==='modifier' && now-phaseStarted>=450) {tally('total');phaseStarted=now;}
-    if(quiet ? elapsed>750 : panel.dataset.phase==='total' && now-phaseStarted>750) stop();else frame=requestAnimationFrame(animate);
+    else if(phase==='natural' && now-phaseStarted>=(active.side==='party' ? 700 : 500)) {tally('modifier');phaseStarted=now;}
+    else if(phase==='modifier' && now-phaseStarted>=(active.side==='party' ? 750 : 600)) {tally('total');phaseStarted=now;}
+    if(quiet ? elapsed>(active.side==='party' ? 3000 : 2000) : panel.dataset.phase==='total' && now-phaseStarted>(active.side==='party' ? 1600 : 1100)) stop();else frame=requestAnimationFrame(animate);
   }
 
   async function begin(token) {
@@ -115,20 +131,23 @@ export function createDiceTheatre() {
         scene=createDiceScene(canvas);attempted=true;
       } catch {
         if(token!==generation) return;attempted=true;
-        const replacement=canvas.cloneNode();canvas.replaceWith(replacement);canvas=replacement;ctx=canvas.getContext('2d');canvas.dataset.renderer='canvas';
+        const replacement=canvas.cloneNode();canvas.replaceWith(replacement);canvas=replacement;ctx=canvas.getContext('2d');canvas.dataset.renderer='canvas';canvas.dataset.projection='orthographic-overhead';
       }
     }
     if(token!==generation || !active) return;
     quiet=!enabled || reduced.matches || !scene || !dice.some(die=>diceModel(die.faces));resize();
-    try {duration=scene ? scene.prepare(dice,quiet) : 0;}
+    try {pace=active.side==='party' ? 1.2 : 1.08;duration=(scene ? scene.prepare(dice,quiet) : 0)*pace;}
     catch {
       scene?.dispose();scene=undefined;quiet=true;duration=0;
-      const replacement=canvas.cloneNode();canvas.replaceWith(replacement);canvas=replacement;ctx=canvas.getContext('2d');canvas.dataset.renderer='canvas';resize();
+      const replacement=canvas.cloneNode();canvas.replaceWith(replacement);canvas=replacement;ctx=canvas.getContext('2d');canvas.dataset.renderer='canvas';canvas.dataset.projection='orthographic-overhead';resize();
     }
     started=performance.now();frame=requestAnimationFrame(animate);
   }
 
+  const layoutObserver=new ResizeObserver(()=>{if(active) resize();});
+  layoutObserver.observe(panel.querySelector('.dice-heading'));layoutObserver.observe(tallies);
   window.addEventListener('resize',()=>{if(active) resize();});
+  window.visualViewport?.addEventListener('resize',()=>{if(active) resize();});
   return {
     get enabled() {return enabled;},
     toggle() {enabled=!enabled;try {localStorage.setItem('wayfarer-dice-fx',enabled ? 'on' : 'off');}catch{}return enabled;},

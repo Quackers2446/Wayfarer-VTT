@@ -2,6 +2,17 @@
 // by the rules engine; every connected browser displays those same results.
 import {creatureSize} from './actor-space.mjs';
 let capture;
+function presentationDice(dice,limit=24) {
+  const chosen=new Set(),types=new Set();
+  for(let i=0;i<dice.length && chosen.size<limit;i++) {const key=dice[i].faces+':'+dice[i].sign;if(!types.has(key)) {types.add(key);chosen.add(i);}}
+  for(let i=0;i<dice.length && chosen.size<limit;i++) chosen.add(i);
+  return [...chosen].sort((a,b)=>a-b).map(i=>dice[i]);
+}
+function diceKinds(dice) {
+  const kinds=new Map();
+  for(const die of dice) {const key=die.faces+':'+(die.sign ?? 1);if(!kinds.has(key)) kinds.set(key,{faces:die.faces,sign:die.sign ?? 1,count:0});kinds.get(key).count++;}
+  return [...kinds.values()];
+}
 
 export function captureRoll(result, details) {
   capture?.rolls.push({result,details});
@@ -37,7 +48,7 @@ export function withActionEvent(battle, actor, details, run) {
   try {
     const result = run();
     const rolls = current.rolls.slice(0,24).map(({result,details}) => ({...details,
-      dice:details.dice.slice(0,24),diceCount:details.dice.length,
+      dice:presentationDice(details.dice),diceCount:details.dice.length,diceKinds:diceKinds(details.dice),
       total:result.total,breakdown:result.breakdown.slice(0,600),
       ...(result.kept != null ? {kept:result.kept,modifier:result.total-result.kept} : {}),
     }));

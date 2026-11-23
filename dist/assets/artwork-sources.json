@@ -1,0 +1,47 @@
+{
+  "policy": "Built-in raster artwork uses unmodified publication images referenced by 5etools. Do not add AI-generated illustrations.",
+  "release": "5etools-v2.41.2",
+  "images": [
+    {
+      "file": "assets/hero-toa.webp",
+      "title": "Tomb of Annihilation \u2014 introduction illustration",
+      "publication": "Tomb of Annihilation",
+      "publisher": "Wizards of the Coast",
+      "sourceFile": "data/adventure/adventure-toa.json",
+      "sourcePath": "adventure/ToA/000-0101.webp",
+      "retrievedFrom": "https://cdn.5e.tools/2024/img/adventure/ToA/000-0101.webp",
+      "sha256": "094455f36a73c6459f026de1f7a18e4e51b93ad42d4752edce718d01bd1183b2"
+    },
+    {
+      "file": "assets/lmop-cover.webp",
+      "title": "Lost Mine of Phandelver \u2014 cover",
+      "publication": "Lost Mine of Phandelver",
+      "publisher": "Wizards of the Coast",
+      "sourceFile": "data/adventures.json",
+      "sourcePath": "covers/LMoP.webp",
+      "retrievedFrom": "https://cdn.5e.tools/2024/img/covers/LMoP.webp",
+      "sha256": "2b5dac27973c2838afc72af07e3010bdd2f64d56cd3a7e2048e0f00e1618fb96"
+    },
+    {
+      "file": "assets/cos-cover-art.webp",
+      "title": "Curse of Strahd \u2014 cover illustration",
+      "publication": "Curse of Strahd",
+      "publisher": "Wizards of the Coast",
+      "sourceFile": "data/adventure/adventure-cos.json",
+      "sourcePath": "adventure/CoS/credits.webp",
+      "retrievedFrom": "https://cdn.5e.tools/2024/img/adventure/CoS/credits.webp",
+      "sha256": "67fc41f06d81206fa99540c063417cfe08a4da31e06031fb1087d41450214e7d",
+      "artist": "Ben Oliver"
+    },
+    {
+      "file": "assets/toa-jungle.webp",
+      "title": "Tomb of Annihilation \u2014 The Land of Chult illustration",
+      "publication": "Tomb of Annihilation",
+      "publisher": "Wizards of the Coast",
+      "sourceFile": "data/adventure/adventure-toa.json",
+      "sourcePath": "adventure/ToA/017-0301.webp",
+      "retrievedFrom": "https://cdn.5e.tools/2024/img/adventure/ToA/017-0301.webp",
+      "sha256": "e8f14b009598868901b0cf10490918f7d8c7e9d5ef1b7a2c1d5b07217b6845f4"
+    }
+  ]
+}

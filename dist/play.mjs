@@ -1,3 +1,7 @@
+import {createWallEditor} from './wall-editor.mjs';
+import {fogSettings,visionSettings,viewerVision,viewerMemory} from './dynamic-fog.mjs';
+import {knownRooms, forgetRoom, rememberRoom, rememberRooms, roomList} from './adventure-rooms.mjs';
+import {turnView, canTakeTurn, sharedTurnGroup, turnBudgetStamp} from './combat.mjs';
 import {tokenSize,actorCells,containsCell,touchesArea} from './actor-space.mjs';
 import {drawMonsterArtwork, monsterArtwork} from "./monster-art.mjs";
 import {characterTokenArtwork, localTokenBlob, uploadSessionToken} from "./character-token.mjs";
@@ -7,6 +11,7 @@ import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
 import {createCombatCues} from "./combat-cues.mjs";
 import {createTokenHover} from "./token-hover.mjs";
+import {createTokenMotion} from './token-motion.mjs';
 import {createGameChat} from "./game-chat.mjs";
 import {withActionEvent} from "./action-events.mjs";
 import {fogOfWarEnabled} from "./game-settings.mjs";
@@ -15,7 +20,7 @@ import {classActions, classSkillCheck, classWeapons, migratePactResources, restP
 import {canRescue, discoverStory, rescueSildar, storyPanel, storyVersion} from "./adventure-story.mjs";
 import {enemyTurnPending, runEnemyTurns} from "./enemy-turn.mjs";
 import {enemyInSight, engageEnemy, noticesEnemy, partyVision, rememberVision} from "./exploration.mjs";
-import {exploredCells, hasExplored, saveExplored} from "./fog-memory.mjs";
+import {exploredCells, hasExplored, saveExplored,forgetExploration} from "./fog-memory.mjs";
 import {addDoor, addWall, doorAt, mapFloor, mapWalls, removeDoor, removeWall, segKey, toggleDoor} from "./map-walls.mjs";
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
@@ -23,7 +28,7 @@ import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, m
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
 import {defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt} from "./grid-view.mjs";
 import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
-import {artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
+import {listRooms, deleteRoom, artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
   syncSessionPlayers, tablePanel, writeSession} from "./multiplayer.mjs";
 import {
   actorIsUp, applyDamage, armorClass, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion,
@@ -33,6 +38,7 @@ import {
 } from "./combat.mjs";
 
 const saveKey = "wayfarer-encounters-v1";
+const defaultPageTitle=document.title;
 let battles;
 try {battles = JSON.parse(localStorage.getItem(saveKey)) || {};} catch {battles = {};}
 let maps = [trainingMap];
@@ -70,18 +76,110 @@ let needsHostSignIn = false;
 let showInvitation;
 let category = "move";
 let hotbarTab="all",hotbarFilter="",hotbarSelection="",hotbarActor="",hotbarExpanded=false,hotbarTools=false;
-let logOpen = false;
+let eventLogMode='compact';
+try {const saved=localStorage.getItem('wayfarer-log-mode-v1');if(['compact','expanded','collapsed'].includes(saved))eventLogMode=saved;}catch{}
+let eventLogPlacement='separate';
+try{const saved=localStorage.getItem('wayfarer-activity-placement-v1');if(['separate','chat','hidden'].includes(saved))eventLogPlacement=saved;}catch{}
+function setActivityPlacement(value){eventLogPlacement=value;try{localStorage.setItem('wayfarer-activity-placement-v1',value);}catch{}redraw();}
+const eventLogScroll=new Map();let eventLogScope;
+function setEventLogMode(mode) {
+  eventLogMode=mode;
+  try {localStorage.setItem('wayfarer-log-mode-v1',mode);}catch{}
+}
+function logRows(panel) {
+  return [...(panel.querySelector(panel.dataset.logMode==='expanded' ? '.game-complete-log' : '.game-event-feed')?.children ?? [])];
+}
+function rememberEventLogScroll() {
+  const panel=root()?.querySelector('.game-event-slot'),body=panel?.querySelector('.game-event-body');
+  if(!body || !body.getClientRects().length || panel.dataset.logMode==='collapsed') return;
+  const rows=logRows(panel),rect=body.getBoundingClientRect(),index=rows.findIndex(row=>row.getBoundingClientRect().bottom>rect.top);
+  eventLogScroll.set(panel.dataset.logMode,{top:body.scrollTop,bottom:body.scrollHeight-body.clientHeight-body.scrollTop<24,
+    keys:rows.map(row=>row.dataset.event ?? row.textContent),index,offset:index<0 ? 0 : rows[index].getBoundingClientRect().top-rect.top});
+}
+function restoreEventLogScroll() {
+  const panel=root()?.querySelector('.game-event-slot'),body=panel?.querySelector('.game-event-body'),saved=eventLogScroll.get(eventLogMode);
+  if(!body || body.hidden || !body.getClientRects().length) return;
+  if(!saved || saved.bottom) {body.scrollTop=body.scrollHeight;return;}
+  const rows=logRows(panel),keys=rows.map(row=>row.dataset.event ?? row.textContent);
+  let index=keys.indexOf(saved.keys[saved.index]);
+  if(eventLogMode==='expanded') {
+    // The engine bounds history; preserve the visible entry when older lines fall off the front.
+    for(let removed=0;removed<saved.keys.length;removed++) {
+      const shared=Math.min(saved.keys.length-removed,keys.length);
+      if(shared && saved.keys.slice(removed,removed+shared).every((key,i)=>key===keys[i])) {index=saved.index-removed;break;}
+    }
+  }
+  if(index>=0 && rows[index]) body.scrollTop+=rows[index].getBoundingClientRect().top-body.getBoundingClientRect().top-saved.offset;
+  else body.scrollTop=saved.top;
+}
+
 let toolsOpen = false;
 let storyOpen = false;
 let scheduledEnemyBattle;
 const combatCues = createCombatCues();
 const tokenHover = createTokenHover();
+const tokenMotion = createTokenMotion(()=>paintBoard());
+let queuedMove=null;
 const controllerKey = "wayfarer-player-v1";
 let controller = globalThis.crypto.randomUUID();
 try {
   controller = localStorage.getItem(controllerKey) || controller;
   localStorage.setItem(controllerKey,controller);
 } catch {}
+let rooms=knownRooms(),roomsLoading=false,roomsError='',roomSetupOpen=false,roomListRequest=0,deletingRoom='';
+const roomDraft={name:'',username:'',prepared:false,party:null};
+async function refreshRooms() {
+  const request=++roomListRequest;rooms=knownRooms();roomsLoading=true;roomsError='';
+  try {
+    const response=await listRooms(controller);
+    if(request!==roomListRequest) return;
+    rooms=rememberRooms(response.rooms,{authoritative:true});
+  } catch(error) {
+    if(request===roomListRequest) roomsError='Saved rooms are temporarily unavailable. '+(rooms.length ? 'You can still open a remembered room.' : 'Try again shortly.');
+  } finally {
+    if(request===roomListRequest) {roomsLoading=false;if(context && !context.game && root()) redraw();}
+  }
+}
+function roomNameDefault() {
+  const name=context?.adventures.find(entry=>entry.id===map.module)?.name ?? map.title;
+  return (name+' · Room '+(rooms.filter(room=>room.adventure===map.module).length+1)).slice(0,80);
+}
+function roomCreationForm() {
+  const selected=roomDraft.party ?? new Set(context.characters.slice(0,4).map(character=>character.id));
+  return `<form id="create-room-form" class="room-create-form">
+    <div class="play-field-row">${input('Room name','new-room-name',roomDraft.name || roomNameDefault(),'text','required maxlength="80"')}
+      ${input('Your username','new-room-username',roomDraft.username || rememberedUsername(),'text','required maxlength="24" autocomplete="nickname"')}</div>
+    ${context.characters.length ? `<fieldset class="room-party-picker"><legend>Starting party · choose up to four</legend>${context.characters.map(character=>
+      `<label><input type="checkbox" name="room-character" value="${escape(character.id)}" ${selected.has(character.id) ? 'checked' : ''} ${roomDraft.prepared ? 'disabled' : ''}>${escape(character.name)}</label>`).join('')}</fieldset>` :
+      '<p class="play-hint">The practice yard includes Rowan. Import characters to start an adventure with your own party.</p>'}
+    <label class="room-prepared"><input id="new-room-prepared" type="checkbox" ${roomDraft.prepared ? 'checked' : ''}> Use the prepared encounter below, including its current party and progress</label>
+    <div class="play-action-row"><button type="submit" class="button primary small" ${pending || sceneJobs.has(battle) ? 'disabled' : ''}>${pending ? 'Preparing room…' : 'Create room'}</button>
+      <span class="play-hint">${escape(map.title)} · Saves automatically</span></div>
+    <p class="room-create-status" role="status">${escape(status || tableMessage)}</p>
+  </form>`;
+}
+async function createAdventureRoom() {
+  if(pending || table) return;
+  const name=(roomDraft.name || roomNameDefault()).normalize('NFKC').trim(),username=(roomDraft.username || rememberedUsername()).normalize('NFKC').trim();
+  if(!name || name.length>80 || !username || username.length>24) {status='Enter a room name and a username.';redraw();return;}
+  const characters=context.characters.filter(character=>(roomDraft.party ?? new Set(context.characters.slice(0,4).map(character=>character.id))).has(character.id));
+  if(!roomDraft.prepared && characters.length>4) {status='Choose up to four starting characters.';redraw();return;}
+  const previous={battle,selectedId,room,tool,category},route=location.hash;
+  const fresh=roomDraft.prepared ? structuredClone(battle) : newBattle();
+  if(!roomDraft.prepared && map.module==='training') fresh.actors=trainingActors().filter(actor=>!characters.length || actor.side!=='party');
+  delete fresh.controllers;
+  battle=fresh;selectedId='';pending=true;status='';redraw();
+  try {
+    await launchGame({roomName:name,username},characters);
+    roomDraft.name='';roomDraft.prepared=false;rooms=knownRooms();roomSetupOpen=false;
+    root()?.querySelector('#room-setup')?.removeAttribute('open');
+  } catch(error) {if(location.hash===route) status=error.message;}
+  finally {
+    if(battle===fresh) ({battle,selectedId,room,tool,category}=previous);
+    pending=false;if(context && !context.game && root()) redraw();
+  }
+}
+
 let pathPreview;
 let previewMessage = "";
 let spellSquare;
@@ -125,16 +223,26 @@ async function decodeMapImage(blob, entry) {
   }
 }
 
-const fogActive = () => battle.fogEnabled ?? fogOfWarEnabled;
+const wallEditor=createWallEditor({
+  state:()=>({battle,map,surface:root()?.querySelector('#play-grid'),scope:(table?.id??'local')+':'+map.key}),
+  change:()=>{paintBoard();},
+  commit:async(before,next)=>{
+    const scope=(table?.id??'local')+':'+map.key,expected=JSON.stringify(before);
+    return interact(()=>{if(JSON.stringify(battle.wallData??map.wallData??{manual:true,walls:[],doors:[]})!==expected)throw new Error("Walls changed while you were editing. Try again on the updated map.");battle.wallData=structuredClone(next);battle.wallRevision=(battle.wallRevision??0)+1;rememberVision(battle,map);saveExplored(battle,map);},
+      {cosmetic:true,retryMove:()=>scope===(table?.id??'local')+':'+map.key && JSON.stringify(battle.wallData??map.wallData??{manual:true,walls:[],doors:[]})===expected});
+  }
+});
+const displayVision=()=>viewerVision(battle,map,table?controller:null).visible;
+const fogActive = () => !wallEditor.active && (battle.fogEnabled ?? fogOfWarEnabled);
 
-function visibleTokens(sight = context?.game ? partyVision(battle,map) : null, {includeDefeated = false} = {}) {
+function visibleTokens(sight = context?.game ? displayVision() : null, {includeDefeated = false} = {}) {
   if (!sight) return null;
   return new Set(battle.actors.filter((actor) => actor.side === "party" ||
     (!condition(actor,"Invisible") && occupies(actor) || includeDefeated && defeatedCreature(actor)) &&
       (!fogActive() || touchesArea(actor,sight))).map(({id}) => id));
 }
 
-function visibleMarkers(sight = context?.game ? partyVision(battle,map) : null) {
+function visibleMarkers(sight = context?.game ? displayVision() : null) {
   const entries = battle.markers ?? [];
   return sight ? entries.filter((marker) => (!marker.hidden || marker.revealed) && (!fogActive() || sight.has(keyAt(marker.x,marker.y)))) : entries;
 }
@@ -212,7 +320,8 @@ function paintBoard() {
   const footprint = spellSquare ? effect && (effect.area || effect.cone) && actor ?
     spellCells(battle,actor,spellSquare,effect,map,slotRank(castSlot || firstRank || actor.resources?.pactMagic?.slotLevel || effect.level)) :
     new Set([keyAt(spellSquare.x,spellSquare.y)]) : null;
-  const sight = context.game ? partyVision(battle,map) : null;
+  const vision=context.game ? viewerVision(battle,map,table?controller:null) : null;
+  const sight=vision?.visible;
   const visible = visibleTokens(sight,{includeDefeated:true});
   const selectedTarget = context.game && category === "weapon" && canControl(actor)
     ? combatSelection(actor,visible).target?.id : targetId;
@@ -222,12 +331,16 @@ function paintBoard() {
   const drawingMap = alignmentOpen && gridDraft ? {...map,...gridGeometry(map,gridDraft)} : map;
   const options = {
     room:context.game && tool !== "room" ? null : room,selected:actor?.id,target:selectedTarget,cursor,art,
-    path:pathPreview,visible,fog:fogActive() && sight ? {visible:sight,memory:exploredCells(battle,map)} : null,
+    tokenPositions:context.game ? tokenMotion.positions : null,movementLabels:context.game ? tokenMotion.labels : null,
+    path:pathPreview,visible,fog:fogActive() && sight ? {...vision,memory:viewerMemory(battle,map,table?controller:null),settings:fogSettings(battle)} : null,
+    wallEditor:wallEditor.active ? wallEditor : null,
     footprint,showRegions:!context.game || !art || tool==="room",
     markers:visibleMarkers(sight),tokenImages,overlay:alignmentOpen && gridDraft ? "printed" : battle.gridOverlay ?? "artwork",
   };
   camera.paint((canvas,view) => drawGrid(canvas,view,drawingMap,battle,options));
-  tokenHover.sync({map:drawingMap,battle,visible,surface:element.querySelector('#play-grid'),gesturing:()=>camera?.gesturing()});
+  const frame=element.querySelector('.board-frame')?.parentElement;
+  if(frame){let bar=frame.querySelector('.wall-editor-host');if(wallEditor.active){if(!bar){bar=document.createElement('div');bar.className='wall-editor-host';frame.append(bar);}bar.innerHTML=wallEditor.toolbar();}else bar?.remove();}
+  tokenHover.sync({map:drawingMap,battle:{...battle,actors:battle.actors.map(actor=>tokenMotion.positions.has(actor.id) && context.game ? {...actor,...tokenMotion.positions.get(actor.id)} : actor)},visible,surface:element.querySelector('#play-grid'),gesturing:()=>camera?.gesturing()});
 }
 
 function setAlignment(alignment) {
@@ -320,6 +433,7 @@ async function loadArtwork(entry, file, sharedURL) {
 }
 
 function useMap(entry) {
+  tokenMotion.reset();queuedMove=null;
   tokenHover.clear();
   artworkRequest?.abort();
   artworkRequest = null;
@@ -357,7 +471,7 @@ function repairWallPlacement(entry,state) {
   const walls = mapWalls(entry);
   if (state.round) return false;
   const taken = new Set(state.actors.filter(occupies).flatMap(a=>actorCells(a).map(c=>keyAt(c.x,c.y))));
-  const floor = walls ? walls.rows.flatMap((spans,y) => spans.flatMap(([first,last]) =>
+  const floor = walls?.rows ? walls.rows.flatMap((spans,y) => spans.flatMap(([first,last]) =>
     Array.from({length:last-first+1},(_,i) => ({x:first+i,y})))) : Array.from({length:entry.cols*entry.rows},(_,i)=>({x:i%entry.cols,y:Math.floor(i/entry.cols)}));
   const allowed = (cell) => mapFloor(entry,cell.x,cell.y) && !taken.has(keyAt(cell.x,cell.y)) && state.terrain[keyAt(cell.x,cell.y)] !== "wall";
   let changed = false;
@@ -380,9 +494,9 @@ function repairWallPlacement(entry,state) {
 function selectedActor() {
   if(battle.classReaction) return battle.actors.find(actor=>actor.id===battle.classReaction.actor) ?? currentActor(battle);
   const active = currentActor(battle);
-  if (context?.game && category === "move" && active?.side === "party") {
-    const movers = movementGroup(battle).filter(canControl);
-    return movers.find(({id}) => id === selectedId) ?? movers[0] ?? active;
+  if (context?.game && active?.side === "party") {
+    const group=sharedTurnGroup(battle).filter(canControl),ready=group.filter(actor=>!battle.sharedEnded?.[actor.id]);
+    return ready.find(({id})=>id===selectedId) ?? ready[0] ?? group.find(({id})=>id===selectedId) ?? group[0] ?? active;
   }
   return active ?? battle.actors.find(({id}) => id === selectedId);
 }
@@ -398,7 +512,7 @@ function requireControl(actor) {
 function revealStory(previous) {
   if (storyVersion(battle) <= previous || battle.round) return;
   storyOpen = true;
-  tableOpen = logOpen = toolsOpen = false;
+  tableOpen = toolsOpen = false;
   tool = "move";
   gridDraft = null;
 }
@@ -480,7 +594,7 @@ function hotbarUtilities(actor) {
 
 function gameOptions(actor) {
   if(!actor || !canControl(actor) || !actorIsUp(actor) || incapacitated(actor) || battle.classReaction || battle.movement ||
-    battle.round && currentActor(battle)?.id!==actor.id) return playOptions(actor);
+    battle.round && !canTakeTurn(battle,actor)) return playOptions(actor);
   if(hotbarTools) return '<div class="hotbar-selected-heading"><strong>Checks'+(!battle.round ? ' & resting' : '')+'</strong>'+actionButton('Close','hotbar-cancel')+'</div>'+hotbarUtilities(actor);
   const entry=hotbarEntries(actor).find(entry=>entry.id===hotbarSelection);
   if(!entry || entry.mode==='move') return pendingSquare ? '<div class="play-action-row">'+actionButton('Move here','commit-move',{primary:true})+actionButton('Cancel','hotbar-cancel')+'</div>' : '';
@@ -514,12 +628,12 @@ function playOptions(actor) {
   </form>`;
   if (actor.side === "hostile") return "<p>The game is running " + escape(actor.name) + "’s turn.</p>";
   if (!canControl(actor)) return "<p>Waiting for " + escape(actor.name) + ".</p>";
-  if (battle.round && actor !== currentActor(battle)) return '<div class="play-action-row">' +
+  if (battle.round && !canTakeTurn(battle,actor)) return '<div class="play-action-row">' +
     (pendingSquare ? actionButton("Move here","commit-move",{primary:true}) : "") +
-    "<p>You can move now. Your actions begin after " + escape(currentActor(battle).name) + "’s turn.</p></div>";
+    "<p>Waiting for this character’s next turn.</p></div>";
   if (actor.hp === 0) return battle.round && actor.resolveDeath
     ? `<p>${actor.stable ? "Stable at 0 HP" : "Unconscious · " + actor.successes + " successes, " + actor.failures + " failures"}</p>
-      ${actor.stable || battle.deathRolled ? "" : actionButton("Roll death save","death",{primary:true})}` : "";
+      ${actor.stable || turnView(battle,actor).deathRolled ? "" : actionButton("Roll death save","death",{primary:true})}` : "";
   if (incapacitated(actor)) return "<p>" + (condition(actor,"Asleep") ? "Asleep" : "Paralyzed") + "</p>";
   if (context.game && category === "feature") return featureOptions(actor);
   const {list,index,choice,targets,target} = combatSelection(actor,visibleTokens());
@@ -529,10 +643,10 @@ function playOptions(actor) {
   const asleep = battle.round && battle.actors.find((target) => occupies(target) && target.side === actor.side &&
     condition(target,"Asleep") && distanceFt(actor,target) <= 5);
   const moveActions = battle.round ? ["dash","dodge","disengage"].map((act) =>
-    actionButton(act.charAt(0).toUpperCase()+act.slice(1),act,{disabled:Boolean(battle.action)})).join("") +
-    (actor.nimbleEscape || hasFeature(actor,"Cunning Action") ? actionButton("Disengage (bonus)","bonus-disengage",{disabled:battle.bonusUsed}) : "") +
+    actionButton(act.charAt(0).toUpperCase()+act.slice(1),act,{disabled:Boolean(turnView(battle,actor).action)})).join("") +
+    (actor.nimbleEscape || hasFeature(actor,"Cunning Action") ? actionButton("Disengage (bonus)","bonus-disengage",{disabled:turnView(battle,actor).bonusUsed}) : "") +
     (actor.prone ? actionButton("Stand up","stand") : "") +
-    (asleep && !battle.action ? actionButton("Wake "+asleep.name,"wake",{id:asleep.id}) : "") : "";
+    (asleep && !turnView(battle,actor).action ? actionButton("Wake "+asleep.name,"wake",{id:asleep.id}) : "") : "";
   if (context.game && category === "move") return '<div class="play-action-row">' +
     (pendingSquare ? actionButton("Move here","commit-move",{primary:true}) : "") + moveActions + '</div>';
   const legalChoices = list.map((entry,index) => ({entry,index})).filter(({entry}) => !context.game ||
@@ -593,7 +707,7 @@ function playOptions(actor) {
       ${missingWeaponTarget || context.game && hotbarEntries(actor).find(entry=>entry.id===hotbarSelection)?.reason || choice.mode === "spell" && choice.data.level && !slotOptions.length ? "disabled" : ""}>${effect?.exhale ? "Exhale" :
         choice.mode === "spell" ? (choice.usable ? "Cast spell" : "Record manual cast") : choice.mode === "potion" ? "Use item" : "Roll attack"}</button>` : ""}
       ${!context.game ? moveActions : ""}
-      ${actor.concentration?.bolt && battle.round && !battle.action ? actionButton("Sustain Witch Bolt","witch-bolt") : ""}
+      ${actor.concentration?.bolt && battle.round && !turnView(battle,actor).action ? actionButton("Sustain Witch Bolt","witch-bolt") : ""}
     </div>
   </form>`;
 }
@@ -616,8 +730,8 @@ function featureOptions(actor) {
   const enemies = targets.filter((target) => target.side !== actor.side && target.side !== "neutral").sort((a,b) => distanceFt(actor,a)-distanceFt(actor,b));
   const targetList = entry?.target === "ally" ? targets.filter((target) => target.side === actor.side && target !== actor) : enemies;
   const unarmed = classWeapons(actor,battle).filter((weapon) => weapon.unarmed || entry?.monkWeapon && weapon.monkWeapon);
-  const used = entry?.timing === "bonus" && battle.bonusUsed || entry?.timing === "action" && battle.action ||
-    entry?.resource && !(actor.resources?.[entry.resource]?.current >= entry.cost) || entry?.id==="ki-fueled" && !battle.kiAction;
+  const used = entry?.timing === "bonus" && turnView(battle,actor).bonusUsed || entry?.timing === "action" && turnView(battle,actor).action ||
+    entry?.resource && !(actor.resources?.[entry.resource]?.current >= entry.cost) || entry?.id==="ki-fueled" && !turnView(battle,actor).kiAction;
   return (context.game ? '' : '<div class="feature-resource-row">'+resources+"</div>") + (entry ? `<form id="class-action-form" class="play-form">
     ${context.game ? '<input type="hidden" id="feature-select" value="'+escape(entry.id)+'">' : field("Class ability","feature-select",actions.map((action) => option(action.id,action.name+
       (action.resource ? " · "+action.cost+" "+actor.resources[action.resource].name : ""),action.id === entry.id)))}
@@ -751,7 +865,7 @@ function tokenPanel() {
     </form>` : ""}
     ${battle.round && actor ? `<div class="turn-info">
       <h3>${escape(actor.name)}’s turn</h3>
-      ${canControl(actor) ? `<p>${moveLeft(battle,actor)} ft left · ${battle.action ? (battle.action === "attack" && battle.attacksMade < actor.swings ? (actor.swings-battle.attacksMade)+" attacks left" : "Action used") : "Action ready"} · ${battle.bonusUsed ? "Bonus action used" : "Bonus action ready"}</p>` : ""}
+      ${canControl(actor) ? `<p>${moveLeft(battle,actor)} ft left · ${turnView(battle,actor).action ? (turnView(battle,actor).action === "attack" && turnView(battle,actor).attacksMade < actor.swings ? (actor.swings-turnView(battle,actor).attacksMade)+" attacks left" : "Action used") : "Action ready"} · ${turnView(battle,actor).bonusUsed ? "Bonus action used" : "Bonus action ready"}</p>` : ""}
       ${playOptions(actor)}
     </div>` : ""}
     <div class="play-action-row">
@@ -824,22 +938,23 @@ function playPage() {
   const tools = [
     ["room","Inspect room"],
     ["move",battle.round ? "Move token" : "Place token"],
-    ["wall","Wall edge"],
-    ["door","Door (open/close)"],
-    ["erase-wall","Erase wall/door"],
+    
     ["difficult","Difficult terrain"],
     ["clear","Clear terrain"]
   ];
-  return `<header class="play-header"><div><h1>Encounter setup</h1><p>Choose an adventure, map, and party.</p></div>
-      ${actionButton(pending || sceneJobs.has(battle) ? "Preparing…" : "Enter game","enter-game",{primary:true,disabled:pending || sceneJobs.has(battle)})}</header>
+  return `${roomList(rooms,{loading:roomsLoading,error:roomsError,deleting:deletingRoom})}
     ${joinPanel()}
+    <details id="room-setup" class="room-setup" ${roomSetupOpen ? 'open' : ''}><summary>New adventure room</summary>
+    <header class="play-header"><div><h2>Set up your adventure</h2><p>Choose an adventure, map, and starting party.</p></div>
+      ${actionButton(pending || sceneJobs.has(battle) ? "Preparing…" : "Preview encounter","enter-game",{disabled:pending || sceneJobs.has(battle)})}</header>
+    ${roomCreationForm()}
     ${archivePanel()}
     <div class="play-layout">
       <div class="play-main">
         <section class="play-panel play-board-panel">
           <div class="play-map-select">
-            ${field("Adventure","play-module",moduleOptions)}
-            ${!isTraining ? field("Map","play-map",maps.map((entry) => option(entry.key,entry.title,map.key===entry.key))) : ""}
+            ${field("Adventure","play-module",moduleOptions,pending ? "disabled" : "")}
+            ${!isTraining ? field("Map","play-map",maps.map((entry) => option(entry.key,entry.title,map.key===entry.key)),pending ? "disabled" : "") : ""}
           </div>
           <div class="play-heading board-title"><h2>${escape(map.title)}</h2>
             ${!isTraining ? actionButton(art ? "Change map image" : "Choose map image","art") : ""}
@@ -869,21 +984,23 @@ function playPage() {
         </section>
       </div>
       <div class="play-rail">${tokenPanel()}${roomPanel()}</div>
-    </div>`;
+    </div></details>`;
 }
 
 function redraw() {
   const element = root();
   if (!element) return;
   const active = document.activeElement?.id;
+  if(context.game && table?.state) document.title=(table.state.room?.name || map.title)+' · Wayfarer';
+  if(root().querySelector("#room-setup")) roomSetupOpen=root().querySelector("#room-setup").open;
   if (context.sessionRoute && !table?.state) {
-    element.innerHTML = `<section class="session-entry play-panel"><h1>Join shared session</h1>
+    element.innerHTML = `<section class="session-entry play-panel"><h1>Enter adventure room</h1>
       ${table?.needsUsername ? `<form id="session-username-form" class="session-inline">
         ${input("Username","session-username",table.usernameDraft ?? rememberedUsername(),"text",'required maxlength="24" autocomplete="nickname"')}
-        <button class="button primary small" type="submit" ${table.joining ? "disabled" : ""}>${table.joining ? "Joining…" : "Join session"}</button>
+        <button class="button primary small" type="submit" ${table.joining ? "disabled" : ""}>${table.joining ? "Joining…" : "Join room"}</button>
       </form><p role="status">${escape(tableMessage)}</p>` : `<p role="status">${escape(tableMessage || "Connecting to the table…")}</p>
       ${table?.error ? actionButton("Try again","retry-session") : ""}`}
-      <a href="#play" class="button outline small">Back to setup</a></section>`;
+      <a href="#play" class="button outline small">Back to rooms</a></section>`;
     if (active === "session-username") element.querySelector("#session-username")?.focus({preventScroll:true});
     return;
   }
@@ -895,6 +1012,9 @@ function redraw() {
   const previousHotbar=element.querySelector('.game-hotbar');
   const previousActions=previousHotbar?.querySelector('.hotbar-grid');
   const hotbarScroll=previousActions && {view:previousHotbar.dataset.hotbarView,left:previousActions.scrollLeft,top:previousActions.scrollTop,tabs:previousHotbar.querySelector('.hotbar-tabs').scrollLeft};
+  const logScope=table?.id ?? map.key;
+  if(eventLogScope!==logScope) {eventLogScroll.clear();eventLogScope=logScope;}
+  rememberEventLogScroll();
   table?.chat?.rememberScroll();
   const hotbarActorNow=selectedActor();
   if(context.game && hotbarActor!==hotbarActorNow?.id) {
@@ -906,13 +1026,13 @@ function redraw() {
   if(selectedEntry?.mode==='feature') {featureChoice=selectedEntry.actionId;category='feature';}
   if(hotbarSelection && !selectedEntry) {hotbarSelection='';category='move';resetActionSelection();}
   element.innerHTML = context.game ? gameScreen({
-    map,battle,selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
+    map,battle,roomName:table?.state?.room?.name,saveStatus:table?.writing ? 'Saving…' : table?.online ? 'Saved' : 'Offline',selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
     visibleInitiative:visibleTokens(),
     category,actions:gameOptions(selectedActor()), tacticalTools:tableTools(), room,status,artworkNote,
     hotbar:hotbarActorNow ? renderActionBar(barEntries,hotbarActorNow,{tab:hotbarTab,filter:hotbarFilter,selected:hotbarSelection,expanded:hotbarExpanded,utilitiesOpen:hotbarTools}) : '',
     actionPanelOpen:Boolean(hotbarTools || selectedEntry && selectedEntry.mode!=='move' || pendingSquare || battle.classReaction || battle.movement || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && canRescue(battle,map,hotbarActorNow)),
     resourceControls:renderActionResources(hotbarActorNow,battle,hotbarFilter),
-    logOpen,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
+    logOpen:eventLogMode==='expanded',logHistory:table?.state?.battle.log ?? battle.log,eventLogMode,eventLogPlacement,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
     storyOpen,storyContent:storyOpen ? storyPanel(battle,map) : "",
     rescueAvailable:canControl(selectedActor()) && canRescue(battle,map,selectedActor()),
     canAct:canControl(selectedActor()), controllers:table ? battle.controllers ?? {} : null, controller,
@@ -935,6 +1055,7 @@ function redraw() {
   if (chatSlot && table?.chat) {
     const character = battle.actors.find((actor) => actor.side === "party" && battle.controllers?.[actor.id] === controller);
     table.chat.mount(chatSlot,character?.name || table.player);
+    table.chat.setActivity(eventLogPlacement==='chat',element.querySelector('.game-event-slot'));
   }
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
   if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open","");
@@ -955,9 +1076,11 @@ function redraw() {
   }
   const cueLayer = element.querySelector(".combat-cues");
   const committedBattle = table?.state?.battle ?? battle;
+  if(context.game) tokenMotion.sync(table?.id ?? map.key,committedBattle);
   combatCues.sync(table?.id ?? battle,committedBattle.actionEvents ?? committedBattle.monsterEvents ?? [],cueLayer ? {
-    layer:cueLayer,frame,grid:frame.querySelector("#play-grid"),map,sight:partyVision(committedBattle,map),feed:element.querySelector(".game-event-slot"),
+    layer:cueLayer,frame,grid:frame.querySelector("#play-grid"),map,sight:viewerVision(committedBattle,map,table?controller:null).visible,fogEnabled:fogActive(),feed:element.querySelector(".game-live-log"),motion:tokenMotion,
   } : null);
+  restoreEventLogScroll();
   camera = createCamera(frame,element.querySelector(".map-controls"),map,cameraState,()=>{combatCues.place();tokenHover.refresh();});
   paintBoard();
   if (active) element.querySelector("#"+CSS.escape(active))?.focus({preventScroll:true});
@@ -976,18 +1099,36 @@ function tableTools() {
   const tools = [
     ["move","Move token"],
     ["room","Inspect room"],
-    ["wall","Wall edge"],
-    ["door","Door (open/close)"],
-    ["erase-wall","Erase wall/door"],
+    
     ["difficult","Difficult terrain"],
     ["clear","Clear terrain"]
   ];
   return '<h2>Table tools</h2>' +
     actionButton("Dice animations: "+(combatCues.diceEnabled ? "On" : "Off"),"dice-effects") +
-    actionButton("Fog of War: "+(fogActive() ? "On" : "Off"),"toggle-fog") +
+    actionButton("Fog of War: "+((battle.fogEnabled??fogOfWarEnabled) ? "On" : "Off"),"toggle-fog") +
+    field('Activity log','activity-placement',[['separate','Separate panel on the right'],['chat','Inside party chat'],['hidden','Hidden']].map(([value,label])=>option(value,label,eventLogPlacement===value))) +
+    dynamicFogTools() +
     field("Grid tool","grid-tool",tools.map(([value,label]) => option(value,label,tool===value))) +
     (battle.round ? actionButton("End initiative","end-initiative",{disabled:Boolean(battle.movement)}) : "") +
     gridSettings() + manualHP() + (tool==="room" ? roomPanel() : "");
+}
+
+function dynamicFogTools(){
+  const settings=fogSettings(battle),heroes=battle.actors.filter(a=>a.side==='party');
+  return `<section class="fog-controls"><h3>Dynamic fog</h3><button type="button" data-play="edit-walls" class="button outline small">Draw / edit walls</button>
+  <p class="play-hint">Place points freely on the map. Nearby vertices snap together. All room players share wall edits and fog settings.</p>
+  <form id="fog-settings"><label><input type="checkbox" name="sharedVision" ${settings.sharedVision?'checked':''}> Share party vision</label>
+  <label><input type="checkbox" name="remember" ${settings.remember?'checked':''}> Remember explored areas</label>
+  <label><input type="checkbox" name="blockMovement" ${settings.blockMovement?'checked':''}> Walls block movement</label>
+  <label>Fog opacity (%)<input type="number" name="opacity" min="10" max="100" value="${Math.round(settings.opacity*100)}" required></label>
+  <label>Explored opacity (%)<input type="number" name="exploredOpacity" min="0" max="100" value="${Math.round(settings.exploredOpacity*100)}" required></label>
+  <label>Soft edge (feet)<input type="number" name="softness" min="0" max="5" step="0.25" value="${settings.softness}" required></label>
+  <button class="button outline small">Save fog settings</button></form>
+  <button type="button" class="button outline small" data-play="reset-fog-memory">Reset exploration</button>
+  <h3>Token vision</h3>${heroes.map(a=>{const v=visionSettings(a);return `<form class="token-vision-form" data-vision-actor="${escape(a.id)}"><strong>${escape(a.name)}</strong>
+  <label><input name="enabled" type="checkbox" ${v.enabled?'checked':''}> Vision enabled</label>
+  <div class="vision-fields"><label>Range (ft)<input name="range" type="number" min="0" max="300" value="${v.range}" required></label><label>Cone (°)<input name="angle" type="number" min="1" max="360" value="${v.angle}" required></label><label>Facing (°)<input name="facing" type="number" min="0" max="360" value="${v.facing}" required></label></div>
+  <small>0° right · 90° down · 180° left · 270° up</small><button class="button outline small">Save vision</button></form>`;}).join('')}</section>`;
 }
 
 function resetActionSelection() {
@@ -1081,11 +1222,11 @@ async function loadRoster(records, area) {
   return creatures.length;
 }
 
-async function launchGame() {
+async function launchGame(hostOptions=null,characters=context.characters) {
   await ensureScene();
   const entry = map.regions.find(({id}) => id === "01b") ?? map.regions[0];
   if (!battle.round && !battle.actors.some((actor) => actor.side === "party")) {
-    for (const character of context.characters.slice(0,4)) {
+    for (const character of characters.slice(0,4)) {
       try {add(partyActor(character),entry);} catch (error) {log(battle,error.message);}
     }
   }
@@ -1126,6 +1267,7 @@ async function launchGame() {
   advanceCombat();
   rememberVision(battle,map);
   saveExplored(battle,map);
+  if(hostOptions) {await hostTable(hostOptions);return;}
   preferredGame = {module:moduleId,map:map.key};
   try {localStorage.setItem(activeMapKey,JSON.stringify(preferredGame));} catch {}
   saveBattle();
@@ -1210,7 +1352,7 @@ function add(actor, area = room) {
 
 function canUseMapSquare(x,y) {
   if (!context.game || !fogActive() || tool === "wall" || tool === "door" || tool === "erase-wall") return true;
-  if (hasExplored(exploredCells(battle,map),x,y) || partyVision(battle,map).has(keyAt(x,y))) return true;
+  if (hasExplored(viewerMemory(battle,map,table?controller:null),x,y) || displayVision().has(keyAt(x,y))) return true;
   const actor = selectedActor();
   return tool === "move" && category === "move" && actor?.side === "party" && occupies(actor) &&
     mapFloor(map,x,y,battle) && distanceFt(actor,{x,y}) <= 5;
@@ -1283,9 +1425,9 @@ function sharedSheet(record) {
   return sheet;
 }
 
-const tableState = () => ({battle,alignment:map.printedGrid ?? null});
+const tableState = () => ({...(table?.state?.room ? {room:table.state.room} : {}),battle,alignment:map.printedGrid ?? null});
 
-async function hostTable() {
+async function hostTable({roomName,username}={}) {
   const route = location.hash;
   pending = true;
   setTableMessage("Starting shared session…");
@@ -1293,7 +1435,12 @@ async function hostTable() {
     rememberVision(battle,map);
     saveExplored(battle,map);
     const state = tableState();
+    state.room={name:roomName || map.title,adventure:map.module,adventureName:context.adventures.find(entry=>entry.id===map.module)?.name ?? map.title,createdAt:Date.now(),updatedAt:Date.now()};
     state.battle = structuredClone(battle);
+    if(roomName) {
+      const first=state.battle.actors.find(actor=>actor.side==='party');
+      if(first) (state.battle.controllers ??= {})[first.id]=controller;
+    }
     state.battle.sheets = Object.fromEntries(context.characters
       .filter(({id}) => battle.actors.some((actor) => actor.id === "party:"+id))
       .map((character) => ["party:"+character.id,sharedSheet(character)]));
@@ -1305,9 +1452,15 @@ async function hostTable() {
       if (!tokens.has(hash)) tokens.set(hash,await localTokenBlob(hash));
     }
     if (location.hash !== route) return;
-    const result = await createSession({...map,detectedGrid},state,customArtwork,tokens);
+    const result = await createSession({...map,detectedGrid},state,customArtwork,tokens,controller);
+    rooms=rememberRoom(result.id,map,state);
+    if(username) {
+      rememberedUsername(username);
+      // If joining is interrupted, the saved room link still lets the player finish joining.
+      await syncSessionPlayers(result.id,controller,username).catch(()=>null);
+    }
     if (location.hash !== route) return;
-    showInvitation = result.id;
+    showInvitation = roomName ? null : result.id;
     location.hash = sessionHash(result.id);
   } catch (error) {
     if (location.hash === route) {
@@ -1317,6 +1470,7 @@ async function hostTable() {
         redraw();
       }
     }
+    if(roomName) throw error;
   } finally {pending = false;}
 }
 
@@ -1327,7 +1481,7 @@ function setTableMessage(message) {
 }
 
 function applyTableState(connection, snapshot) {
-  const turn = currentActor(battle)?.id;
+  const turn = selectedActor()?.id;
   const round = battle.round;
   const storyBefore = connection.state ? storyVersion(battle) : 0;
   const geometryChanged = JSON.stringify(map.printedGrid ?? null) !== JSON.stringify(snapshot.state.alignment);
@@ -1356,7 +1510,7 @@ function applyTableState(connection, snapshot) {
     selectedId = battle.actors.find((actor) => actorIsUp(actor) && canControl(actor))?.id ?? "";
   }
   if (storyBefore > 0 || !showInvitation) revealStory(storyBefore);
-  if (turn !== currentActor(battle)?.id || round !== battle.round) {
+  if (turn !== selectedActor()?.id || round !== battle.round) {
     resetActionSelection();
     category = "move";
   }
@@ -1381,7 +1535,8 @@ async function pollTable(connection) {
       setTableMessage("Connected");
       if (enemyTurnPending(battle)) redraw();
     }
-  } catch {
+  } catch (error) {
+    if(error.status===404 && table===connection){rooms=forgetRoom(connection.id);roomsError='This adventure room was deleted.';location.hash='#play';return;}
     if (table === connection) {
       connection.online = false;
       setTableMessage("Connection lost. Reconnecting…");
@@ -1440,6 +1595,7 @@ async function connectTable(connection, username) {
     applyTableState(connection,snapshot);
     connection.chat ??= createGameChat(connection.id,controller);
     recentSession(connection.id);
+    rooms=rememberRoom(connection.id,map,connection.state);
     tableOpen = showInvitation === connection.id;
     showInvitation = null;
     if (map.asset || snapshot.hasArtwork) loadArtwork(map,null,snapshot.hasArtwork ? artworkURL(connection.id) : null);
@@ -1447,6 +1603,7 @@ async function connectTable(connection, username) {
     connection.playerTimer = setTimeout(() => pollPlayers(connection),3500);
   } catch (failure) {
     if (table !== connection) return;
+    if(failure.status===404){rooms=forgetRoom(connection.id);roomsError='This adventure room is no longer available.';location.hash='#play';return;}
     tableMessage = failure.message;
     connection.error = true;
   } finally {
@@ -1463,6 +1620,7 @@ function leaveTable() {
   artworkRequest?.abort();
   ({map,battle,art,artworkNote,customArtwork,detectedGrid,room,selectedId,tool} = table.solo);
   table = null;
+  roomSetupOpen=false;
   tableOpen = false;
   tableMessage = "";
   status = "";
@@ -1472,7 +1630,8 @@ function leaveTable() {
 }
 
 export function showPlay(data) {
-  context = data;
+  context = data;document.title=defaultPageTitle;
+  if(!data?.game) {tokenMotion.reset();queuedMove=null;}
   if (!data?.game) focusedGameMap = null;
   if (!data?.sessionRoute) leaveTable();
   if (!data) {
@@ -1495,6 +1654,7 @@ export function showPlay(data) {
     else {tableMessage = "Check the session link and try again."; redraw();}
     return;
   }
+  if(!data.game) {rooms=knownRooms();refreshRooms();}
   redraw();
   if (hasArchive() && lastAdventure !== context.activeAdventure) {
     lastAdventure = context.activeAdventure;
@@ -1519,15 +1679,26 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-async function interact(run, {cosmetic = false, retryMove, remaining = 2} = {}) {
+async function interact(run, {cosmetic = false, retryMove, remaining = 6} = {}) {
   const connection = table;
   if (connection && (!connection.state || connection.writing)) return;
   let succeeded = true;
   const storyBefore = storyVersion(battle);
-  const turnBefore = currentActor(battle)?.id;
+  const turnBefore = selectedActor()?.id;
   const roundBefore = battle.round;
+  const commandSelection={category,tool,combatChoice,castSlot,targetId,spellSquare,featureChoice,hotbarSelection,hotbarTools,pendingSquare,extraTargets:new Map(extraTargets)};
+  const commandActor=selectedActor(),actorBefore=JSON.stringify(commandActor),budgetBefore=commandActor && turnBudgetStamp(battle,commandActor);
+  const retrySharedAction=()=>{
+    const actor=selectedActor();
+    return !cosmetic && context?.game && roundBefore===battle.round && commandActor?.id===actor?.id &&
+      canControl(actor) && canTakeTurn(battle,actor) && !battle.movement && !battle.classReaction &&
+      JSON.stringify(actor)===actorBefore && turnBudgetStamp(battle,actor)===budgetBefore;
+  };
   if (connection) connection.writing = true;
-  if(connection) root()?.querySelector('.game-hud')?.setAttribute('aria-busy','true');
+  if(connection) {
+    root()?.querySelector('.game-hud')?.setAttribute('aria-busy','true');
+    const saving=root()?.querySelector('.game-save-status');if(saving) saving.textContent='Saving…';
+  }
   try {
     status = "";
     await run();
@@ -1540,7 +1711,7 @@ async function interact(run, {cosmetic = false, retryMove, remaining = 2} = {}) 
     }
     if (!cosmetic && context) {
       advanceCombat();
-      if (turnBefore !== currentActor(battle)?.id || roundBefore !== battle.round) {
+      if (turnBefore !== selectedActor()?.id || roundBefore !== battle.round) {
         resetActionSelection();
         category = "move";
       }
@@ -1559,6 +1730,7 @@ async function interact(run, {cosmetic = false, retryMove, remaining = 2} = {}) 
     status = failure instanceof Error ? failure.message : "The action could not be completed.";
     succeeded = false;
     if (connection && connection === table) {
+      queuedMove=null;
       applyTableState(connection,connection);
       connection.writing = false;
       redraw();
@@ -1576,9 +1748,11 @@ async function interact(run, {cosmetic = false, retryMove, remaining = 2} = {}) 
         if (result.state) {
           succeeded = false;
           applyTableState(connection,result);
-          if (remaining > 0 && retryMove?.()) {
+          if (remaining > 0 && (retryMove ? retryMove() : retrySharedAction())) {
+            ({category,tool,combatChoice,castSlot,targetId,spellSquare,featureChoice,hotbarSelection,hotbarTools,pendingSquare}=commandSelection);
+            extraTargets.clear();for(const [key,value] of commandSelection.extraTargets) extraTargets.set(key,value);
             connection.writing = false;
-            return await interact(run,{retryMove,remaining:remaining-1});
+            return await interact(run,{cosmetic,retryMove,remaining:remaining-1});
           }
           status = "Another player acted first. Review the board and try again.";
         } else {
@@ -1597,20 +1771,31 @@ async function interact(run, {cosmetic = false, retryMove, remaining = 2} = {}) 
     } finally {connection.writing = false;}
   }
   if (context) redraw();
+  if(connection===table && queuedMove) {
+    const move=queuedMove;queuedMove=null;
+    if(succeeded) setTimeout(()=>{
+      if(context?.game && table===connection && map.key===move.map && battle.round===move.round && category==='move' && selectedActor()?.id===move.actor) interactCell(move.x,move.y,regionAt(map,...cellCenter(map,move)),{step:move.step});
+    },0);
+  }
   return succeeded;
 }
 
-function interactCell(x,y,region) {
-  const mover = context.game && battle.round && category === "move" && tool === "move" ? selectedActor() : null;
+function interactCell(x,y,region,{step=false}={}) {
+  const mover = context.game && category === "move" && tool === "move" ? selectedActor() : null;
+  if(table?.writing && mover && canControl(mover) && (!battle.round || movementGroup(battle).includes(mover))) {queuedMove={x,y,actor:mover.id,map:map.key,round:battle.round,step};return;}
   const {round} = battle;
   const destinationFree = () => !battle.actors.some((actor) => occupies(actor) && containsCell(actor,x,y));
   const retryMove = mover && destinationFree() ? () => {
     const current = selectedActor();
     return battle.round === round && current?.id === mover.id && current.x === originX && current.y === originY &&
-      canControl(current) && movementGroup(battle).includes(current) && !battle.movement && destinationFree();
+      canControl(current) && (!battle.round || movementGroup(battle).includes(current)) && !battle.movement && destinationFree();
   } : undefined;
   const originX = mover?.x, originY = mover?.y;
-  return interact(() => checkCell(x,y,region),{retryMove});
+  return interact(() => {
+    // Direction keys take one adjacent step; never pathfind around a blocked edge.
+    if(step && previewMovement(battle,selectedActor(),x,y,map)?.path.length!==1) return;
+    return checkCell(x,y,region);
+  },{retryMove,remaining:6});
 }
 
 export async function setGameTokenImage(id,image,session) {
@@ -1635,18 +1820,14 @@ document.addEventListener("click", (event) => {
     camera?.control(cameraControl.dataset.camera,cameraToken());
     return;
   }
+  if(event.target.closest?.('.game-exit') && table?.writing) {event.preventDefault();status='Saving your action…';redraw();return;}
   if (event.target.id === "play-grid") {
     const pos = gridPosition(map,event.target,event);
     const {x,y,region,gx,gy,fx,fy,edge} = pos;
     const wallData = battle.wallData;
     const clickedDoor = doorAt(wallData, gx, gy, 0.45);
     if (clickedDoor && (tool === "move" || tool === "room" || tool === "door")) {
-      toggleDoor(wallData, clickedDoor.id);
-      battle.wallRevision = (battle.wallRevision ?? 0) + 1;
-      status = `Door ${clickedDoor.state}.`;
-      rememberVision(battle, map);
-      saveBattle();
-      redraw();
+      void interact(()=>{const door=toggleDoor(battle.wallData,clickedDoor.id);battle.wallRevision=(battle.wallRevision??0)+1;rememberVision(battle,map);saveExplored(battle,map);},{cosmetic:true});
       return;
     }
     if (tool === "wall") {
@@ -1708,8 +1889,27 @@ document.addEventListener("click", (event) => {
     return;
   }
   const button = event.target.closest("[data-play]");
+  if(button?.dataset.play==='new-room') {roomSetupOpen=true;root().querySelector('#room-setup')?.setAttribute('open','');root().querySelector('#new-room-name')?.focus();return;}
   if (!button || pending) return;
   const {play,id} = button.dataset;
+  if(play==='delete-room'){
+    if(deletingRoom)return;
+    const roomId=id;++roomListRequest;roomsLoading=false;deletingRoom=roomId;roomsError='';redraw();
+    void(async()=>{try{
+      const snapshot=await readSession(roomId),name=snapshot.state.room?.name||snapshot.map.title;
+      if(!confirm(`Permanently delete “${name}”?\n\nThis removes the saved adventure, chat, and uploaded room images for everyone. This cannot be undone.`))return;
+      await deleteRoom(roomId,controller,snapshot.revision);rooms=forgetRoom(roomId);roomsError='Room deleted.';
+    }catch(error){if(error.status===404){rooms=forgetRoom(roomId);roomsError='Room removed.';}else roomsError=error.message;}
+    finally{deletingRoom='';if(context && !context.game)redraw();}})();return;
+  }
+  if(play==='game-log' && eventLogPlacement==='hidden'){setActivityPlacement('separate');return;}
+  if(play==='game-log' && eventLogPlacement==='chat')table?.chat?.show();
+  if(['game-log','event-log-expand','event-log-toggle'].includes(play)) {
+    const next=play==='event-log-toggle' ? eventLogMode==='collapsed' ? 'compact' : 'collapsed' : eventLogMode==='expanded' ? 'compact' : 'expanded';
+    setEventLogMode(next);
+    if(next==='expanded') {toolsOpen=false;tableOpen=false;storyOpen=false;}
+    redraw();return;
+  }
   if(play==='hotbar-scroll') {
     const grid=root().querySelector('.hotbar-grid');
     grid?.scrollBy({left:(id==='back' ? -1 : 1)*Math.max(150,grid.clientWidth*.7),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
@@ -1761,12 +1961,11 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (play === "dice-effects") {combatCues.toggleDice();redraw();return;}
+  if(play==='game-tools'){toolsOpen=!toolsOpen;tableOpen=false;storyOpen=false;if(!toolsOpen){tool='move';gridDraft=null;}redraw();return;}
+  if(play==='edit-walls'){toolsOpen=false;tool='move';resetActionSelection();wallEditor.setMode('draw');redraw();return;}
+  if(play==='reset-fog-memory'){void interact(()=>{forgetExploration(battle);delete battle.fogMemoryByActor;rememberVision(battle,map);saveExplored(battle,map);},{cosmetic:true});return;}
   if (play === "toggle-fog") {
-    battle.fogEnabled = !fogActive();
-    status = battle.fogEnabled ? "Fog of war enabled." : "Fog of war disabled.";
-    saveBattle();
-    redraw();
-    return;
+    void interact(()=>{battle.fogEnabled=!(battle.fogEnabled??fogOfWarEnabled);},{cosmetic:true});return;
   }
   if (play === "commit-move") {
     if (pendingSquare) {
@@ -1779,13 +1978,13 @@ document.addEventListener("click", (event) => {
   if (play === "retry-session") {if (table?.error) connectTable(table); return;}
   if (play === "game-table") {
     tableOpen = !tableOpen;
-    if (tableOpen) {logOpen = false; toolsOpen = false; storyOpen = false; tool = "move"; gridDraft = null;}
+    if (tableOpen) {toolsOpen = false; storyOpen = false; tool = "move"; gridDraft = null;}
     redraw();
     return;
   }
   if (play === "game-story") {
     storyOpen = !storyOpen;
-    if (storyOpen) {logOpen = false; toolsOpen = false; tableOpen = false; tool = "move"; gridDraft = null;}
+    if (storyOpen) {toolsOpen = false; tableOpen = false; tool = "move"; gridDraft = null;}
     redraw();
     return;
   }
@@ -1873,8 +2072,6 @@ document.addEventListener("click", (event) => {
         requireControl(selectedActor());
         rescueSildar(battle,map,selectedActor());
         break;
-      case "game-log": logOpen = !logOpen; toolsOpen = false; tableOpen = false; storyOpen = false; break;
-      case "game-tools": toolsOpen = !toolsOpen; logOpen = false; tableOpen = false; storyOpen = false; if (!toolsOpen) {tool="move"; gridDraft=null;} break;
       case "archive-local": {
         pending = true;
         status = "Opening the supplied archive…";
@@ -1921,8 +2118,7 @@ document.addEventListener("click", (event) => {
         startInitiative(battle); resetActionSelection(); tool = "move"; break;
       case "end-initiative": endInitiative(battle); combatChoice = ""; targetId = ""; tool = "move"; break;
       case "end":
-        if (selectedActor() !== currentActor(battle)) throw new Error("Wait for this character’s action turn.");
-        requireControl(currentActor(battle)); endTurn(battle); resetActionSelection(); category = "move"; break;
+        requireControl(selectedActor()); endTurn(battle,Math.random,selectedActor()); resetActionSelection(); category = "move"; break;
       case "death": requireControl(selectedActor()); deathSave(battle,selectedActor()); break;
       case "arm-inspiration": {
         const actor = selectedActor();
@@ -1957,8 +2153,30 @@ document.addEventListener("click", (event) => {
   });
 });
 
+let lastMovementKeyAt=0;
+function moveWithKey(event) {
+  const direction={w:[0,-1],a:[-1,0],s:[0,1],d:[1,0],ArrowUp:[0,-1],ArrowLeft:[-1,0],ArrowDown:[0,1],ArrowRight:[1,0]}[event.key.length===1 ? event.key.toLowerCase() : event.key];
+  if(!direction || !context?.game || !root() || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+    event.target.closest?.('input,select,textarea,[contenteditable]:not([contenteditable="false"]),.game-chat,.game-flyout,.game-event-slot,.dice-theatre,[role="menu"]') ||
+    document.querySelector('dialog[open]') || ['wall','door','erase-wall'].includes(tool)) return false;
+  const actor=battle.actors.find(actor=>actor.id===selectedId) ?? selectedActor();
+  if(!actor || !canControl(actor) || !actorIsUp(actor) || !occupies(actor) || incapacitated(actor) || battle.movement || battle.classReaction ||
+    battle.round && !movementGroup(battle).includes(actor)) return false;
+  event.preventDefault();
+  const now=performance.now();
+  if(event.repeat && now-lastMovementKeyAt<140) return true;
+  lastMovementKeyAt=now;
+  const [dx,dy]=direction,x=actor.x+dx,y=actor.y+dy;
+  if(previewMovement(battle,actor,x,y,map)?.path.length!==1) return true;
+  selectedId=actor.id;resetActionSelection();category='move';tool='move';
+  camera?.reveal(mapPoint({x,y}));
+  interactCell(x,y,regionAt(map,...cellCenter(map,{x,y})),{step:true});
+  return true;
+}
+
 document.addEventListener("keydown", (event) => {
-  if (event.target.id !== "play-grid") return;
+  if(moveWithKey(event)) return;
+  if (event.defaultPrevented || event.target.id !== "play-grid") return;
   const keys = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
   const viewKey = {"+":"in","=":"in","-":"out","0":"fit"}[event.key];
   if (viewKey && !event.ctrlKey && !event.metaKey) {
@@ -1999,7 +2217,7 @@ function movePreview(x,y) {
 }
 
 document.addEventListener("pointermove", (event) => {
-  if (!context?.game || (gridDraft && root()?.querySelector("#grid-settings")?.open) || event.target.id !== "play-grid") return;
+  if (wallEditor.active || !context?.game || (gridDraft && root()?.querySelector("#grid-settings")?.open) || event.target.id !== "play-grid") return;
   if (tool === "wall" || tool === "door" || tool === "erase-wall") {
     const pos = gridPosition(map,event.target,event);
     cursor = {x:pos.x, y:pos.y, edge:pos.edge, tool};
@@ -2023,7 +2241,7 @@ document.addEventListener('pointerover',positionHotbarTooltip);
 document.addEventListener('focusin',positionHotbarTooltip);
 document.addEventListener('keydown',event=>{
   if(!context?.game || !root() || event.altKey || event.ctrlKey || event.metaKey || event.repeat ||
-    event.target.closest?.('input,select,textarea,[contenteditable="true"]') || document.querySelector('dialog[open]')) return;
+    event.target.closest?.('input,select,textarea,[contenteditable="true"],.game-event-slot') || document.querySelector('dialog[open]')) return;
   if(event.key==='Escape' && (hotbarSelection || hotbarTools || pendingSquare)) {event.preventDefault();resetActionSelection();category='move';tool='move';redraw();return;}
   if(!/^\d$/.test(event.key)) return;
   const tile=root().querySelector('[data-hotbar-shortcut="'+event.key+'"]');
@@ -2038,6 +2256,10 @@ document.addEventListener('wheel',event=>{
 
 document.addEventListener("input", (event) => {
   if (!root()?.contains(event.target)) return;
+  if(event.target.id==='new-room-name') {roomDraft.name=event.target.value;return;}
+  if(event.target.id==='new-room-username') {roomDraft.username=event.target.value;return;}
+  if(event.target.id==='new-room-prepared') {roomDraft.prepared=event.target.checked;redraw();return;}
+  if(event.target.name==='room-character') {roomDraft.party=new Set([...root().querySelectorAll('[name="room-character"]:checked')].map(input=>input.value));return;}
   if (event.target.id === "session-username" && table?.needsUsername) {
     table.usernameDraft = event.target.value;
     return;
@@ -2073,6 +2295,7 @@ document.addEventListener("change", (event) => {
     case "play-module": selectModule(value); return;
     case "play-map": {const entry = maps.find(({key}) => key===value); if (entry) useMap(entry); break;}
     case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
+    case "activity-placement": setActivityPlacement(value); return;
     case "grid-tool": tool = value; break;
     case "grid-overlay": interact(() => {battle.gridOverlay = value;}); return;
     case "room-creature": selectedCreature = Number(value); break;
@@ -2169,6 +2392,7 @@ document.addEventListener("submit", (event) => {
   if (!root()?.contains(event.target)) return;
   event.preventDefault();
   const value = (id) => event.target.querySelector("#"+id)?.value;
+  if(event.target.id==='create-room-form') {createAdventureRoom();return;}
   if (event.target.id === "session-join-form") {
     const id = sessionCode(value("session-invite"));
     if (id) location.hash = sessionHash(id);
@@ -2287,3 +2511,12 @@ document.addEventListener("submit", (event) => {
     }
   });
 });
+
+document.addEventListener('click',event=>{const button=event.target.closest?.('[data-wall-editor]');if(button){event.preventDefault();event.stopImmediatePropagation();void wallEditor.action(button.dataset.wallEditor);}},true);
+document.addEventListener('submit',event=>{
+ const form=event.target;if(form.id!=='fog-settings' && !form.matches?.('[data-vision-actor]'))return;event.preventDefault();event.stopImmediatePropagation();const values=new FormData(form);
+ if(form.id==='fog-settings')void interact(()=>{battle.fogSettings={sharedVision:values.has('sharedVision'),remember:values.has('remember'),blockMovement:values.has('blockMovement'),opacity:Number(values.get('opacity'))/100,exploredOpacity:Number(values.get('exploredOpacity'))/100,softness:Number(values.get('softness'))};rememberVision(battle,map);saveExplored(battle,map);},{cosmetic:true});
+ else {const id=form.dataset.visionActor;void interact(()=>{const actor=battle.actors.find(a=>a.id===id);if(actor){actor.vision={enabled:values.has('enabled'),range:Number(values.get('range')),angle:Number(values.get('angle')),facing:Number(values.get('facing'))};rememberVision(battle,map);saveExplored(battle,map);}},{cosmetic:true});}
+},true);
+
+document.addEventListener('wayfarer:activity-placement',event=>setActivityPlacement(event.detail));

@@ -151,7 +151,7 @@ function attackFromSheet(item) {
   const damage = suffix ? item.damage.slice(0, suffix.index) : item.damage;
   const unarmed = /^unarmed strike\b/i.test(name);
   const result = {name,baseName:weapon?.name,magical:Boolean(item.magical || /\+[123]\b/.test(name)),bonus, damage, type:suffix?.[1]?.toLowerCase() ?? (unarmed ? "bludgeoning" : diceTerms(damage) ? types[weapon?.dmgType] : undefined),
-    reach:weapon?.property?.includes("R") ? 10 : 5,finesse:weapon?.property?.includes("F"),monkWeapon:weapon?.type === "M" &&
+    reach:weapon?.property?.includes("R") ? 10 : 5,finesse:Boolean(item.finesse || weapon?.property?.includes("F")),monkWeapon:weapon?.type === "M" &&
       (!weapon.property?.includes("H") && !weapon.property?.includes("2H") && weapon.weaponCategory === "simple" || /shortsword/i.test(weapon.name))};
   if (unarmed) {result.unarmed=true;result.monkWeapon=true;}
   if (weapon?.type === "R") {
