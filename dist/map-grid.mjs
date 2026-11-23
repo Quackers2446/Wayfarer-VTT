@@ -11,7 +11,7 @@ export function sourceGrid(metadata) {
   const guideSize = metadata.distance ? nativeCell : metadata.size;
   return {
     width:guideSize, height:guideSize,
-    x:number(metadata.offsetX,0)/scale, y:number(metadata.offsetY,0)/scale,
+    x:number(metadata.offsetX,0), y:number(metadata.offsetY,0),
     divisions:(guideSize/nativeCell)*(distance/FIVE_FEET),
   };
 }

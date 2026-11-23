@@ -158,4 +158,27 @@ const c3Updated = buildCharacter(cleric3Draft, db);
 const clericActor = partyActor(c3Updated.raw);
 assert(clericActor.spells.some(s => s.name === 'Bless' && s.prepared), 'Bless is marked prepared on actor');
 assert(clericActor.spells.some(s => s.name === 'Healing Word' && s.prepared), 'Healing Word is marked prepared on actor');
+// Verify non-PHB expanded spell lists (XGE/TCE classVariant spells such as Shape Water, Ice Knife, Healing Spirit for Druid)
+{
+  const druidCls = db.classes.find(c => c.name === 'Druid' && c.source === 'PHB');
+  const humanSpecies = db.species.find(s => s.name === 'Human' && s.source === 'PHB');
+  const acolyteBg = db.backgrounds.find(b => b.name === 'Acolyte' && b.source === 'PHB');
+
+  const druidDraft = newBuilderDraft();
+  druidDraft.classId = builderId(druidCls);
+  druidDraft.speciesId = builderId(humanSpecies);
+  druidDraft.backgroundId = builderId(acolyteBg);
+  druidDraft.level = 3;
+  druidDraft.edition = '2014';
+
+  const druidChar = buildCharacter(druidDraft, db);
+  const cantripsChoice = druidChar.choices.find(c => c.id.includes('cantrips'));
+  const preparedChoice = druidChar.choices.find(c => c.id.includes('prepared'));
+
+  assert.ok(cantripsChoice?.options?.some(o => o.name === 'Shape Water'), 'Druid cantrips must include Shape Water (XGE)');
+  assert.ok(preparedChoice?.options?.some(o => o.name === 'Ice Knife'), 'Druid prepared spells must include Ice Knife (XGE)');
+  assert.ok(preparedChoice?.options?.some(o => o.name === 'Healing Spirit'), 'Druid prepared spells must include Healing Spirit (XGE)');
+  assert.ok(preparedChoice?.options?.some(o => o.name === 'Absorb Elements'), 'Druid prepared spells must include Absorb Elements (XGE)');
+}
+
 console.log('Prepared spells metadata enrichment, level grouping (tabs), tags, and actor preparation verified.');

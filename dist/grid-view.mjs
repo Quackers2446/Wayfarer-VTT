@@ -69,9 +69,10 @@ const dynamicTextures=new WeakMap();
 function dynamicFogTexture(map,{visible,memory,polygons,settings}) {
   const signature=JSON.stringify(settings),old=dynamicTextures.get(memory);
   if(old?.visible===visible && old.revision===memory.revision && old.signature===signature)return old.texture;
-  const scale=Math.min(1,2048/Math.max(map.cols*(map.cellWidth??map.size),map.rows*(map.cellHeight??map.size)));
-  const width=Math.max(1,Math.ceil(map.cols*(map.cellWidth??map.size)*scale)),height=Math.max(1,Math.ceil(map.rows*(map.cellHeight??map.size)*scale));
-  const texture=document.createElement('canvas');texture.width=width;texture.height=height;const c=texture.getContext('2d'),sx=width/map.cols,sy=height/map.rows;
+  const scale=Math.min(1,maxRasterEdge/Math.max(map.cols*(map.cellWidth??map.size),map.rows*(map.cellHeight??map.size)));
+  const cellW=Math.max(1,Math.round((map.cellWidth??map.size)*scale)),cellH=Math.max(1,Math.round((map.cellHeight??map.size)*scale));
+  const width=cellW*map.cols,height=cellH*map.rows;
+  const texture=document.createElement('canvas');texture.width=width;texture.height=height;const c=texture.getContext('2d'),sx=cellW,sy=cellH;
   c.fillStyle=`rgba(16,26,25,${settings.opacity})`;c.fillRect(0,0,width,height);
   c.fillStyle=`rgba(16,26,25,${settings.exploredOpacity})`;
   if(settings.remember)for(let y=0;y<map.rows;y++)for(let x=0;x<map.cols;x++)if(hasExplored(memory,x,y)){c.clearRect(x*sx,y*sy,sx,sy);c.fillRect(x*sx,y*sy,sx,sy);}
@@ -96,8 +97,7 @@ function drawFog(context,map,options) {
   context.save();
   context.fillStyle = fogDark;
   context.fill(border,"evenodd");
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "low";
+  context.imageSmoothingEnabled = false;
   context.drawImage(texture,x,y,width,height);
   context.restore();
 }

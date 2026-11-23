@@ -21,10 +21,10 @@ export function characterProfile(character) {
 function sections(character, embedded) {
   return [
     ["overview", "Overview"],
-    ...(character.attacks.length || character.rulesDetails?.classDetails?.features?.length ? [["actions", "Actions"]] : []),
-    ...(character.skills.length || character.abilities.some((ability) => ability.save != null) ? [["skills", "Skills & Saves"]] : []),
-    ...(character.items.length || embedded ? [["inventory", "Inventory"]] : []),
-    ...(character.spells.length || Object.keys(character.spellSlots ?? {}).length ? [["spells", "Spells"]] : []),
+    ["actions", "Actions"],
+    ["skills", "Skills & Saves"],
+    ["inventory", "Inventory"],
+    ["spells", "Spells"],
     ...(character.rulesDetails ? [["rules", "Rules"]] : []),
     ...(embedded ? [] : [["edit", "Edit sheet"]]),
   ];
@@ -35,7 +35,7 @@ function health(character) {
   const available = Number.isFinite(hp) && Number.isFinite(maxHp) && maxHp > 0;
   const ratio = available ? Math.max(0, Math.min(1, hp / maxHp)) : null;
   return `<div class="sheet-vital health">
-    <div class="vital-label">${icon("heart", 17)} Hit points</div>
+    <div class="vital-label">${icon("heart", 17)} Hit points <button type="button" class="vital-edit-btn" data-action="edit-vitals" aria-label="Edit hit points and combat stats" title="Edit stats">${icon("edit", 13)} Edit</button></div>
     <div class="health-values">
       <div><strong>${text(hp)}</strong>${maxHp != null ? `<span aria-label="Maximum hit points"> / ${text(maxHp)}</span>` : ""}</div>
       ${tempHp > 0 ? `<span class="hp-temp">${text(tempHp)} temp HP</span>` : ""}
@@ -56,7 +56,7 @@ function vitals(character) {
   ];
   return `<section class="sheet-vitals" aria-label="Combat stats">${health(character)}
     ${stats.map(([label, value, symbol]) => `<div class="sheet-vital">
-      <div class="vital-label">${icon(symbol, 17)} ${label}</div>
+      <div class="vital-label">${icon(symbol, 17)} ${label} <button type="button" class="vital-edit-btn" data-action="edit-vitals" aria-label="Edit ${label}" title="Edit stats">${icon("edit", 12)}</button></div>
       <strong>${value}</strong>
     </div>`).join("")}
   </section>`;
@@ -64,7 +64,10 @@ function vitals(character) {
 
 function abilityScores(character) {
   return `<section class="sheet-box" aria-labelledby="ability-heading">
-    <header class="sheet-box-heading"><h2 id="ability-heading">Ability scores</h2></header>
+    <header class="sheet-box-heading">
+      <h2 id="ability-heading">Ability scores</h2>
+      <button type="button" class="button small outline" data-action="edit-abilities">${icon("edit", 14)} Edit scores</button>
+    </header>
     <dl class="sheet-abilities">${character.abilities.map((ability) => `<div>
       <dt>${escape(ability.label)}</dt>
       <dd><strong aria-label="Modifier ${signed(ability.modifier)}">${signed(ability.modifier)}</strong>
@@ -90,10 +93,19 @@ function notes({name, note}) {
 }
 
 function attackList(attacks) {
-  return `<ul class="attack-list">${attacks.map((attack) => {
+  if (!attacks.length) {
+    return `<p class="sheet-empty">No actions or attacks recorded yet. Click "Add action" above.</p>`;
+  }
+  return `<ul class="attack-list">${attacks.map((attack, index) => {
     const description = describe(attack.name);
-    return `<li>
-      <h3>${escape(description.name)}</h3>
+    return `<li data-attack-index="${index}">
+      <div class="attack-list-item-header">
+        <h3>${escape(description.name)}</h3>
+        <div class="attack-list-controls">
+          <button type="button" class="icon-button-small" data-action="edit-attack" data-index="${index}" aria-label="Edit ${escape(description.name)}" title="Edit action">${icon("edit", 14)}</button>
+          <button type="button" class="icon-button-small delete-btn" data-action="delete-attack" data-index="${index}" aria-label="Delete ${escape(description.name)}" title="Delete action">${icon("trash", 14)}</button>
+        </div>
+      </div>
       ${[attack.bonus, attack.damage].some((value) => value != null && value !== "") ? `<dl>
         ${attack.bonus != null && attack.bonus !== "" ? `<div><dt>Attack</dt><dd>${signed(attack.bonus)}</dd></div>` : ""}
         ${attack.damage ? `<div><dt>Damage</dt><dd>${text(attack.damage)}</dd></div>` : ""}
@@ -110,14 +122,22 @@ function overview(character, embedded) {
   ].filter(([, value]) => value != null && value !== "");
   return `${abilityScores(character)}
     <div class="sheet-overview-row">
-      ${character.attacks.length ? `<section class="sheet-box" aria-labelledby="quick-actions-heading">
-        <header class="sheet-box-heading"><h2 id="quick-actions-heading">Quick actions</h2>
-          ${embedded ? '<button class="text-link sheet-tab" type="button" data-action="game-sheet-section" data-id="actions">All actions</button>' :
-             `<a class="text-link" href="${sheetPath(character, "actions")}">All actions</a>`}</header>
+      <section class="sheet-box" aria-labelledby="quick-actions-heading">
+        <header class="sheet-box-heading">
+          <h2 id="quick-actions-heading">Quick actions</h2>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <button class="button small outline" type="button" data-action="add-attack">${icon("plus", 14)} Add action</button>
+            ${embedded ? '<button class="text-link sheet-tab" type="button" data-action="game-sheet-section" data-id="actions">All actions</button>' :
+               `<a class="text-link" href="${sheetPath(character, "actions")}">All actions</a>`}
+          </div>
+        </header>
         ${attackList(character.attacks.slice(0, 3))}
-      </section>` : ""}
+      </section>
       <section class="sheet-box sheet-profile" aria-labelledby="details-heading">
-        <header class="sheet-box-heading"><h2 id="details-heading">Character details</h2></header>
+        <header class="sheet-box-heading">
+          <h2 id="details-heading">Character details</h2>
+          <button type="button" class="button small outline" data-action="edit-details">${icon("edit", 14)} Edit details</button>
+        </header>
         ${facts.length ? `<dl class="profile-facts">${facts.map(([label, value]) =>
           `<div><dt>${label}</dt><dd>${text(value)}</dd></div>`).join("")}</dl>` : ""}
         <div class="sheet-source">
@@ -136,11 +156,14 @@ function skillContent(character) {
       <dl class="modifier-list">${saves.map(({label, save}) =>
         `<div><dt>${escape(label)}</dt><dd>${signed(save)}</dd></div>`).join("")}</dl>
     </section>` : ""}
-    ${character.skills.length ? `<section class="sheet-box" aria-labelledby="skills-heading">
-      <header class="sheet-box-heading"><h2 id="skills-heading">Skills</h2></header>
-      <dl class="modifier-list skill-list">${character.skills.map(({name, bonus, base}) =>
-        `<div><dt>${escape(name)}</dt><dd>${bonus == null && base != null ? `<span class="sheet-base-value">Base ${signed(base)}</span>` : signed(bonus)}</dd></div>`).join("")}</dl>
-    </section>` : ""}
+    <section class="sheet-box" aria-labelledby="skills-heading">
+      <header class="sheet-box-heading">
+        <h2 id="skills-heading">Skills</h2>
+        <button type="button" class="button small outline" data-action="edit-skills">${icon("edit", 14)} Edit training</button>
+      </header>
+      ${character.skills.length ? `<dl class="modifier-list skill-list">${character.skills.map(({name, bonus, base}) =>
+        `<div><dt>${escape(name)}</dt><dd>${bonus == null && base != null ? `<span class="sheet-base-value">Base ${signed(base)}</span>` : signed(bonus)}</dd></div>`).join("")}</dl>` : '<p class="sheet-empty">No skill training recorded.</p>'}
+    </section>
   </div>`;
 }
 
@@ -190,7 +213,13 @@ function searchField(label) {
 
 function inventoryContent() {
   return `<section class="sheet-box" aria-labelledby="inventory-heading">
-    <header class="sheet-box-heading"><h2 id="inventory-heading">Inventory</h2>${searchField("Search items")}</header>
+    <header class="sheet-box-heading">
+      <h2 id="inventory-heading">Inventory</h2>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button class="button small outline" type="button" data-action="add-item">${icon("plus", 14)} Add item</button>
+        ${searchField("Search items")}
+      </div>
+    </header>
     <div id="sheet-results"></div>
   </section>`;
 }
@@ -200,13 +229,19 @@ function spellContent(character) {
   return `<section class="sheet-box" aria-labelledby="spells-heading">
     <header class="sheet-box-heading spell-heading">
       <h2 id="spells-heading">Spells</h2>
-      <div class="spell-stats">
-        ${character.spellDC != null ? `<span>Save DC <strong>${text(character.spellDC)}</strong></span>` : ""}
-        ${character.spellAttack != null ? `<span>Spell attack <strong>${signed(character.spellAttack)}</strong></span>` : ""}
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button class="button small outline" type="button" data-action="add-spell">${icon("plus", 14)} Add spell</button>
+        <div class="spell-stats">
+          ${character.spellDC != null ? `<span>Save DC <strong>${text(character.spellDC)}</strong></span>` : ""}
+          ${character.spellAttack != null ? `<span>Spell attack <strong>${signed(character.spellAttack)}</strong></span>` : ""}
+        </div>
       </div>
     </header>
-    ${Object.keys(character.spellSlots ?? {}).length ? `<dl class="sheet-slot-summary">${Object.entries(character.spellSlots).map(([level,{current,maximum}]) =>
-      `<div><dt>Level ${text(level)} slots</dt><dd>${text(current)} / ${text(maximum)}</dd></div>`).join("")}</dl>` : ""}
+    <div class="sheet-slots-wrapper" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:8px 17px; border-bottom:1px solid var(--sheet-border);">
+      ${Object.keys(character.spellSlots ?? {}).length ? `<dl class="sheet-slot-summary" style="margin:0;">${Object.entries(character.spellSlots).map(([level,{current,maximum}]) =>
+        `<div><dt>Level ${text(level)} slots</dt><dd>${text(current)} / ${text(maximum)}</dd></div>`).join("")}</dl>` : `<span style="color:var(--muted); font-size:.86rem;">No spell slots recorded</span>`}
+      <button class="button small outline" type="button" data-action="edit-slots">${icon("edit", 14)} Edit slots</button>
+    </div>
     ${character.resources?.pactMagic ? `<dl class="sheet-slot-summary"><div><dt>Pact Magic · level ${character.resources.pactMagic.slotLevel}</dt>
       <dd>${character.resources.pactMagic.current} / ${character.resources.pactMagic.maximum}</dd><small>Short or long rest</small></div></dl>` : ""}
     <div class="sheet-filters">${searchField("Search spells")}
@@ -221,19 +256,37 @@ export function fillSheetResults(character, section) {
   const query = document.querySelector("#sheet-search")?.value.trim().toLowerCase() ?? "";
   if (!target) return;
   if (section === "inventory") {
-    const items = character.items.filter((item) => item.name.toLowerCase().includes(query));
+    const items = character.items.map((item, index) => ({...item, originalIndex: index}))
+      .filter((item) => item.name.toLowerCase().includes(query));
     target.innerHTML = `<p class="sheet-result-count" role="status">${plural(items.length, "item")}</p>` +
       (items.length ? `<table class="inventory-table">
-        <thead><tr><th scope="col">Item</th><th scope="col">Qty</th><th scope="col">Weight</th></tr></thead>
+        <thead><tr><th scope="col">Item</th><th scope="col">Qty</th><th scope="col">Weight</th><th scope="col" style="width:75px; text-align:center;">Actions</th></tr></thead>
         <tbody>${items.map((item) => {
           const description = describe(item.name);
-          return `<tr><td>${text(description.name)}${notes(description)}</td><td>${text(item.quantity)}</td><td>${text(item.weight)}</td></tr>`;
+          return `<tr>
+            <td>${text(description.name)}${notes(description)}</td>
+            <td>
+              <span class="qty-control">
+                <button type="button" class="qty-btn" data-action="dec-item-qty" data-index="${item.originalIndex}" aria-label="Decrease quantity">−</button>
+                <strong>${text(item.quantity ?? 1)}</strong>
+                <button type="button" class="qty-btn" data-action="inc-item-qty" data-index="${item.originalIndex}" aria-label="Increase quantity">+</button>
+              </span>
+            </td>
+            <td>${text(item.weight)}</td>
+            <td style="text-align:center;">
+              <span class="inventory-actions">
+                <button type="button" class="icon-button-small" data-action="edit-item" data-index="${item.originalIndex}" aria-label="Edit ${escape(description.name)}" title="Edit item">${icon("edit", 14)}</button>
+                <button type="button" class="icon-button-small delete-btn" data-action="delete-item" data-index="${item.originalIndex}" aria-label="Delete ${escape(description.name)}" title="Delete item">${icon("trash", 14)}</button>
+              </span>
+            </td>
+          </tr>`;
         }).join("")}</tbody>
-      </table>` : '<p class="sheet-empty">No matching items.</p>');
+      </table>` : '<p class="sheet-empty">No matching items. Click "Add item" to add gear.</p>');
     return;
   }
   const preparedOnly = document.querySelector("#prepared-only")?.checked;
-  const spells = character.spells.filter((spell) => (!preparedOnly || spell.prepared) && spell.name.toLowerCase().includes(query));
+  const spellsWithIndex = character.spells.map((spell, index) => ({...spell, originalIndex: index}));
+  const spells = spellsWithIndex.filter((spell) => (!preparedOnly || spell.prepared) && spell.name.toLowerCase().includes(query));
   const levels = [...new Set(spells.map((spell) => spell.level))].sort((a, b) => a - b);
   target.innerHTML = `<p class="sheet-result-count" role="status">${plural(spells.length, "spell")}</p>` +
     (spells.length ? `<div class="spell-groups">${levels.map((level) => `<section aria-label="${level === 0 ? "Cantrips" : "Level " + level}">
@@ -245,10 +298,14 @@ export function fillSheetResults(character, section) {
             aria-label="View 5e spell ${escape(reference.name)}">${text(description.name)}</button>` : text(description.name);
         return `<li><div>${spellName}${reference ? `<small class="spell-source">${escape(reference.source)}${spell.level !== reference.level ? " · Reference level " + reference.level : ""}</small>` : ""}
           ${notes(description)}</div>
-          ${spell.prepared ? '<span class="tag">Prepared</span>' : ""}
+          <div class="spell-row-actions">
+            <button type="button" class="tag ${spell.prepared ? 'tag-prepared' : 'tag-unprepared'}" data-action="toggle-prepared" data-index="${spell.originalIndex}" aria-label="Toggle prepared status for ${escape(description.name)}">${spell.prepared ? "Prepared" : "Unprepared"}</button>
+            <button type="button" class="icon-button-small" data-action="edit-spell" data-index="${spell.originalIndex}" aria-label="Edit ${escape(description.name)}" title="Edit spell">${icon("edit", 13)}</button>
+            <button type="button" class="icon-button-small delete-btn" data-action="delete-spell" data-index="${spell.originalIndex}" aria-label="Delete ${escape(description.name)}" title="Delete spell">${icon("trash", 13)}</button>
+          </div>
         </li>`;
       }).join("")}</ul>
-    </section>`).join("")}</div>` : '<p class="sheet-empty">No matching spells.</p>');
+    </section>`).join("")}</div>` : '<p class="sheet-empty">No matching spells. Click "Add spell" to add one.</p>');
 }
 
 export function characterPage(character, requestedSection, {embedded = false, tokenEditable = !embedded} = {}) {
@@ -258,7 +315,10 @@ export function characterPage(character, requestedSection, {embedded = false, to
   const panels = {
     overview: () => overview(character,embedded),
     actions: () => `<section class="sheet-box" aria-labelledby="actions-heading">
-      <header class="sheet-box-heading"><h2 id="actions-heading">Actions</h2></header>
+      <header class="sheet-box-heading">
+        <h2 id="actions-heading">Actions</h2>
+        <button class="button small outline" type="button" data-action="add-attack">${icon("plus", 14)} Add action</button>
+      </header>
       ${attackList(character.attacks)}
       </section>${featureRules(character)}`,
     skills: () => skillContent(character),

@@ -245,8 +245,13 @@ def class_data(read, files):
     for filename in read("spells/index.json").values():
         for spell in read("spells/" + filename).get("spell", []):
             membership = lookup.get(spell["source"].lower(), {}).get(spell["name"].lower(), {})
+            spell_classes = {src: dict(cls_map) for src, cls_map in membership.get("class", {}).items()}
+            for src, cls_map in membership.get("classVariant", {}).items():
+                if src not in spell_classes:
+                    spell_classes[src] = {}
+                spell_classes[src].update(cls_map)
             spells.append({**select(spell, "name source level school meta spellAttack"), "edition": edition(spell),
-                           "classes": membership.get("class", {}), "subclasses": membership.get("subclass", {})})
+                           "classes": spell_classes, "subclasses": membership.get("subclass", {})})
     items = [*read("items-base.json").get("baseitem", []), *read("items.json").get("item", [])]
     equipment = [{**select(item, "name source type weaponCategory property"), "edition": edition(item)}
                  for item in items if item.get("weaponCategory") or item.get("type", "").split("|")[0] in {"AT", "INS", "GS", "T"}]

@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { blake3 } from '/tmp/noble/node_modules/@noble/hashes/blake3.js';
 
-const clientDir = path.resolve('wayfarer/dist/client');
+const clientDir = fileURLToPath(new URL('../dist/client', import.meta.url));
 const JWT = process.env.PAGES_JWT;
 
 if (!JWT) {
@@ -169,5 +170,5 @@ const upsertData = await upsertRes.json();
 console.log(`Upsert result:`, upsertData.success);
 
 // Save manifest for deployment step
-fs.writeFileSync('wayfarer/manifest.json', JSON.stringify(manifest, null, 2), 'utf8');
-console.log(`Saved manifest with ${Object.keys(manifest).length} entries to wayfarer/manifest.json`);
+fs.writeFileSync(fileURLToPath(new URL('../manifest.json', import.meta.url)), JSON.stringify(manifest, null, 2), 'utf8');
+console.log(`Saved manifest with ${Object.keys(manifest).length} entries to manifest.json`);

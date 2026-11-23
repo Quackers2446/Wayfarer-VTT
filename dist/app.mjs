@@ -4,6 +4,16 @@ import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellB
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
 import {localTokenBlob, paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
 import {openTokenMaker} from "./token-maker.mjs";
+import {
+  openAttackEditor,
+  openItemEditor,
+  openVitalsEditor,
+  openAbilitiesEditor,
+  openDetailsEditor,
+  openSkillsEditor,
+  openSpellEditor,
+  openSlotsEditor
+} from "./sheet-subeditors.mjs";
 import {enrichCharacter, loadCharacterRules, sheetSkills} from "./character-rules.mjs";
 import {readSheetEdits, validateSheetEdits} from "./sheet-editor.mjs";
 import {escape, plural, text} from "./format.mjs";
@@ -640,11 +650,270 @@ document.addEventListener("submit", (event) => {
   }}]);
 });
 
+function getActiveCharacterView(targetElement) {
+  const isDialog = Boolean(dialog && (dialog.contains(targetElement) || (dialog.open && gameSheet)));
+  const view = isDialog ? gameSheet : currentRoute();
+  const character = view?.character;
+  if (!character) return null;
+  const raw = state.characters.find(({id}) => character.gameActorId ? character.gameActorId === "party:"+id : character.id === id);
+  return {view, character, raw, isGame: Boolean(isDialog && gameSheet)};
+}
+
+function updateActiveCharacter(targetElement, mutator) {
+  const active = getActiveCharacterView(targetElement);
+  if (!active) return false;
+  const {character, raw, isGame} = active;
+  if (raw) {
+    mutator(raw);
+    save();
+  } else {
+    mutator(character);
+  }
+  if (isGame && gameSheet) {
+    if (raw) {
+      const enriched = enrichCharacter(raw);
+      gameSheet.character = {...character, ...enriched};
+    }
+    showGameSheet(gameSheet.character, gameSheet.section);
+  } else {
+    render();
+  }
+  return true;
+}
+
 document.addEventListener("click", (event) => {
   const control = event.target.closest("[data-action]");
   if (!control) return;
-  const {action, id} = control.dataset;
+  const {action, id, index} = control.dataset;
   switch (action) {
+    case "edit-attack": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      const idx = Number.parseInt(index ?? id, 10);
+      openAttackEditor({
+        character: active.character,
+        attackIndex: idx,
+        onSave: (attackData) => {
+          updateActiveCharacter(control, (char) => {
+            char.attacks = char.attacks || [];
+            char.attacks[idx] = {...char.attacks[idx], ...attackData};
+          });
+        }
+      });
+      break;
+    }
+    case "add-attack": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openAttackEditor({
+        character: active.character,
+        attackIndex: -1,
+        onSave: (attackData) => {
+          updateActiveCharacter(control, (char) => {
+            char.attacks = char.attacks || [];
+            char.attacks.push(attackData);
+          });
+        }
+      });
+      break;
+    }
+    case "delete-attack": {
+      const idx = Number.parseInt(index ?? id, 10);
+      updateActiveCharacter(control, (char) => {
+        if (char.attacks) char.attacks.splice(idx, 1);
+      });
+      break;
+    }
+    case "edit-item": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      const idx = Number.parseInt(index ?? id, 10);
+      openItemEditor({
+        character: active.character,
+        itemIndex: idx,
+        onSave: (itemData) => {
+          updateActiveCharacter(control, (char) => {
+            char.items = char.items || [];
+            char.items[idx] = {...char.items[idx], ...itemData};
+          });
+        }
+      });
+      break;
+    }
+    case "add-item": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openItemEditor({
+        character: active.character,
+        itemIndex: -1,
+        onSave: (itemData) => {
+          updateActiveCharacter(control, (char) => {
+            char.items = char.items || [];
+            char.items.push(itemData);
+          });
+        }
+      });
+      break;
+    }
+    case "delete-item": {
+      const idx = Number.parseInt(index ?? id, 10);
+      updateActiveCharacter(control, (char) => {
+        if (char.items) char.items.splice(idx, 1);
+      });
+      break;
+    }
+    case "inc-item-qty": {
+      const idx = Number.parseInt(index ?? id, 10);
+      updateActiveCharacter(control, (char) => {
+        if (char.items?.[idx]) {
+          char.items[idx].quantity = (char.items[idx].quantity || 0) + 1;
+        }
+      });
+      break;
+    }
+    case "dec-item-qty": {
+      const idx = Number.parseInt(index ?? id, 10);
+      updateActiveCharacter(control, (char) => {
+        if (char.items?.[idx]) {
+          char.items[idx].quantity = Math.max(0, (char.items[idx].quantity || 1) - 1);
+        }
+      });
+      break;
+    }
+    case "edit-vitals": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openVitalsEditor({
+        character: active.character,
+        onSave: (vitals) => {
+          updateActiveCharacter(control, (char) => {
+            char.sheetEdits = char.sheetEdits || {};
+            if (vitals.hp != null) { char.hp = vitals.hp; char.sheetEdits.hp = vitals.hp; }
+            if (vitals.maxHp != null) { char.maxHp = vitals.maxHp; char.sheetEdits.maxHp = vitals.maxHp; }
+            if (vitals.tempHp != null) { char.tempHp = vitals.tempHp; char.sheetEdits.tempHp = vitals.tempHp; }
+            if (vitals.ac != null) { char.ac = vitals.ac; char.sheetEdits.ac = vitals.ac; }
+            if (vitals.initiative != null) { char.initiative = vitals.initiative; char.sheetEdits.initiative = vitals.initiative; }
+            if (vitals.speed != null) { char.speed = String(vitals.speed); char.sheetEdits.speed = String(vitals.speed); }
+            if (vitals.proficiency != null) { char.proficiency = vitals.proficiency; char.sheetEdits.proficiency = vitals.proficiency; }
+            if (vitals.passivePerception != null) { char.passivePerception = vitals.passivePerception; char.sheetEdits.passivePerception = vitals.passivePerception; }
+          });
+        }
+      });
+      break;
+    }
+    case "edit-abilities": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openAbilitiesEditor({
+        character: active.character,
+        onSave: (scores) => {
+          updateActiveCharacter(control, (char) => {
+            char.sheetEdits = char.sheetEdits || {};
+            char.sheetEdits.scores = {...(char.sheetEdits.scores || {}), ...scores};
+          });
+        }
+      });
+      break;
+    }
+    case "edit-details": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openDetailsEditor({
+        character: active.character,
+        onSave: (details) => {
+          updateActiveCharacter(control, (char) => {
+            char.sheetEdits = char.sheetEdits || {};
+            char.name = details.name;
+            char.sheetEdits.name = details.name;
+            if (details.characterClass) { char.characterClass = details.characterClass; char.sheetEdits.characterClass = details.characterClass; }
+            if (details.species) { char.species = details.species; char.sheetEdits.species = details.species; }
+            if (details.level != null) { char.level = details.level; char.sheetEdits.level = details.level; }
+            if (details.background) { char.background = details.background; char.sheetEdits.background = details.background; }
+            if (details.alignment) { char.alignment = details.alignment; char.sheetEdits.alignment = details.alignment; }
+            if (details.player) { char.player = details.player; char.sheetEdits.player = details.player; }
+            if (details.xp != null) { char.xp = details.xp; char.sheetEdits.xp = details.xp; }
+          });
+        }
+      });
+      break;
+    }
+    case "edit-skills": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openSkillsEditor({
+        character: active.character,
+        skills: sheetSkills,
+        onSave: (training) => {
+          updateActiveCharacter(control, (char) => {
+            char.sheetEdits = char.sheetEdits || {};
+            char.sheetEdits.training = {...(char.sheetEdits.training || {}), ...training};
+          });
+        }
+      });
+      break;
+    }
+    case "toggle-prepared": {
+      const idx = Number.parseInt(index ?? id, 10);
+      updateActiveCharacter(control, (char) => {
+        if (char.spells?.[idx]) {
+          char.spells[idx].prepared = !char.spells[idx].prepared;
+        }
+      });
+      break;
+    }
+    case "edit-spell": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      const idx = Number.parseInt(index ?? id, 10);
+      openSpellEditor({
+        character: active.character,
+        spellIndex: idx,
+        onSave: (spellData) => {
+          updateActiveCharacter(control, (char) => {
+            char.spells = char.spells || [];
+            char.spells[idx] = {...char.spells[idx], ...spellData};
+          });
+        }
+      });
+      break;
+    }
+    case "add-spell": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openSpellEditor({
+        character: active.character,
+        spellIndex: -1,
+        onSave: (spellData) => {
+          updateActiveCharacter(control, (char) => {
+            char.spells = char.spells || [];
+            char.spells.push(spellData);
+          });
+        }
+      });
+      break;
+    }
+    case "delete-spell": {
+      const idx = Number.parseInt(index ?? id, 10);
+      updateActiveCharacter(control, (char) => {
+        if (char.spells) char.spells.splice(idx, 1);
+      });
+      break;
+    }
+    case "edit-slots": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openSlotsEditor({
+        character: active.character,
+        onSave: (slots) => {
+          updateActiveCharacter(control, (char) => {
+            char.sheetEdits = char.sheetEdits || {};
+            char.sheetEdits.slots = {...(char.sheetEdits.slots || {}), ...slots};
+            char.spellSlots = {...(char.spellSlots || {}), ...slots};
+          });
+        }
+      });
+      break;
+    }
     case "build-character": builderOpen=true;if(currentRoute().page!=="characters")location.hash="#characters";else render();break;
     case "upload": importDialog(); break;
     case "pick": document.querySelector("#workbooks").click(); break;

@@ -180,8 +180,9 @@ export function validateSheetEdits(character) {
 }
 
 function numberField([key,label,min,max], current, edits, name = key) {
+  const val = edits[key] ?? (current != null && current !== "" ? current : "");
   return `<label>${escape(label)}<input type="number" name="${escape(name)}" min="${min}" max="${max}" step="1"
-    value="${escape(edits[key])}" placeholder="${escape(current)}"></label>`;
+    value="${escape(val)}" placeholder="${escape(current)}"></label>`;
 }
 
 function selectOption(value,label,selected) {
@@ -198,12 +199,12 @@ export function sheetEditor(character, skills) {
     <p class="sheet-editor-note">Blank fields use the workbook or the rules. New tokens start with these values.</p>
     <p id="character-edit-status" class="sheet-editor-note" role="status"></p>
     <fieldset><legend>Character and level</legend><div class="sheet-editor-grid">
-      ${identity.map(([key,label]) => `<label>${escape(label)}<input name="${key}" maxlength="160" value="${escape(edits[key])}"
+      ${identity.map(([key,label]) => `<label>${escape(label)}<input name="${key}" maxlength="160" value="${escape(edits[key] ?? character[key] ?? "")}"
         placeholder="${escape(character[key])}"></label>`).join("")}
       ${numberField(numbers[0],character.level,edits)}
     </div></fieldset>
     <fieldset><legend>Combat stats</legend><div class="sheet-editor-grid">
-      ${combat.map((field) => numberField(field,field[0] === "speed" ? Number.isFinite(walking) ? walking : "" : character[field[0]],edits)).join("")}
+      ${combat.map((field) => numberField(field,field[0] === "speed" ? Number.isFinite(walking) ? walking : character.speed : character[field[0]],edits)).join("")}
       <label>Worn armor<select name="armor" aria-label="Worn armor">${selectOption("","Use sheet AC",edits.armor)}
         ${Object.entries(armor).map(([key,[label]]) => selectOption(key,label,edits.armor)).join("")}</select></label>
       <label class="sheet-editor-check"><input type="checkbox" name="shield"${edits.shield ? " checked" : ""}> Wear a shield</label>
@@ -212,23 +213,34 @@ export function sheetEditor(character, skills) {
     ${featureChoiceEditor(character)}
     ${Object.keys(character.resources ?? {}).length ? `<fieldset><legend>Class resources</legend><div class="sheet-editor-grid">
       ${Object.entries(character.resources).map(([key,pool]) => numberField(["resource-"+key,pool.name+" remaining / "+pool.maximum,0,pool.maximum],
-        pool.current,{["resource-"+key]:edits.resources?.[key]})).join("")}</div></fieldset>` : ""}
+        pool.current,{["resource-"+key]:edits.resources?.[key] ?? pool.current})).join("")}</div></fieldset>` : ""}
     <details><summary>Ability scores and training</summary>
-      <fieldset><legend>Ability scores</legend><div class="sheet-editor-grid">${abilities.map(([key,label]) =>
-        numberField([key,label,1,30],character.abilities.find(({abbr}) => abbr.toLowerCase() === key)?.score,edits.scores ?? {},"score-"+key)).join("")}</div></fieldset>
-      <fieldset><legend>Skill training</legend><div class="sheet-editor-grid">${skills.map(([name,label]) => {
-        const current = currentSkill.get(name)?.bonus;
-        return `<label>${escape(label)}<select name="skill-${escape(name)}" aria-label="${escape(label)}">${selectOption("",Number.isFinite(current) ? "Use sheet or rules ("+text(current)+")" : "Use sheet or rules",edits.training?.[name])}
-          ${[[0,"Untrained"],[1,"Proficient"],[2,"Expertise"]].map(([rank,option]) => selectOption(rank,option,edits.training?.[name])).join("")}</select></label>`;
+      <fieldset><legend>Ability scores</legend><div class="sheet-editor-grid">${abilities.map(([key,label]) => {
+        const curScore = character.abilities.find(({abbr}) => abbr.toLowerCase() === key)?.score;
+        return numberField([key,label,1,30],curScore,edits.scores ?? {},"score-"+key);
       }).join("")}</div></fieldset>
-      <fieldset><legend>Other choices</legend><div class="sheet-editor-grid">${listFields.map(([key,label]) => `<label>${label}<input name="${key}" maxlength="260"
-        placeholder="Separate choices with commas" value="${escape(edits[key]?.join(", "))}"></label>`).join("")}</div></fieldset>
+      <fieldset><legend>Skill training</legend><div class="sheet-editor-grid">${skills.map(([name,label]) => {
+        const skill = currentSkill.get(name);
+        const currentRank = edits.training?.[name] ?? (
+          character.rulesDetails?.skillTraining?.some(s => s.toLowerCase() === name.toLowerCase()) ? 1 :
+          (skill?.bonus != null && character.proficiency && skill.base != null && skill.bonus === skill.base + 2*character.proficiency) ? 2 :
+          (skill?.bonus != null && character.proficiency && skill.base != null && skill.bonus === skill.base + character.proficiency) ? 1 :
+          0
+        );
+        return `<label>${escape(label)}<select name="skill-${escape(name)}" aria-label="${escape(label)}">
+          ${[[0,"Untrained"],[1,"Proficient"],[2,"Expertise"]].map(([rank,option]) => selectOption(rank,option,currentRank)).join("")}</select></label>`;
+      }).join("")}</div></fieldset>
+      <fieldset><legend>Other choices</legend><div class="sheet-editor-grid">${listFields.map(([key,label]) => {
+        const currentList = edits[key]?.join(", ") ?? character.rulesDetails?.[key]?.join(", ") ?? (Array.isArray(character[key]) ? character[key].join(", ") : character[key] ?? "");
+        return `<label>${label}<input name="${key}" maxlength="260"
+          placeholder="Separate choices with commas" value="${escape(currentList)}"></label>`;
+      }).join("")}</div></fieldset>
     </details>
     <details${hasCasting ? " open" : ""}><summary>Spellcasting and slots</summary>
       <fieldset><legend>Spellcasting</legend><div class="sheet-editor-grid">
         <label>Spellcasting ability<select name="spellcastingAbility" aria-label="Spellcasting ability">${selectOption("",
-          character.spellcastingAbility && !edits.spellcastingAbility ? `Use sheet or class (${character.spellcastingAbility})` : "Use sheet or class",edits.spellcastingAbility)}
-          ${abilities.map(([key,label]) => selectOption(key,label,edits.spellcastingAbility)).join("")}</select></label>
+          character.spellcastingAbility && !edits.spellcastingAbility ? `Use sheet or class (${character.spellcastingAbility})` : "Use sheet or class",edits.spellcastingAbility ?? character.spellcastingAbility)}
+          ${abilities.map(([key,label]) => selectOption(key,label,edits.spellcastingAbility ?? (character.spellcastingAbility?.toLowerCase().slice(0,3) === key ? key : "")))}</select></label>
         ${casting.map((field) => numberField(field,character[field[0]],edits)).join("")}
       </div></fieldset>
       <fieldset><legend>Spell slots</legend><div class="sheet-editor-slots">
@@ -236,8 +248,8 @@ export function sheetEditor(character, skills) {
           const slot = character.spellSlots?.[rank];
           const values = edits.slots?.[rank] ?? {};
           return `<div><strong>Level ${rank}</strong>
-            ${numberField(["maximum-"+rank,"Level "+rank+" maximum",0,20],slot?.maximum,{["maximum-"+rank]:values.maximum})}
-            ${numberField(["current-"+rank,"Level "+rank+" remaining",0,20],slot?.current,{["current-"+rank]:values.current})}
+            ${numberField(["maximum-"+rank,"Level "+rank+" maximum",0,20],slot?.maximum,{["maximum-"+rank]:values.maximum ?? slot?.maximum})}
+            ${numberField(["current-"+rank,"Level "+rank+" remaining",0,20],slot?.current,{["current-"+rank]:values.current ?? slot?.current})}
           </div>`;
         }).join("")}
       </div></fieldset>
