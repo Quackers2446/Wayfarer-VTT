@@ -104,7 +104,7 @@ export async function callGeminiVision({
   base64,
   mimeType = 'image/jpeg',
   apiKey,
-  model = 'gemini-2.5-flash',
+  model = 'gemini-3.8-flash',
   fetchImpl = globalThis.fetch
 } = {}) {
   const key = apiKey || getApiKey();
@@ -190,6 +190,11 @@ Output ONLY straight line segments as 4-tuples: [x1, y1, x2, y2].`;
         );
       }
       throw new Error(`Gemini API permission denied (403): ${errorDetail}`);
+    }
+    if (response.status === 404) {
+      throw new Error(
+        `Gemini model not found (404): ${errorDetail}. Please select "Gemini 3.8 Flash" in the forecast dialog.`
+      );
     }
     if (response.status === 429) {
       throw new Error('Gemini API quota or rate limit exceeded. Please wait a moment and try again.');

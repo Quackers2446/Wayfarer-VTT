@@ -1244,10 +1244,11 @@ function openAiForecastDialog() {
         <span>Remember API key in this browser</span>
       </label>
 
-      <label style="margin-top:8px;">
-        <strong>Vision Model</strong>
-        <select name="model" id="ai-model-select" class="input" style="width:100%;margin-top:4px;">
-          <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (Recommended)</option>
+      <label style="display:block;margin-top:10px;">
+        <span style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">Vision Model</span>
+        <select name="model" id="ai-model-select" class="input" style="width:100%;padding:6px 8px;border-radius:6px;background:var(--bg-elevated,#1e2621);color:var(--text,#e1ede6);border:1px solid var(--border,#324238);">
+          <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Latest)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
           <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
           <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
         </select>
@@ -1272,7 +1273,7 @@ function openAiForecastDialog() {
   if (!dialog.open) dialog.showModal();
 }
 
-async function runAiForecast({ apiKey, remember, mode = 'replace', model = 'gemini-2.5-flash' } = {}) {
+async function runAiForecast({ apiKey, remember, mode = 'replace', model = 'gemini-3.8-flash' } = {}) {
   if (apiKey) setApiKey(apiKey, remember);
   const key = getApiKey();
   if (!key) { openAiForecastDialog(); return; }
@@ -2812,7 +2813,7 @@ document.addEventListener('submit', event => {
     const key = values.get('apiKey')?.trim() || '';
     const remember = values.has('remember');
     const mode = values.get('mode') || 'replace';
-    const model = values.get('model') || 'gemini-2.5-flash';
+    const model = values.get('model') || 'gemini-3.8-flash';
     const dialog = document.querySelector('#dialog');
     dialog?.close();
     void runAiForecast({ apiKey: key, remember, mode, model });
