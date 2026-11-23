@@ -2,7 +2,8 @@ import {mountCharacterBuilder} from './character-builder.mjs';
 import {setGameTokenImage, showPlay} from "./play.mjs";
 import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
-import {paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
+import {localTokenBlob, paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
+import {openTokenMaker} from "./token-maker.mjs";
 import {enrichCharacter, loadCharacterRules, sheetSkills} from "./character-rules.mjs";
 import {readSheetEdits, validateSheetEdits} from "./sheet-editor.mjs";
 import {escape, plural, text} from "./format.mjs";
@@ -380,10 +381,9 @@ document.addEventListener("wayfarer:inspect", (event) => {
 
 let changingToken = false;
 
-async function changeCharacterToken(source, file) {
+async function applyCharacterToken(source, character, image) {
+  if (changingToken) return;
   const view = dialog.contains(source) ? gameSheet : currentRoute();
-  const character = view?.character;
-  if (!character || changingToken) return;
   const sheet = source.closest(".character-sheet");
   const report = (target, message) => {
     const output = target?.querySelector(".sheet-token-status");
@@ -392,7 +392,6 @@ async function changeCharacterToken(source, file) {
   changingToken = true;
   report(sheet,"Saving token…");
   try {
-    const image = file ? await saveTokenImage(file) : undefined;
     if (character.gameActorId) await setGameTokenImage(character.gameActorId,image,character.tokenSession);
     const local = state.characters.find(({id}) => character.gameActorId ? character.gameActorId === "party:"+id : character.id === id);
     let saved = true;
@@ -417,6 +416,29 @@ async function changeCharacterToken(source, file) {
   } catch (error) {
     report(sheet,error.message);
   } finally {changingToken = false;}
+}
+
+async function changeCharacterToken(source, file) {
+  const view = dialog.contains(source) ? gameSheet : currentRoute();
+  const character = view?.character;
+  if (!character || changingToken) return;
+  if (!file) {
+    await applyCharacterToken(source, character, undefined);
+    return;
+  }
+  try {
+    await openTokenMaker({
+      file,
+      characterName: character.name,
+      onSave: async (savedId) => {
+        await applyCharacterToken(source, character, savedId);
+      }
+    });
+  } catch (error) {
+    const sheet = source.closest(".character-sheet");
+    const output = sheet?.querySelector(".sheet-token-status");
+    if (output) output.textContent = error.message;
+  }
 }
 
 async function spellDialog(key) {
@@ -627,6 +649,27 @@ document.addEventListener("click", (event) => {
     case "upload": importDialog(); break;
     case "pick": document.querySelector("#workbooks").click(); break;
     case "pick-token": if (!changingToken) control.closest(".character-sheet").querySelector("#character-token-file").click(); break;
+    case "edit-token": {
+      if (changingToken) break;
+      const view = dialog.contains(control) ? gameSheet : currentRoute();
+      const character = view?.character;
+      if (!character?.tokenImage) break;
+      try {
+        const blob = await localTokenBlob(character.tokenImage);
+        await openTokenMaker({
+          imageBlob: blob,
+          characterName: character.name,
+          onSave: async (savedId) => {
+            await applyCharacterToken(control, character, savedId);
+          }
+        });
+      } catch (error) {
+        const sheet = control.closest(".character-sheet");
+        const output = sheet?.querySelector(".sheet-token-status");
+        if (output) output.textContent = error.message;
+      }
+      break;
+    }
     case "clear-token": changeCharacterToken(control); break;
     case "samples": if (localSamples.length) fetchLocalSamples(); break;
     case "close": dialog.close(); break;

@@ -1,5 +1,5 @@
 import {enrichCharacter,loadCharacterRules} from './character-rules.mjs';
-import {loadRules,matchWeapon} from './rules-library.mjs';
+import {loadRules,matchSpell,matchWeapon} from './rules-library.mjs';
 import {sourceProficiencies,sourceAllowed,skillAbilities} from './class-choice-rules.mjs';
 import {additionalSpellChoices} from './class-spell-choices.mjs';
 export const abilities=['str','dex','con','int','wis','cha'];
@@ -107,7 +107,31 @@ export function buildCharacter(draft,db){
  const combined=[...originChoices,...classChoices].map(c=>({...c,label:c.kind==='spellbook'?c.label.replace('minimum learned','starting spells'):c.label,count:Number(c.count??1),options:c.options.map(o=>o.id==='asi'?{...o,name:'Ability score improvement (+2 or +1 / +1)'}:o),selected:(choices[c.id]??[]).filter(id=>c.options.some(o=>o.id===id)),note:draft.notes?.[c.id]??''}));
  // Starting skills cannot spend a selection on a skill granted by the background or species.
  for(const c of combined)if(['spells','spellbook','prepared','granted-spells'].includes(c.kind)){
-   const rank=o=>(o.edition===draft.edition?10:0)+(['PHB','XPHB'].includes(o.source)?2:0),preferred=new Map();for(const o of c.options){const name=o.name.toLowerCase(),old=preferred.get(name);if(!old||rank(o)>rank(old))preferred.set(name,o);}c.options=[...preferred.values()];c.selected=c.selected.filter(id=>c.options.some(o=>o.id===id));
+   const rank=o=>(o.edition===draft.edition?10:0)+(['PHB','XPHB'].includes(o.source)?2:0),preferred=new Map();for(const o of c.options){const name=o.name.toLowerCase(),old=preferred.get(name);if(!old||rank(o)>rank(old))preferred.set(name,o);}
+   c.options=[...preferred.values()].map(o=>{
+     const spell=matchSpell(o.name);
+     if(!spell)return o;
+     const isConcentration=Boolean(spell?.duration?.some(d=>d.concentration)||o.duration?.some(d=>d.concentration));
+     const isRitual=Boolean(o.meta?.ritual||spell?.meta?.ritual);
+     const timeUnit=spell.time?.[0]?.unit?.toLowerCase()??'';
+     const castingCategory=timeUnit.includes('bonus')?'bonus':timeUnit.includes('reaction')?'reaction':timeUnit.includes('action')?'action':'other';
+     const rangeObj=spell.range?.distance;
+     const rangeStr=rangeObj?.amount?(rangeObj.amount+' '+rangeObj.type):(rangeObj?.type??spell.range?.type??'');
+     return {
+       ...o,
+       level:o.level??spell.level??0,
+       school:o.school||spell.school,
+       time:spell.time,
+       castingCategory,
+       duration:spell.duration,
+       concentration:isConcentration,
+       ritual:isRitual,
+       range:rangeStr,
+       entries:o.entries||spell.entries,
+       entriesHigherLevel:o.entriesHigherLevel||spell.entriesHigherLevel
+     };
+   });
+   c.selected=c.selected.filter(id=>c.options.some(o=>o.id===id));
  }
  for(const c of combined)if(c.id.endsWith('|skills'))c.options=c.options.map(o=>({...o,disabled:o.disabled||originFixed.skills.includes(o.id),requires:originFixed.skills.includes(o.id)?'Already granted by your origin':o.requires}));
  for(const c of combined)if(c.kind==='skills'&&!c.id.endsWith('|skills'))c.options=c.options.map(o=>({...o,disabled:o.disabled||fixedOrigins.skills.includes(o.id),requires:fixedOrigins.skills.includes(o.id)?'Already granted by your origin':o.requires}));

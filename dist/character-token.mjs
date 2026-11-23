@@ -16,7 +16,7 @@ function database() {
   });
 }
 
-async function storedImage(id, blob) {
+export async function storedImage(id, blob) {
   const db = await database();
   return new Promise((resolve,reject) => {
     const tx = db.transaction("images",blob ? "readwrite" : "readonly");
@@ -27,7 +27,7 @@ async function storedImage(id, blob) {
   });
 }
 
-async function decodeImage(blob) {
+export async function decodeImage(blob) {
   const url = URL.createObjectURL(blob);
   try {
     const image = new Image();

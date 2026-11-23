@@ -270,6 +270,7 @@ export function characterPage(character, requestedSection, {embedded = false, to
   const portrait = `<div class="sheet-avatar" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage,character.tokenSession)}</div>`;
   const tokenControls = tokenEditable ? `<div class="sheet-token-controls">
     <button type="button" class="game-button" data-action="pick-token">${character.tokenImage ? "Replace token" : "Upload token"}</button>
+    ${character.tokenImage ? '<button type="button" class="game-button" data-action="edit-token">Edit token</button>' : ""}
     ${character.tokenImage ? '<button type="button" class="game-button" data-action="clear-token">Remove token</button>' : ""}
     <input id="character-token-file" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Character token image" hidden>
     <p class="sheet-token-status" role="status"></p>

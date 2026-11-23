@@ -4,12 +4,101 @@ import {formatEntries} from './rules-library.mjs';
 const draftKey='wayfarer-character-builder-v1',steps=['Identity','Origins & class','Ability scores','Training & features','Equipment','Spells','Review'];
 let draft;try{draft=JSON.parse(localStorage.getItem(draftKey));}catch{}if(!draft?.baseScores)draft=newBuilderDraft();
 let db,root,onCreate,onClose,error='',saving=false;
-const searches=new Map(),scrolls=new Map();
+const searches=new Map(),scrolls=new Map(),activeSpellTabs=new Map(),activeSpellFilters=new Map();
+const schoolNames={A:'Abjuration',C:'Conjuration',D:'Divination',E:'Enchantment',V:'Evocation',I:'Illusion',N:'Necromancy',T:'Transmutation'};
+const schoolOf=s=>schoolNames[s]??(typeof s==='string'&&s.length>1?s:'Magic');
+const levelLabel=lvl=>lvl===0?'Cantrips':lvl===1?'1st Level':lvl===2?'2nd Level':lvl===3?'3rd Level':`${lvl}th Level`;
+const spellTimeDisplay=time=>(!time||!time.length)?'1 action':time.map(t=>`${t.number?t.number+' ':''}${t.unit==='bonus'?'bonus action':t.unit}`).join(' / ');
 const store=()=>{try{localStorage.setItem(draftKey,JSON.stringify(draft));}catch{error='This browser could not save the draft. Keep this page open until you finish.';}};
 const option=(id,name,selected=false,disabled=false)=>`<option value="${escape(id)}" ${selected?'selected':''} ${disabled?'disabled':''}>${escape(name)}</option>`;
 const select=(label,key,options)=>`<label class="builder-field">${escape(label)}<select data-build="${escape(key)}" aria-label="${escape(label)}">${options}</select></label>`;
 function increaseLabel(record){const weights=record.choose?.weighted?.weights;if(weights)return weights.every(n=>n===1)?'+1 to '+weights.length+' different abilities':weights.map(n=>'+'+n).join(' and ')+' to different abilities';if(record.choose)return '+'+(record.choose.amount??1)+' to '+(record.choose.count??1)+' chosen abilities';return Object.entries(record).filter(([key])=>abilities.includes(key)).map(([key,n])=>key.toUpperCase()+' +'+n).join(', ')||'Ability increase';}
-function choicesHTML(choices){return choices.map(c=>{const selected=c.selected.length,bad=c.selected.some(id=>c.options.some(o=>o.id===id&&o.disabled));return `<section class="builder-choice" data-choice-id="${escape(c.id)}"><header><h3>${escape(c.label)}</h3><span class="builder-count ${bad?'needs-choice':''}">${selected} / ${c.count}${c.optional&&c.kind!=='prepared'?' optional':''}</span></header>${c.instruction?`<p>${escape(c.instruction)}</p>`:''}
+function spellChoiceHTML(c){
+  const selectedCount=c.selected.length,bad=c.selected.some(id=>c.options.some(o=>o.id===id&&o.disabled));
+  const distinctLevels=[...new Set(c.options.map(o=>o.level??0))].sort((a,b)=>a-b);
+  const currentTab=activeSpellTabs.has(c.id)&&distinctLevels.includes(activeSpellTabs.get(c.id))?activeSpellTabs.get(c.id):(distinctLevels[0]??0);
+  if(!activeSpellTabs.has(c.id))activeSpellTabs.set(c.id,currentTab);
+  const activeFilters=activeSpellFilters.get(c.id)??new Set();
+  const presentSchools=[...new Set(c.options.map(o=>schoolOf(o.school)).filter(Boolean))].sort();
+  const hasConcentration=c.options.some(o=>o.concentration),hasRitual=c.options.some(o=>o.ritual);
+  const hasBonus=c.options.some(o=>o.castingCategory==='bonus'),hasAction=c.options.some(o=>o.castingCategory==='action'),hasReaction=c.options.some(o=>o.castingCategory==='reaction');
+  const spellsInTab=c.options.filter(o=>(o.level??0)===currentTab);
+  const visibleSpells=spellsInTab.filter(o=>{
+    for(const tag of activeFilters){
+      if(tag.startsWith('school:')){if(schoolOf(o.school)!==tag.slice(7))return false;}
+      else if(tag==='prop:concentration'){if(!o.concentration)return false;}
+      else if(tag==='prop:ritual'){if(!o.ritual)return false;}
+      else if(tag.startsWith('time:')){if(o.castingCategory!==tag.slice(5))return false;}
+    }
+    return true;
+  });
+  return `<section class="builder-choice builder-spell-choice" data-choice-id="${escape(c.id)}">
+    <header class="builder-spell-choice-header">
+      <div>
+        <h3>${escape(c.label)}</h3>
+        <p class="builder-spell-choice-desc">${c.instruction?escape(c.instruction):(c.kind==='prepared'?'Prepare your daily spells grouped by spell level.':c.kind==='spellbook'?'Record starting spells in your spellbook by level.':'Choose spells for your adventurer.')}</p>
+      </div>
+      <span class="builder-count ${bad?'needs-choice':''}">${selectedCount} / ${c.count}${c.optional&&c.kind!=='prepared'?' optional':''}</span>
+    </header>
+    ${distinctLevels.length>1?`
+      <div class="builder-spell-tabs" role="tablist" aria-label="Spell level tabs">
+        ${distinctLevels.map(lvl=>{
+          const inLvl=c.options.filter(o=>(o.level??0)===lvl),prepInLvl=inLvl.filter(o=>c.selected.includes(o.id)).length,isSelected=lvl===currentTab;
+          return `<button type="button" role="tab" class="builder-spell-tab" data-spell-choice-id="${escape(c.id)}" data-spell-tab="${lvl}" aria-selected="${isSelected?'true':'false'}" id="tab-${escape(c.id)}-${lvl}">
+            <span>${levelLabel(lvl)}</span>
+            <span class="builder-tab-badge ${prepInLvl>0?'active':''}">${prepInLvl>0?prepInLvl+' prep':'('+inLvl.length+')'}</span>
+          </button>`;
+        }).join('')}
+      </div>`:''}
+    <div class="builder-spell-toolbar">
+      <div class="builder-field builder-filter">
+        <input type="search" placeholder="Search spells by name or school..." data-choice-search aria-label="Search spells">
+      </div>
+      <div class="builder-spell-tags-bar" role="group" aria-label="Filter tags">
+        <span class="builder-filter-label">Filter:</span>
+        ${hasConcentration?`<button type="button" class="builder-filter-tag ${activeFilters.has('prop:concentration')?'active':''}" data-spell-choice-id="${escape(c.id)}" data-spell-tag="prop:concentration" aria-pressed="${activeFilters.has('prop:concentration')}">Concentration</button>`:''}
+        ${hasRitual?`<button type="button" class="builder-filter-tag ${activeFilters.has('prop:ritual')?'active':''}" data-spell-choice-id="${escape(c.id)}" data-spell-tag="prop:ritual" aria-pressed="${activeFilters.has('prop:ritual')}">Ritual</button>`:''}
+        ${hasBonus?`<button type="button" class="builder-filter-tag ${activeFilters.has('time:bonus')?'active':''}" data-spell-choice-id="${escape(c.id)}" data-spell-tag="time:bonus" aria-pressed="${activeFilters.has('time:bonus')}">Bonus Action</button>`:''}
+        ${hasAction?`<button type="button" class="builder-filter-tag ${activeFilters.has('time:action')?'active':''}" data-spell-choice-id="${escape(c.id)}" data-spell-tag="time:action" aria-pressed="${activeFilters.has('time:action')}">Action</button>`:''}
+        ${hasReaction?`<button type="button" class="builder-filter-tag ${activeFilters.has('time:reaction')?'active':''}" data-spell-choice-id="${escape(c.id)}" data-spell-tag="time:reaction" aria-pressed="${activeFilters.has('time:reaction')}">Reaction</button>`:''}
+        ${presentSchools.map(sch=>`<button type="button" class="builder-filter-tag ${activeFilters.has('school:'+sch)?'active':''}" data-spell-choice-id="${escape(c.id)}" data-spell-tag="school:${escape(sch)}" aria-pressed="${activeFilters.has('school:'+sch)}">${escape(sch)}</button>`).join('')}
+        ${activeFilters.size>0?`<button type="button" class="builder-filter-clear" data-spell-clear-filters="${escape(c.id)}">Reset filters</button>`:''}
+      </div>
+    </div>
+    <div class="builder-options builder-spell-cards" role="tabpanel" id="panel-${escape(c.id)}-${currentTab}" aria-labelledby="tab-${escape(c.id)}-${currentTab}">
+      ${visibleSpells.length?visibleSpells.map(o=>{
+        const isChecked=c.selected.includes(o.id),isDisabled=o.disabled&&!isChecked,sch=schoolOf(o.school),timeStr=spellTimeDisplay(o.time);
+        return `<div class="builder-option builder-spell-card ${isChecked?'is-prepared':''}" data-search-name="${escape((o.name+' '+(o.source??'')+' '+sch).toLowerCase())}">
+          <label class="builder-spell-card-header">
+            <input type="checkbox" data-build-choice="${escape(c.id)}" value="${escape(o.id)}" ${isChecked?'checked':''} ${isDisabled?'disabled':''}>
+            <div class="builder-spell-title-col">
+              <div class="builder-spell-name-row">
+                <strong class="builder-spell-name">${escape(o.name)}</strong>
+                ${isChecked?'<span class="builder-prepared-badge">Prepared ✓</span>':''}
+              </div>
+              <div class="builder-spell-tags">
+                <span class="builder-spell-meta-badge school">${escape(sch)}</span>
+                <span class="builder-spell-meta-badge time">${escape(timeStr)}</span>
+                ${o.range?`<span class="builder-spell-meta-badge range">${escape(o.range)}</span>`:''}
+                ${o.concentration?'<span class="builder-spell-meta-badge concentration">Conc.</span>':''}
+                ${o.ritual?'<span class="builder-spell-meta-badge ritual">Ritual</span>':''}
+                ${o.source?`<span class="builder-spell-meta-badge source">${escape(o.source)}</span>`:''}
+              </div>
+            </div>
+          </label>
+          ${o.requires?`<small class="builder-requirement">${escape(o.requires)}</small>`:''}
+          ${o.entries?`<details class="builder-spell-details" data-choice-rules="${escape(c.id)}" data-option-rules="${escape(o.id)}" data-loaded="true">
+            <summary>Read details</summary>
+            <div class="builder-spell-rules-body">${formatEntries(o.entries)}${o.entriesHigherLevel?formatEntries(o.entriesHigherLevel):''}</div>
+          </details>`:''}
+        </div>`;
+      }).join(''):`<div class="builder-spells-empty"><p>No spells match the active filters for this level.</p>${activeFilters.size>0?`<button type="button" class="button outline small" data-spell-clear-filters="${escape(c.id)}">Reset filters</button>`:''}</div>`}
+    </div>
+  </section>`;
+}
+function choicesHTML(choices){return choices.map(c=>{
+  if(['prepared','spells','spellbook','granted-spells'].includes(c.kind)&&c.options.some(o=>o.level!=null))return spellChoiceHTML(c);
+  const selected=c.selected.length,bad=c.selected.some(id=>c.options.some(o=>o.id===id&&o.disabled));return `<section class="builder-choice" data-choice-id="${escape(c.id)}"><header><h3>${escape(c.label)}</h3><span class="builder-count ${bad?'needs-choice':''}">${selected} / ${c.count}${c.optional&&c.kind!=='prepared'?' optional':''}</span></header>${c.instruction?`<p>${escape(c.instruction)}</p>`:''}
  ${c.kind==='record'?`<label class="builder-field">Your choice<input data-note="${escape(c.id)}" maxlength="300" value="${escape(c.note)}"></label>`:`${c.options.length>16?'<label class="builder-field builder-filter">Find an option<input type="search" placeholder="Search by name or source" data-choice-search></label>':''}<div class="builder-options">${c.options.map(o=>`<div class="builder-option" data-search-name="${escape((o.name+' '+(o.source??'')).toLowerCase())}"><label><input type="checkbox" data-build-choice="${escape(c.id)}" value="${escape(o.id)}" ${c.selected.includes(o.id)?'checked':''} ${o.disabled&&!c.selected.includes(o.id)?'disabled':''}><span><strong>${escape(o.name)}</strong>${o.source?`<small>${escape(o.source)}${o.level!=null?' · '+(o.level?'Level '+o.level:'Cantrip'):''}</small>`:''}</span></label>${o.requires?`<small class="builder-requirement">${escape(o.requires)}</small>`:''}${o.entries?`<details data-choice-rules="${escape(c.id)}" data-option-rules="${escape(o.id)}"><summary>Read rules</summary></details>`:''}</div>`).join('')}</div>`}</section>`;}).join('');}
 function content(context,problems){const {character,cls,species,background,equipment,abilityInfo}=context;
  switch(draft.step){
@@ -36,7 +125,7 @@ function paint(){if(!root?.isConnected||!db)return;let context;try{context=build
 function update(event){const input=event.target;if(!root?.contains(input))return;if(input.matches('[data-choice-search]')){const q=input.value.toLowerCase();searches.set(input.closest('[data-choice-id]').dataset.choiceId,input.value);for(const item of input.closest('.builder-choice').querySelectorAll('[data-search-name]'))item.hidden=!item.dataset.searchName.includes(q);return;}
  error='';const key=input.dataset.build;
  if(key){if(key==='name'||key==='player'){draft[key]=input.value;store();return;}const [group,...parts]=key.split('.');if(parts.length)draft[group][parts.join('.')]=input.value;else draft[key]=input.type==='checkbox'?input.checked:key==='level'?Number(input.value):input.value;
- if(['classId','level','edition'].includes(key)){draft.featureChoices={};draft.notes={};draft.subclass='';draft.equipment={};draft.gearChoices={};draft.armor='';draft.allocations=Object.fromEntries(Object.entries(draft.allocations).filter(([k])=>!k.startsWith('asi:')&&!k.startsWith('feat:')));}
+ if(['classId','level','edition'].includes(key)){draft.featureChoices={};draft.notes={};draft.subclass='';draft.equipment={};draft.gearChoices={};draft.armor='';draft.allocations=Object.fromEntries(Object.entries(draft.allocations).filter(([k])=>!k.startsWith('asi:')&&!k.startsWith('feat:')));activeSpellTabs.clear();activeSpellFilters.clear();searches.clear();}
  if(key==='edition'){const source=draft.edition==='2024'?'xphb':'phb';draft.classId='fighter|'+source;draft.speciesId='human|'+source;draft.subraceId=draft.edition==='2024'?'':'standard';draft.backgroundId='soldier|'+source;draft.allocations={};draft.abilityOptions={};}
  if(['speciesId','backgroundId'].includes(key)){for(const id of Object.keys(draft.featureChoices))if(id.startsWith('creation|'))delete draft.featureChoices[id];draft.allocations={};draft.abilityOptions={};draft.equipment={};draft.gearChoices={};if(key==='speciesId'){const sp=db.species.find(s=>builderId(s)===draft.speciesId);draft.subraceId=sp?.subraces?.[0]?.id??'';}}
  if(key==='subraceId'){for(const id of Object.keys(draft.featureChoices))if(id.startsWith('creation|species')||id.startsWith('creation|ancestry'))delete draft.featureChoices[id];draft.allocations=Object.fromEntries(Object.entries(draft.allocations).filter(([k])=>!k.startsWith('species:')));delete draft.abilityOptions['species'];}
@@ -45,6 +134,6 @@ function update(event){const input=event.target;if(!root?.contains(input))return
  else if(input.dataset.buildChoice){const id=input.dataset.buildChoice,ctx=buildCharacter(draft,db),choice=ctx.choices.find(c=>c.id===id);let values=(draft.featureChoices[id]??[]).filter(value=>choice.options.some(option=>option.id===value));if(input.checked){if(choice.count===1)values=[input.value];else if(values.length>=choice.count){error='Choose at most '+choice.count+' options for '+choice.label+'.';input.checked=false;}else values=[...values,input.value];}else values=values.filter(v=>v!==input.value);draft.featureChoices[id]=values;}
  else if(input.dataset.note){draft.notes[input.dataset.note]=input.value;store();return;}else return;store();paint();
 }
-async function action(event){const button=event.target.closest('[data-builder-action],[data-builder-step]');if(!button||!root?.contains(button))return;event.preventDefault();error='';if(button.dataset.builderStep!=null){draft.step=Number(button.dataset.builderStep);store();paint();return;}switch(button.dataset.builderAction){case'close':store();onClose();return;case'reset':if(confirm('Discard this draft and start a new character?')){draft=newBuilderDraft();store();}break;case'back':draft.step=Math.max(0,draft.step-1);break;case'next':{const issues=builderProblems(draft,buildCharacter(draft,db)).filter(p=>p.step===draft.step);if(issues.length)error=issues.map(p=>p.message).join(' ');else draft.step=Math.min(6,draft.step+1);break;}case'create':{const ctx=buildCharacter(draft,db),problems=builderProblems(draft,ctx);if(problems.length){draft.step=problems[0].step;error=problems[0].message;break;}saving=true;paint();try{if(await onCreate(ctx.raw)===false)throw Error('The character could not be saved. Your draft is still available.');draft=newBuilderDraft();store();}catch(failure){error=failure.message;}finally{saving=false;}break;}}
+async function action(event){const tabBtn=event.target.closest('[data-spell-tab]');if(tabBtn){activeSpellTabs.set(tabBtn.dataset.spellChoiceId,Number(tabBtn.dataset.spellTab));paint();return;}const tagBtn=event.target.closest('[data-spell-tag]');if(tagBtn){const id=tagBtn.dataset.spellChoiceId,t=tagBtn.dataset.spellTag;if(!activeSpellFilters.has(id))activeSpellFilters.set(id,new Set());const f=activeSpellFilters.get(id);if(f.has(t))f.delete(t);else f.add(t);paint();return;}const clearBtn=event.target.closest('[data-spell-clear-filters]');if(clearBtn){const id=clearBtn.dataset.spellChoiceId||clearBtn.dataset.spellClearFilters;activeSpellFilters.delete(id);searches.delete(id);paint();return;}const button=event.target.closest('[data-builder-action],[data-builder-step]');if(!button||!root?.contains(button))return;event.preventDefault();error='';if(button.dataset.builderStep!=null){draft.step=Number(button.dataset.builderStep);store();paint();return;}switch(button.dataset.builderAction){case'close':store();onClose();return;case'reset':if(confirm('Discard this draft and start a new character?')){draft=newBuilderDraft();activeSpellTabs.clear();activeSpellFilters.clear();searches.clear();store();}break;case'back':draft.step=Math.max(0,draft.step-1);break;case'next':{const issues=builderProblems(draft,buildCharacter(draft,db)).filter(p=>p.step===draft.step);if(issues.length)error=issues.map(p=>p.message).join(' ');else draft.step=Math.min(6,draft.step+1);break;}case'create':{const ctx=buildCharacter(draft,db),problems=builderProblems(draft,ctx);if(problems.length){draft.step=problems[0].step;error=problems[0].message;break;}saving=true;paint();try{if(await onCreate(ctx.raw)===false)throw Error('The character could not be saved. Your draft is still available.');draft=newBuilderDraft();store();}catch(failure){error=failure.message;}finally{saving=false;}break;}}
  store();paint();}
 export async function mountCharacterBuilder(container,{create,close}){root=container;onCreate=create;onClose=close;if(!root.dataset.builderBound){root.dataset.builderBound='true';root.addEventListener('click',action);root.addEventListener('toggle',event=>{const details=event.target;if(!details.matches?.('[data-choice-rules]')||!details.open||details.dataset.loaded)return;const option=buildCharacter(draft,db).choices.find(c=>c.id===details.dataset.choiceRules)?.options.find(o=>o.id===details.dataset.optionRules);if(option?.entries){details.insertAdjacentHTML('beforeend',formatEntries(option.entries));details.dataset.loaded='true';}},true);root.addEventListener('change',update);root.addEventListener('input',e=>{if(e.target.matches('[data-choice-search],[data-note],[data-build=name],[data-build=player]'))update(e);});}root.innerHTML='<p role="status">Loading character creation rules…</p>';try{db=await loadBuilderData();paint();}catch(failure){root.innerHTML=`<p role="alert">${escape(failure.message)}</p><button type="button" class="button outline" data-builder-action="close">Back to sheets</button>`;}}

@@ -118,3 +118,44 @@ assert.equal(we.character.abilities.find(a => a.abbr === 'WIS').score, 11); // 1
 assert.equal(partyActor(we.raw).speed, 35, 'Wood Elf speed 35');
 console.log('Combined base + subrace ability scores (Mountain Dwarf, Wood Elf) and traits verified.');
 
+
+// Verify prepared spells metadata, level grouping, and filtering
+const cleric3Draft = newBuilderDraft();
+Object.assign(cleric3Draft, {name: 'Level 3 Cleric', classId: 'cleric|phb', level: 3});
+const c3 = complete(cleric3Draft);
+const prepChoice = c3.choices.find(c => c.kind === 'prepared');
+assert(prepChoice, 'Cleric 3 has prepared spells choice');
+assert(prepChoice.options.length > 20, 'Cleric 3 has rich spell list');
+
+// Verify metadata enrichment
+const sampleSpell = prepChoice.options.find(s => s.name === 'Bless');
+assert(sampleSpell, 'Bless exists in options');
+assert.equal(sampleSpell.level, 1, 'Bless is level 1');
+assert.equal(sampleSpell.school, 'E', 'Bless is Enchantment');
+assert.equal(sampleSpell.concentration, true, 'Bless has concentration');
+assert.equal(sampleSpell.castingCategory, 'action', 'Bless is 1 action');
+assert(sampleSpell.entries?.length > 0, 'Bless has entries rules text');
+
+const sampleBonus = prepChoice.options.find(s => s.name === 'Healing Word');
+assert(sampleBonus, 'Healing Word exists in options');
+assert.equal(sampleBonus.castingCategory, 'bonus', 'Healing Word is bonus action');
+
+const sampleRitual = prepChoice.options.find(s => s.name === 'Augury' || s.name === 'Detect Magic' || s.name === 'Purify Food and Drink');
+assert(sampleRitual, 'Ritual spell exists in cleric options');
+assert.equal(sampleRitual.ritual, true, 'Spell has ritual property');
+
+// Verify level grouping
+const distinctLevels = [...new Set(prepChoice.options.map(o => o.level))].sort((a,b) => a - b);
+assert.deepEqual(distinctLevels, [1, 2], 'Cleric 3 has level 1 and level 2 prepared spells grouped');
+const level1Spells = prepChoice.options.filter(o => o.level === 1);
+const level2Spells = prepChoice.options.filter(o => o.level === 2);
+assert(level1Spells.length >= 10, 'Level 1 spells present');
+assert(level2Spells.length >= 10, 'Level 2 spells present');
+
+// Verify preparation selection applies to character sheet
+cleric3Draft.featureChoices[prepChoice.id] = [sampleSpell.id, sampleBonus.id];
+const c3Updated = buildCharacter(cleric3Draft, db);
+const clericActor = partyActor(c3Updated.raw);
+assert(clericActor.spells.some(s => s.name === 'Bless' && s.prepared), 'Bless is marked prepared on actor');
+assert(clericActor.spells.some(s => s.name === 'Healing Word' && s.prepared), 'Healing Word is marked prepared on actor');
+console.log('Prepared spells metadata enrichment, level grouping (tabs), tags, and actor preparation verified.');
