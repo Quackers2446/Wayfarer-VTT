@@ -71,6 +71,7 @@ let artworkNote = "";
 let customArtwork;
 let table;
 let tableOpen = false;
+let partyOpen=false;
 let tableMessage = "";
 let needsHostSignIn = false;
 let showInvitation;
@@ -149,6 +150,7 @@ function roomCreationForm() {
   return `<form id="create-room-form" class="room-create-form">
     <div class="play-field-row">${input('Room name','new-room-name',roomDraft.name || roomNameDefault(),'text','required maxlength="80"')}
       ${input('Your username','new-room-username',roomDraft.username || rememberedUsername(),'text','required maxlength="24" autocomplete="nickname"')}</div>
+    <div class="room-party-guidance"><p>1. Import your character sheets. 2. Select up to four characters below. 3. Create the room.</p><button type="button" class="button outline small" data-action="upload">Import character sheets</button></div>
     ${context.characters.length ? `<fieldset class="room-party-picker"><legend>Starting party · choose up to four</legend>${context.characters.map(character=>
       `<label><input type="checkbox" name="room-character" value="${escape(character.id)}" ${selected.has(character.id) ? 'checked' : ''} ${roomDraft.prepared ? 'disabled' : ''}>${escape(character.name)}</label>`).join('')}</fieldset>` :
       '<p class="play-hint">The practice yard includes Rowan. Import characters to start an adventure with your own party.</p>'}
@@ -1032,10 +1034,11 @@ function redraw() {
     hotbar:hotbarActorNow ? renderActionBar(barEntries,hotbarActorNow,{tab:hotbarTab,filter:hotbarFilter,selected:hotbarSelection,expanded:hotbarExpanded,utilitiesOpen:hotbarTools}) : '',
     actionPanelOpen:Boolean(hotbarTools || selectedEntry && selectedEntry.mode!=='move' || pendingSquare || battle.classReaction || battle.movement || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && canRescue(battle,map,hotbarActorNow)),
     resourceControls:renderActionResources(hotbarActorNow,battle,hotbarFilter),
-    logOpen:eventLogMode==='expanded',logHistory:table?.state?.battle.log ?? battle.log,eventLogMode,eventLogPlacement,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
+    logOpen:eventLogPlacement!=='hidden' && eventLogMode!=='collapsed' && (eventLogPlacement!=='chat' || Boolean(table?.chat?.isOpen)),logHistory:table?.state?.battle.log ?? battle.log,eventLogMode,eventLogPlacement,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
     storyOpen,storyContent:storyOpen ? storyPanel(battle,map) : "",
     rescueAvailable:canControl(selectedActor()) && canRescue(battle,map,selectedActor()),
     canAct:canControl(selectedActor()), controllers:table ? battle.controllers ?? {} : null, controller,
+    partyOpen,partyContent:partyManagement(),chatOpen:table?.chat?.isOpen??false,
     tableOpen,tableContent:tableOpen ? tablePanel(table,context.characters,battle,tableMessage,needsHostSignIn,controller) : "",
     shared:Boolean(table),players:table?.players,busy:Boolean(table?.writing),
     adventureName:context.adventures.find(({id}) => id === map.module)?.name,
@@ -1111,6 +1114,18 @@ function tableTools() {
     field("Grid tool","grid-tool",tools.map(([value,label]) => option(value,label,tool===value))) +
     (battle.round ? actionButton("End initiative","end-initiative",{disabled:Boolean(battle.movement)}) : "") +
     gridSettings() + manualHP() + (tool==="room" ? roomPanel() : "");
+}
+
+function partyManagement(){
+ const members=battle.actors.filter(a=>a.side==='party'),eligible=context.characters.filter(c=>!members.some(a=>a.id==='party:'+c.id));
+ return `<h2>Party · ${members.length} / 4</h2><p>Import a character sheet, choose the character below, then add them to this adventure.</p>
+ <button type="button" class="button primary small" data-action="upload">${icon('plus',16)} Import character sheet</button>
+ ${members.length>=4?'<p class="party-help">This party is full (four characters).</p>':eligible.length?`<form id="game-party-form" class="play-form">
+ <label class="play-field" for="session-character">Choose an imported character<select id="session-character">${eligible.map(c=>option(c.id,c.name,false)).join('')}</select></label>
+ <button class="button primary small" type="submit" ${battle.round?'disabled':''}>Add to this party</button></form>`:`<p class="party-help">${context.characters.length?'All your imported characters are already in this party.':'No character sheets imported yet. Use Import character sheet above to get started.'}</p>`}
+ ${battle.round?'<p class="party-help">Characters can join after combat ends.</p>':''}
+ <h3>Current party</h3><ul class="party-members">${members.map(a=>`<li><strong>${escape(a.name)}</strong><span>${a.hp} / ${a.maxHp} HP${table?(battle.controllers?.[a.id]?' · Claimed':' · Available to claim'):''}</span></li>`).join('')||'<li>No characters yet.</li>'}</ul>
+ <p class="party-help">${table?'After adding a character, use Claim beneath their portrait on the left to choose who plays them.':'Select a portrait on the left to open their sheet, or Control to play as them.'}</p><p role="status">${escape(status)}</p>`;
 }
 
 function dynamicFogTools(){
@@ -1898,14 +1913,15 @@ document.addEventListener("click", (event) => {
     void(async()=>{try{
       const snapshot=await readSession(roomId),name=snapshot.state.room?.name||snapshot.map.title;
       if(!confirm(`Permanently delete “${name}”?\n\nThis removes the saved adventure, chat, and uploaded room images for everyone. This cannot be undone.`))return;
-      await deleteRoom(roomId,controller,snapshot.revision);rooms=forgetRoom(roomId);roomsError='Room deleted.';
+      await deleteRoom(roomId,snapshot.revision);rooms=forgetRoom(roomId);roomsError='Room deleted.';
     }catch(error){if(error.status===404){rooms=forgetRoom(roomId);roomsError='Room removed.';}else roomsError=error.message;}
     finally{deletingRoom='';if(context && !context.game)redraw();}})();return;
   }
-  if(play==='game-log' && eventLogPlacement==='hidden'){setActivityPlacement('separate');return;}
-  if(play==='game-log' && eventLogPlacement==='chat')table?.chat?.show();
+  if(play==='game-log'){partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;}
+  if(play==='game-log' && eventLogPlacement==='hidden'){setEventLogMode('compact');setActivityPlacement('separate');return;}
+  if(play==='game-log' && eventLogPlacement==='chat' && (!table?.chat?.isOpen || eventLogMode==='collapsed')){setEventLogMode('compact');table?.chat?.show();redraw();return;}
   if(['game-log','event-log-expand','event-log-toggle'].includes(play)) {
-    const next=play==='event-log-toggle' ? eventLogMode==='collapsed' ? 'compact' : 'collapsed' : eventLogMode==='expanded' ? 'compact' : 'expanded';
+    const next=play==='event-log-expand' ? eventLogMode==='expanded' ? 'compact' : 'expanded' : eventLogMode==='collapsed' ? 'compact' : 'collapsed';
     setEventLogMode(next);
     if(next==='expanded') {toolsOpen=false;tableOpen=false;storyOpen=false;}
     redraw();return;
@@ -1961,7 +1977,9 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (play === "dice-effects") {combatCues.toggleDice();redraw();return;}
-  if(play==='game-tools'){toolsOpen=!toolsOpen;tableOpen=false;storyOpen=false;if(!toolsOpen){tool='move';gridDraft=null;}redraw();return;}
+  if(play==='game-chat'){partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;table?.chat?.toggle();redraw();return;}
+  if(play==='game-party'){partyOpen=!partyOpen;toolsOpen=false;tableOpen=false;storyOpen=false;redraw();return;}
+  if(play==='game-tools'){partyOpen=false;toolsOpen=!toolsOpen;tableOpen=false;storyOpen=false;if(!toolsOpen){tool='move';gridDraft=null;}redraw();return;}
   if(play==='edit-walls'){toolsOpen=false;tool='move';resetActionSelection();wallEditor.setMode('draw');redraw();return;}
   if(play==='reset-fog-memory'){void interact(()=>{forgetExploration(battle);delete battle.fogMemoryByActor;rememberVision(battle,map);saveExplored(battle,map);},{cosmetic:true});return;}
   if (play === "toggle-fog") {
@@ -1977,12 +1995,14 @@ document.addEventListener("click", (event) => {
   }
   if (play === "retry-session") {if (table?.error) connectTable(table); return;}
   if (play === "game-table") {
+    partyOpen=false;
     tableOpen = !tableOpen;
     if (tableOpen) {toolsOpen = false; storyOpen = false; tool = "move"; gridDraft = null;}
     redraw();
     return;
   }
   if (play === "game-story") {
+    partyOpen=false;
     storyOpen = !storyOpen;
     if (storyOpen) {toolsOpen = false; tableOpen = false; tool = "move"; gridDraft = null;}
     redraw();
@@ -2295,7 +2315,7 @@ document.addEventListener("change", (event) => {
     case "play-module": selectModule(value); return;
     case "play-map": {const entry = maps.find(({key}) => key===value); if (entry) useMap(entry); break;}
     case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
-    case "activity-placement": setActivityPlacement(value); return;
+    case "activity-placement": if(value!=="hidden")setEventLogMode("compact");setActivityPlacement(value); return;
     case "grid-tool": tool = value; break;
     case "grid-overlay": interact(() => {battle.gridOverlay = value;}); return;
     case "room-creature": selectedCreature = Number(value); break;
@@ -2423,13 +2443,14 @@ document.addEventListener("submit", (event) => {
         break;
       }
       case "class-action-form": executeClassSelection(event.target);break;
-      case "session-party-form": {
-        if (!table || battle.round) return;
+      case "session-party-form":
+      case "game-party-form": {
+        if (battle.round) return;
         const character = context.characters.find(({id}) => id === value("session-character"));
         if (!character || battle.actors.some(({id}) => id === "party:"+character.id)) return;
         const connection = table;
         const actor = partyActor(character);
-        if (actor.tokenImage) await uploadSessionToken(connection.id,actor.tokenImage);
+        if (connection && actor.tokenImage) await uploadSessionToken(connection.id,actor.tokenImage);
         if (connection !== table) return;
         add(actor,map.regions.find(({id}) => id === "01b") ?? map.regions[0]);
         (battle.sheets ??= {})[actor.id] = sharedSheet(character);
@@ -2519,4 +2540,5 @@ document.addEventListener('submit',event=>{
  else {const id=form.dataset.visionActor;void interact(()=>{const actor=battle.actors.find(a=>a.id===id);if(actor){actor.vision={enabled:values.has('enabled'),range:Number(values.get('range')),angle:Number(values.get('angle')),facing:Number(values.get('facing'))};rememberVision(battle,map);saveExplored(battle,map);}},{cosmetic:true});}
 },true);
 
-document.addEventListener('wayfarer:activity-placement',event=>setActivityPlacement(event.detail));
+document.addEventListener('wayfarer:activity-placement',event=>{if(event.detail==='chat')setEventLogMode('compact');setActivityPlacement(event.detail);});
+document.addEventListener('wayfarer:chat-visibility',event=>root()?.querySelector('[data-play=game-chat]')?.setAttribute('aria-pressed',String(event.detail)));

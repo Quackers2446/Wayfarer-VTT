@@ -1,3 +1,4 @@
+import {mountCharacterBuilder} from './character-builder.mjs';
 import {setGameTokenImage, showPlay} from "./play.mjs";
 import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
@@ -52,6 +53,7 @@ let localSamples = [];
 let localArchive = "";
 let spellRequest = 0;
 let gameSheet;
+let builderOpen=false;
 let catalogKind = "adventures";
 let search = "";
 let sort = "featured";
@@ -167,7 +169,7 @@ function overview() {
       <div class="panel-heading">
         <div><h2 id="party-heading">Your party</h2><p>${state.characters.length ? plural(state.characters.length, "character") : "Add character sheets to assemble your party."}</p></div>
         <div class="panel-heading-actions">
-          ${state.characters.length ? '<a class="text-link" href="#characters">View all</a>' : icon("users", 21)}
+          <button type="button" class="button outline small" data-action="upload">Add characters</button>${state.characters.length ? '<a class="text-link" href="#characters">View all</a>' : ""}
         </div>
       </div>
       ${state.characters.length ? partyCards(state.characters.slice(0, 2)) : emptyParty()}
@@ -190,9 +192,10 @@ function overview() {
 }
 
 function charactersPage() {
+  if(builderOpen)return '<div id="character-builder"></div>';
   return `<header class="page-heading"><div><h1>Character sheets</h1>
-    <p>${state.characters.length ? plural(state.characters.length, "character") + " in your party." : "Import your party from Excel workbooks or Google Sheets."}</p></div>
-    ${localSamples.length ? button("Import supplied sheets", "samples", "sheet", "outline") : ""}
+    <p>${state.characters.length ? plural(state.characters.length, "character") + " in your party." : "Create a character step by step, or import an existing sheet."}</p></div>
+    <div class="character-create-actions">${button("Create character", "build-character", "plus")}${button("Import character", "upload", "upload", "outline")}${localSamples.length ? button("Import supplied sheets", "samples", "sheet", "outline") : ""}</div>
     </header>
     <section class="panel" aria-label="Party character sheets">
     ${state.characters.length ? partyCards(state.characters) : emptyParty()}
@@ -291,6 +294,11 @@ function render() {
     </div>
   </div>`;
   if (page === "library") renderResults();
+  if(page==='characters' && !character && builderOpen){
+    mountCharacterBuilder(document.querySelector('#character-builder'),{close:()=>{builderOpen=false;render();},create:record=>{
+      const previous=state.characters;state.characters=[...previous,record];if(!save()){state.characters=previous;return false;}builderOpen=false;location.hash=sheetPath(record);notice('Character created. Use Party → Add in an adventure room.');return true;
+    }});
+  }
   if (page === "play") showPlay({characters:state.characters, adventures:catalog.adventures,
     activeAdventure:state.active, localArchive});
   if (character) fillSheetResults(character, section);
@@ -523,7 +531,7 @@ async function runImport(entries) {
       output.innerHTML = '<ul class="import-errors">' + errors.map((error) => '<li>' + escape(error) + '</li>').join("") + '</ul>';
     } else if (count && output.isConnected) {
       dialog.close();
-      if (currentRoute().page !== "characters") location.hash = "characters";
+      if (!["characters","game","play"].includes(currentRoute().page)) location.hash = "characters";
       else document.querySelector("#main").focus({preventScroll:true});
     }
   } finally {
@@ -615,6 +623,7 @@ document.addEventListener("click", (event) => {
   if (!control) return;
   const {action, id} = control.dataset;
   switch (action) {
+    case "build-character": builderOpen=true;if(currentRoute().page!=="characters")location.hash="#characters";else render();break;
     case "upload": importDialog(); break;
     case "pick": document.querySelector("#workbooks").click(); break;
     case "pick-token": if (!changingToken) control.closest(".character-sheet").querySelector("#character-token-file").click(); break;

@@ -217,7 +217,7 @@ export function partyActor(record) {
     });
   }
   return makeActor({
-    id:"party:" + character.id, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
+    id:"party:" + character.id, creatureSize:character.creation?.size, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
     speed, darkvision:character.rulesDetails.darkvision, attacks, potions:healingItems(character.items),resist:character.resistances,

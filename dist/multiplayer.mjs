@@ -52,7 +52,7 @@ export function createSession(map, state, artwork, tokens, controller) {
 
 export const listRooms = controller => request("/api/rooms?controller="+encodeURIComponent(controller));
 
-export const deleteRoom=(id,controller,revision)=>request(`${api}/${id}`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({controller,revision})});
+export const deleteRoom=(id,revision)=>request(`${api}/${id}`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision})});
 
 export const readSession = (id, after) => request(`${api}/${id}${after == null ? "" : "?after=" + after}`);
 

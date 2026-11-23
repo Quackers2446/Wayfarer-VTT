@@ -385,3 +385,21 @@ body:has(.game-main){overflow:hidden;background:#17231d}
 
 .game-chat-slot{z-index:6}.game-chat-slot.chat-open{height:min(420px,55%)}
 .game-chat-slot.chat-open.chat-with-activity{height:min(620px,calc(100% - 57px))}.chat-content{overflow:auto}.chat-activity-slot{flex-shrink:0}
+/* One dock owns both panels, so minimizing either reflows the other. */
+.game-social-dock{position:absolute;z-index:6;right:10px;bottom:48px;width:min(330px,calc(100% - 20px));max-height:calc(100% - 60px);display:flex;flex-direction:column;gap:8px;pointer-events:none;overflow:auto;scrollbar-width:none}
+.game-social-dock .game-activity-home{display:contents}
+.game-social-dock .game-event-slot{position:relative!important;inset:auto!important;width:100%!important;height:240px!important;max-height:none!important;min-height:65px;flex:0 1 240px;border:1px solid #52684f;border-radius:8px;pointer-events:auto}
+.game-social-dock .game-event-slot[data-log-mode=expanded]{height:520px!important;flex-basis:520px}
+.game-social-dock .game-event-slot[data-log-mode=collapsed]{display:none!important}
+.game-social-dock .game-chat-slot{position:relative;inset:auto;width:100%;height:360px;max-height:none;min-height:160px;flex:0 1 360px;pointer-events:auto}
+.game-social-dock .game-chat-slot:not(.chat-open){display:none}
+.game-social-dock .game-chat-slot.chat-with-activity{height:560px;flex-basis:560px}
+.game-social-dock .chat-activity-slot .game-event-slot{height:100%!important;min-height:0;border:0;border-radius:0}
+.game-social-dock .game-event-body,.game-social-dock .chat-history,.game-social-dock .chat-content{scrollbar-width:none;-ms-overflow-style:none}
+.game-social-dock::-webkit-scrollbar,.game-social-dock .game-event-body::-webkit-scrollbar,.game-social-dock .chat-history::-webkit-scrollbar,.game-social-dock .chat-content::-webkit-scrollbar{display:none;width:0;height:0}
+.game-party-add{width:100%;margin-top:7px;justify-content:center;font-size:.7rem;padding:4px!important;min-height:28px}.party-flyout{display:grid;align-content:start;gap:13px}.party-flyout h3{font-size:1.15rem}.party-flyout .play-form{display:grid;gap:10px}.party-flyout select{width:100%;margin-top:6px}.party-members{list-style:none;margin:0;padding:0;display:grid;gap:7px}.party-members li{display:grid;padding:8px;border:1px solid #d8ddcf;border-radius:6px}.party-members span,.party-help{font-size:.82rem;color:#536450}
+@media(max-width:600px){.game-social-dock{right:8px;bottom:43px;max-height:calc(100% - 52px)}.game-social-dock .game-event-slot{height:190px!important;flex-basis:190px}.game-social-dock .game-event-slot[data-log-mode=expanded]{height:400px!important;flex-basis:400px}.game-top-right{gap:3px}}
+.game-social-dock{z-index:3}.game-flyout{z-index:8}
+.game-middle:has(.game-flyout) .game-social-dock{visibility:hidden;pointer-events:none}
+.chat-activity-control{grid-row:1}.chat-activity-slot{grid-row:2}.chat-history{grid-row:3}.chat-form{grid-row:4}
+@media(max-width:600px){.game-social-dock{width:min(330px,calc(100% - 78px))}}

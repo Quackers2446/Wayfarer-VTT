@@ -88,6 +88,7 @@ export function createGameChat(id, sender) {
       markSeen();
     }
     updateBadge();
+    document.dispatchEvent(new CustomEvent('wayfarer:chat-visibility',{detail:open}));
   }
 
   function appendMessages(messages) {
@@ -184,8 +185,11 @@ export function createGameChat(id, sender) {
       author.textContent = "Sending as " + name;
       if (open) history.scrollTop = following ? history.scrollHeight : scrollTop;
     },
+    get isOpen(){return open;},
+    toggle:()=>setOpen(!open),
     show:()=>setOpen(true),
     setActivity(enabled,log){
+      enabled=enabled && log?.dataset.logMode!=='collapsed';
       panel.querySelector('.chat-activity-toggle').checked=enabled;
       const activity=panel.querySelector('.chat-activity-slot');activity.hidden=!enabled;
       if(enabled && log)activity.replaceChildren(log);else activity.replaceChildren();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFile} from 'node:fs/promises';
 import {sessionRequest} from '../worker/session.mjs';import {trainingMap,trainingActors} from '../dist/encounters.mjs';import {newBattle} from '../dist/combat.mjs';
-const sqlite=new DatabaseSync(':memory:');for(const file of ['0000_shared_tables.sql','0003_session_images.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');for(const file of ['0000_shared_tables.sql','0003_session_images.sql','0004_room_creator_auth.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
 const DB={prepare(sql){let args=[];return{bind(...a){args=a.map(v=>v instanceof ArrayBuffer?new Uint8Array(v):v);return this;},async first(column){const row=sqlite.prepare(sql).get(...args);return column?row?.[column]??null:row??null;},async run(){sqlite.prepare(sql).run(...args);return{};}};},async batch(stmts){for(const s of stmts)await s.run();}};
 const origin='https://test.example',data=new Uint8Array(3*1024*1024);data.set([137,80,78,71]);data[data.length-1]=73;
 const form=new FormData();form.set('session',JSON.stringify({map:trainingMap,state:{battle:{...newBattle(),actors:trainingActors()}}}));form.set('artwork',new Blob([data],{type:'image/png'}));

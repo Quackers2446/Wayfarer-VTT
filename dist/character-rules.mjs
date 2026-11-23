@@ -278,7 +278,7 @@ export function enrichCharacter(record) {
   const toolChoice = (value) => /\b(choice|choose)\b/i.test(value);
   character.rulesDetails = {
     edition,derived:[...derived],sources:sourceNames,wornAC,fixedMaximum,
-    size:species?.size?.map((size) => sizeNames[size]).filter(Boolean).join(" or ") || "",
+    size:raw.creation?.size ? sizeNames[raw.creation.size] : species?.size?.map((size) => sizeNames[size]).filter(Boolean).join(" or ") || "",
     darkvision:species?.darkvision,extraSpeeds,hitDice,
     baseAC:Number.isFinite(mod.dex) ? 10+mod.dex : null,
     basePerception:character.passivePerception == null && Number.isFinite(mod.wis) ? 10+mod.wis : null,
@@ -300,6 +300,7 @@ export function enrichCharacter(record) {
       }))),
     ].filter(({entries}) => entries.length),
   };
+  if(raw.creation?.traitChoices?.length)character.rulesDetails.features.push({name:'Origin choices',entries:raw.creation.traitChoices});
   const classDetails = buildClassFeatures(character,qualified,mod,pb,edition);
   character.rulesDetails.classDetails = classDetails;
   character.classRules = classDetails.mechanics;

@@ -1,3 +1,4 @@
+import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';
 const api = "/api/sessions";
 const sessionId = "[\\da-f]{8}-(?:[\\da-f]{4}-){3}[\\da-f]{12}";
 const sessionPath = new RegExp(`^/api/sessions/(${sessionId})(/artwork|/chat|/players|/tokens/([\\da-f]{64}))?$`);
@@ -178,7 +179,8 @@ async function create(request, env) {
   } catch {return fail(400,"The session could not be read.");}
   if (!validMap(input?.map) || !validState(input?.state)) return fail(400,"The encounter could not be shared.");
   if(input.state.room) input.state.room={...input.state.room,name:input.state.room.name.trim(),createdAt:Date.now(),updatedAt:Date.now()};
-  if(input.controller && uuid.test(input.controller) && input.state.room)input.state.room.ownerController=input.controller;
+  // Public player identifiers are display/control metadata, never deletion credentials.
+  if(input.state.room)delete input.state.room.ownerController;
   const map = JSON.stringify(input.map), state = JSON.stringify(input.state);
   if (bytes(map) > maxMapBytes || bytes(state) > maxStateBytes) return fail(413,"The encounter is too large to share.");
   if (artwork && (!(artwork instanceof Blob) || !imageTypes.has(artwork.type) || artwork.size > maxImageBytes || !artwork.size)) {
@@ -195,6 +197,7 @@ async function create(request, env) {
     tokens.set(hash,blob);
   }
   const id = crypto.randomUUID();
+  const owner=await newRoomOwner(request);
   const uploaded = [];
   try {
     if (artwork) {
@@ -206,13 +209,13 @@ async function create(request, env) {
       await imageStore(env).put(key,await blob.arrayBuffer(),{httpMetadata:{contentType:blob.type}});
       uploaded.push(key);
     }
-    await env.DB.prepare("INSERT INTO game_sessions (id,map,state,artwork_type) VALUES (?,?,?,?)")
-      .bind(id,map,state,artwork?.type ?? null).run();
+    await env.DB.prepare("INSERT INTO game_sessions (id,map,state,artwork_type,owner_key_hash) VALUES (?,?,?,?,?)")
+      .bind(id,map,state,artwork?.type ?? null,owner.hash).run();
   } catch (error) {
     await Promise.allSettled(uploaded.map((key) => imageStore(env).delete(key)));
     throw error;
   }
-  return reply({id,revision:0},201);
+  return Response.json({id,revision:0},{status:201,headers:{...headers,"Set-Cookie":owner.cookie}});
 }
 
 async function get(env, id, after) {
@@ -330,11 +333,15 @@ async function sessionChat(request, env, id, after) {
 }
 
 async function removeRoom(request,env,id){
-  let input;try{input=await request.json();}catch{return fail(400,'The deletion request was invalid.');}
-  if(!uuid.test(input?.controller??'') || !Number.isSafeInteger(input?.revision))return fail(400,'The deletion request was invalid.');
-  const room=await env.DB.prepare(`SELECT revision,COALESCE(json_extract(state,'$.room.ownerController'),(SELECT controller FROM session_players WHERE session_id=? ORDER BY joined_at,rowid LIMIT 1)) AS ownerController FROM game_sessions WHERE id=?`).bind(id,id).first();
+  const presented=await ownerHash(request);
+  if(!presented)return fail(403,'Deletion requires the private creator credential from the browser that created this room.');
+  const body=await boundedBody(request,2048);
+  let input;try{input=body&&JSON.parse(await body.text());}catch{return fail(400,'The deletion request was invalid.');}
+  if(!Number.isSafeInteger(input?.revision)||input.revision<0)return fail(400,'The deletion request was invalid.');
+  const room=await env.DB.prepare('SELECT revision,owner_key_hash FROM game_sessions WHERE id=?').bind(id).first();
   if(!room)return fail(404,'This room has already been deleted.');
-  if(room.ownerController!==input.controller)return fail(403,'Only the room creator can delete this adventure.');
+  // No controller ID, public owner value, first-member fallback, or state edit can prove ownership.
+  if(!ownsRoom(room.owner_key_hash,presented))return fail(403,'This browser does not hold the private creator credential for this room. Legacy rooms without a credential cannot be deleted.');
   const live='EXISTS (SELECT 1 FROM game_sessions WHERE id=? AND revision=?)';
   const statements=[
     env.DB.prepare(`DELETE FROM session_chat WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
@@ -352,6 +359,7 @@ async function removeRoom(request,env,id){
 }
 
 async function listRooms(request,env,url) {
+  const presented=await ownerHash(request);
   if(request.method!=='GET') return fail(405,'This action is unavailable.');
   const controller=url.searchParams.get('controller');
   if(!controller || !uuid.test(controller)) return fail(400,'The player ID was invalid.');
@@ -363,14 +371,14 @@ async function listRooms(request,env,url) {
     json_extract(s.state,'$.battle.round') AS round,
     (SELECT json_group_array(json_extract(value,'$.name')) FROM json_each(s.state,'$.battle.actors')
       WHERE json_extract(value,'$.side')='party') AS party,
-    COALESCE(json_extract(s.state,'$.room.ownerController'),(SELECT controller FROM session_players WHERE session_id=s.id ORDER BY joined_at,rowid LIMIT 1)) AS ownerController,
+    s.owner_key_hash AS ownerKeyHash,
     p.joined_at AS joinedAt,p.last_seen AS lastVisited
     FROM game_sessions s JOIN session_players p ON p.session_id=s.id
     WHERE p.controller=? ORDER BY COALESCE(json_extract(s.state,'$.room.updatedAt'),p.last_seen) DESC LIMIT 100`)
     .bind(controller).all();
   return reply({rooms:results.map(row=>{
     const room=row.room ? JSON.parse(row.room) : {};
-    return {id:row.id,canDelete:row.ownerController===controller,name:room.name || row.mapName,adventure:room.adventure || row.adventure,
+    return {id:row.id,canDelete:ownsRoom(row.ownerKeyHash,presented),name:room.name || row.mapName,adventure:room.adventure || row.adventure,
       adventureName:room.adventureName || row.adventure,mapName:row.mapName,mapKey:row.mapKey,
       party:JSON.parse(row.party || '[]'),round:row.round,createdAt:room.createdAt || row.joinedAt,
       updatedAt:room.updatedAt || row.lastVisited,lastVisited:row.lastVisited};

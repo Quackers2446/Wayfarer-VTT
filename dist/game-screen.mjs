@@ -50,7 +50,7 @@ function activityLog(history,mode) {
 export function gameScreen({
   map, battle, roomName, saveStatus, selected, party, category, actions, tacticalTools, room, status, artworkNote,
   logOpen, logHistory=battle.log, eventLogMode="compact", eventLogPlacement="separate", toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,hotbar,resourceControls,
-  destination, adventureName, hasToken, tableOpen, tableContent, shared, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
+  destination, adventureName, hasToken, tableOpen, tableContent, shared, partyOpen=false,partyContent='',chatOpen=false, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
 }) {
   const active = battle.round > 0;
   const turn = currentActor(battle);
@@ -73,6 +73,8 @@ export function gameScreen({
         <span class="game-phase" aria-live="polite"><i></i>${active ? "Combat · Round " + battle.round : "Exploring"}</span>
         ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"${shared ?
           ` data-online="${online}" aria-label="Session" aria-description="${online} ${online === 1 ? "player" : "players"} online"` : ""}`)}
+        ${button("Party","users","game-party",`aria-pressed="${partyOpen}"`)}
+        ${shared ? button("Chat","chat","game-chat",`aria-pressed="${chatOpen}"`) : ""}
         ${button("Story","book","game-story",`aria-pressed="${storyOpen}"`)}
         ${button("Log","book","game-log",`aria-pressed="${logOpen}"`)}
         ${button("Tools","map","game-tools",`aria-pressed="${toolsOpen}"`)}
@@ -81,7 +83,7 @@ export function gameScreen({
     <div class="game-middle">
       <aside class="game-party" aria-label="Party">
         <h2>Party</h2>
-        <div class="game-roster">${portraits(party,selected,active,controllers,controller,players,movers)}</div>
+        <div class="game-roster">${portraits(party,selected,active,controllers,controller,players,movers)}</div><button type="button" class="game-party-add game-button" data-play="game-party" aria-label="Add characters to party">+ Add</button>
       </aside>
       <div class="game-stage">
         ${active ? `<div class="game-initiative" aria-label="Initiative order">${battle.order.filter((id) => !visibleInitiative || visibleInitiative.has(id)).map((id) => {
@@ -94,16 +96,19 @@ export function gameScreen({
         }).join("")}</div>` : ""}
         ${mapViewport(map,true)}
         <div class="combat-cues" aria-live="polite" aria-atomic="true"></div>
-        <div class="game-activity-home" data-activity-placement="${eventLogPlacement}">${activityLog(logHistory,eventLogMode)}</div>
         <div class="game-board-meta">
           <div><p id="game-move-preview" class="game-move-preview">${escape(canAct && destination || '')}</p><p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>${mapHint()}</div>
           ${mapControls(hasToken)}
         </div>
         ${storyOpen ? `<aside class="game-flyout play-panel story-flyout" aria-label="Story journal">${storyContent}</aside>` : ""}
         ${toolsOpen ? `<aside class="game-flyout tools-flyout play-panel" aria-label="Table tools">${tacticalTools}</aside>` : ""}
+        ${partyOpen ? `<aside class="game-flyout tools-flyout play-panel party-flyout" aria-label="Party management">${partyContent}</aside>` : ""}
         ${tableOpen ? `<aside class="game-flyout tools-flyout play-panel session-panel" aria-label="Multiplayer">${tableContent}</aside>` : ""}
       </div>
-      ${shared ? '<div class="game-chat-slot"></div>' : ""}
+      <div class="game-social-dock" aria-label="Messages and activity">
+        <div class="game-activity-home" data-activity-placement="${eventLogPlacement}">${activityLog(logHistory,eventLogMode)}</div>
+        ${shared ? '<div class="game-chat-slot"></div>' : ""}
+      </div>
     </div>
     <footer class="game-hud" aria-busy="${busy}">
       <div class="game-hud-top">

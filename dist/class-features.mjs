@@ -98,7 +98,11 @@ export function buildClassFeatures(character,classes,mod,pb,edition) {
   const levels = {};
   const tables = {};
   const pools = {};
-  const grantSources = [];
+  const grantSources = [...(character.creation?.spellSources ?? [])];
+  if(character.creation?.fixedFeats?.length){
+    const records=database.feats.filter(f=>character.creation.fixedFeats.includes(idOf(f))).map(f=>{const variant=character.creation.featVariants?.[idOf(f)];return variant?{...f,additionalSpells:f.additionalSpells?.filter(b=>b.name?.toLowerCase().includes(variant))}:f;});
+    choices.push({id:'creation|fixed-feats',label:'Origin feats',kind:'options',count:records.length,level:1,options:records.map(f=>({...f,id:idOf(f)})),selected:records.map(idOf),inferred:records.map(idOf)});
+  }
   const fixedProficiencies = {skills:[],tools:[],languages:[],weapons:[],armor:[]};
   const starting = classes.length === 1 ? classes[0] : classes.find(({rules}) =>
     ruleKey(rules.name) === ruleKey(character.startingClass ?? ""));
@@ -140,7 +144,8 @@ export function buildClassFeatures(character,classes,mod,pb,edition) {
           level:feature.level,count:1,kind:"advancement",options:[{id:"asi",name:"Ability score improvement (already included in scores)"},
             ...database.feats.filter((record) => sourceAllowed(record,edition)).map((record) => ({id:idOf(record),...record}))]});
       } else if (feature.name === "Expertise") {
-        const options = character.skills.filter((skill) => Number.isFinite(skill.bonus) &&
+        const startingSkills=character.sheetEdits?.featureChoices?.[classKey(rules)+'|skills']??[];
+        const options = character.skills.filter((skill) => startingSkills.includes(ruleKey(skill.name)) || Number.isFinite(skill.bonus) &&
           skill.bonus >= (mod[skillAbility(skill.name)] ?? 0)+pb).map((skill) => ({id:ruleKey(skill.name),name:skill.name}));
         if (rules.name === "Rogue") options.push({id:"thieves tools",name:"Thieves’ tools"});
         const choice = {id:feature.id,label:rules.name+" level "+feature.level+" · Expertise",level:feature.level,count:2,kind:"expertise",options};

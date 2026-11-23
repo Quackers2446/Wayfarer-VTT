@@ -28,8 +28,14 @@ for (const name of await readdir(dist)) {
     await cp(new URL(name,dist),new URL(name,client),{recursive:true});
   }
 }
-await cp(new URL("../worker/session.mjs",import.meta.url),new URL("index.js",server));
-await cp(new URL("../worker/session.mjs",import.meta.url),new URL("_worker.js",client));
+const sessionCode = await readFile(new URL("../worker/session.mjs",import.meta.url),"utf8");
+const roomOwnerCode = await readFile(new URL("../worker/room-owner.mjs",import.meta.url),"utf8");
+const bundledWorker = sessionCode.replace(
+  "import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';",
+  roomOwnerCode
+);
+await writeFile(new URL("index.js",server),bundledWorker);
+await writeFile(new URL("_worker.js",client),bundledWorker);
 await writeFile(new URL("wrangler.json",server),JSON.stringify({
   name:"wayfarer-vtt",main:"index.js",compatibility_date:"2026-05-25",
   assets:{directory:"../client",binding:"ASSETS",html_handling:"none"},

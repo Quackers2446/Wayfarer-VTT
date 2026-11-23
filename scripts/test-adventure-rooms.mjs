@@ -5,21 +5,22 @@ import {sessionRequest} from '../worker/session.mjs';
 import {trainingMap,trainingActors} from '../dist/encounters.mjs';
 import {newBattle} from '../dist/combat.mjs';
 const sqlite=new DatabaseSync(':memory:');
-for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
 const DB={prepare(sql){let values=[];return{bind(...args){values=args;return this;},async first(column){const row=sqlite.prepare(sql).get(...values);return column ? row?.[column]??null : row??null;},async all(){return{results:sqlite.prepare(sql).all(...values)};},async run(){const result=sqlite.prepare(sql).run(...values);return{meta:{changes:Number(result.changes)}};}};},async batch(statements){return Promise.all(statements.map(statement=>statement.run()));}};
 const env={DB},origin='https://test.example',alice=crypto.randomUUID(),bob=crypto.randomUUID(),other=crypto.randomUUID();
-async function api(path,{method='GET',body}={}) {
- const request=new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
- return sessionRequest(request,env);
+const cookies=new Map();
+async function api(path,{method='GET',body,as=alice}={}) {
+ const request=new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...(cookies.has(as)?{Cookie:cookies.get(as)}:{})},...(body?{body:JSON.stringify(body)}:{})});
+ const response=await sessionRequest(request,env);const cookie=response.headers.get('Set-Cookie');if(cookie)cookies.set(as,cookie.split(';')[0]);return response;
 }
 async function create(name) {
  const state={battle:{...newBattle(),actors:trainingActors()},alignment:null,...(name?{room:{name,adventure:'training',adventureName:'Practice yard'}}:{})};
  const response=await api('/api/sessions',{method:'POST',body:{map:trainingMap,state}});assert.equal(response.status,201,await response.clone().text());return(await response.json()).id;
 }
-async function join(id,controller,username) {const response=await api('/api/sessions/'+id+'/players',{method:'POST',body:{controller,username}});assert.equal(response.status,200);}
+async function join(id,controller,username) {const response=await api('/api/sessions/'+id+'/players',{method:'POST',as:controller,body:{controller,username}});assert.equal(response.status,200);}
 const alpha=await create('Sunday campaign'),beta=await create('Friday campaign'),legacy=await create();
 await join(alpha,alice,'Alice');await join(beta,alice,'Alice');await join(legacy,alice,'Alice');await join(alpha,bob,'Bob');
-const list=async controller=>(await(await api('/api/rooms?controller='+controller)).json()).rooms;
+const list=async controller=>(await(await api('/api/rooms?controller='+controller,{as:controller})).json()).rooms;
 assert.deepEqual(new Set((await list(alice)).map(room=>room.id)),new Set([alpha,beta,legacy]));
 assert.deepEqual((await list(bob)).map(room=>room.id),[alpha]);assert.deepEqual(await list(other),[]);
 assert.equal((await api('/api/rooms?controller=invalid')).status,400);
@@ -46,7 +47,7 @@ console.log('Independent same-map adventure saves, named room discovery, members
 // Deletion uses the established room creator, checks the displayed revision, and isolates assets.
 assert.equal((await list(alice)).find(room=>room.id===alpha).canDelete,true);
 assert.equal((await list(bob)).find(room=>room.id===alpha).canDelete,false);
-assert.equal((await api('/api/sessions/'+alpha,{method:'DELETE',body:{controller:bob,revision:(await saved(alpha)).revision}})).status,403);
+assert.equal((await api('/api/sessions/'+alpha,{method:'DELETE',as:bob,body:{controller:bob,revision:(await saved(alpha)).revision}})).status,403);
 assert.equal((await api('/api/sessions/'+alpha,{method:'DELETE',body:{controller:alice,revision:0}})).status,409);
 assert.equal((await saved(alpha)).state.room.name,'Sunday campaign');
 for(const [key,asset] of [[alpha,'map-alpha'],[alpha+'/tokens/old-unused-token','token-alpha'],[beta,'map-beta']]){
@@ -63,12 +64,12 @@ assert(sqlite.prepare('SELECT 1 FROM session_images WHERE asset_id=?').get('map-
 assert.deepEqual((await saved(beta)).state,second.state);assert(!(await list(alice)).some(room=>room.id===alpha));assert(!(await list(bob)).some(room=>room.id===alpha));
 const controlled=await api('/api/sessions',{method:'POST',body:{controller:alice,map:trainingMap,state:{battle:{...newBattle(),actors:trainingActors()},room:{name:'Owned room'}}}});
 assert.equal(controlled.status,201);const owned=(await controlled.json()).id;await join(owned,bob,'Bob');await join(owned,alice,'Alice');
-const ownedState=await saved(owned);ownedState.state.room.ownerController=bob;
+const ownerHashBefore=sqlite.prepare('SELECT owner_key_hash FROM game_sessions WHERE id=?').get(owned).owner_key_hash;const ownedState=await saved(owned);ownedState.state.room.ownerController=bob;
 assert.equal((await api('/api/sessions/'+owned,{method:'PUT',body:{revision:ownedState.revision,state:ownedState.state}})).status,200);
-assert.equal((await saved(owned)).state.room.ownerController,alice,'Saving state cannot transfer ownership');
-assert.equal((await api('/api/sessions/'+owned,{method:'DELETE',body:{controller:bob,revision:(await saved(owned)).revision}})).status,403);
+assert.equal(sqlite.prepare('SELECT owner_key_hash FROM game_sessions WHERE id=?').get(owned).owner_key_hash,ownerHashBefore,'Saving shared state cannot transfer ownership');
+assert.equal((await api('/api/sessions/'+owned,{method:'DELETE',as:bob,body:{controller:bob,revision:(await saved(owned)).revision}})).status,403);
 assert.equal((await api('/api/sessions/'+owned,{method:'DELETE',body:{controller:alice,revision:(await saved(owned)).revision}})).status,204);
-console.log('Creator deletion, legacy ownership, guest denial, stale confirmations, immutable ownership, asset/chat/member cleanup and other-room isolation verified.');
+console.log('Private-credential deletion, guest denial, stale confirmations, immutable ownership, asset/chat/member cleanup and other-room isolation verified.');
 // R2 deployments may never have installed the D1 image fallback tables.
 const removedKeys=[];env.BUCKET={async list({prefix}){return{objects:[{key:prefix},{key:prefix+'/tokens/unused'}],truncated:false};},async delete(keys){removedKeys.push(...keys);}};
 sqlite.exec('DROP TABLE session_image_chunks; DROP TABLE session_images;');
