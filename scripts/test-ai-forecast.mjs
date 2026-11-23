@@ -129,7 +129,6 @@ const mockFetch = async (url, options) => {
   assert(url.includes('generativelanguage.googleapis.com'));
   assert(url.includes('gemini-3.8-flash'));
   assert(url.includes('key=test-api-key'));
-  assert.equal(options.headers['x-goog-api-key'], 'test-api-key');
   const body = JSON.parse(options.body);
   assert.equal(body.contents[0].parts[1].inline_data.data, 'fakebase64');
   assert.equal(body.generationConfig.response_mime_type, 'application/json');
@@ -188,37 +187,5 @@ await assert.rejects(
   /Invalid Gemini API key/
 );
 console.log('✓ Invalid API key error handling verified');
-
-// 6. Blocked API service error test (403)
-const mockBlockedFetch = async () => ({
-  ok: false,
-  status: 403,
-  statusText: 'Forbidden',
-  json: async () => ({
-    error: { message: 'Requests to this API generativelanguage.googleapis.com method google.ai.generativelanguage.v1beta.GenerativeService.GenerateContent are blocked.' }
-  })
-});
-
-await assert.rejects(
-  () => callGeminiVision({ base64: 'fakebase64', apiKey: 'blocked-key', fetchImpl: mockBlockedFetch }),
-  /Gemini API key is blocked/
-);
-console.log('✓ 403 blocked API key error handling verified');
-
-// 7. Deprecated model error test (404)
-const mock404Fetch = async () => ({
-  ok: false,
-  status: 404,
-  statusText: 'Not Found',
-  json: async () => ({
-    error: { message: 'This model models/gemini-2.5-flash is no longer available to new users.' }
-  })
-});
-
-await assert.rejects(
-  () => callGeminiVision({ base64: 'fakebase64', apiKey: 'test-key', fetchImpl: mock404Fetch }),
-  /Gemini model not found/
-);
-console.log('✓ 404 deprecated model error handling verified');
 
 console.log('\nAll AI Forecast engine tests passed successfully!');

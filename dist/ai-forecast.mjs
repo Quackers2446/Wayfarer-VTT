@@ -20,7 +20,7 @@ export function setApiKey(key, remember = true) {
     } else {
       globalThis.localStorage?.removeItem(STORAGE_KEY);
     }
-  } catch {}
+  } catch { }
 }
 
 export function hasApiKey() {
@@ -31,7 +31,7 @@ export function clearApiKey() {
   inMemoryKey = '';
   try {
     globalThis.localStorage?.removeItem(STORAGE_KEY);
-  } catch {}
+  } catch { }
 }
 
 export function isKeyRemembered() {
@@ -97,7 +97,7 @@ export function renderScaledMap(source, maxDim = 1280, quality = 0.82) {
 }
 
 /**
- * Call Gemini 2.5 Flash Vision directly from the browser using the user's API key.
+ * Call Gemini 3.8 Flash Vision directly from the browser using the user's API key.
  * Uses structured JSON output with a flat coordinate array schema to minimize tokens.
  */
 export async function callGeminiVision({
@@ -165,10 +165,7 @@ Output ONLY straight line segments as 4-tuples: [x1, y1, x2, y2].`;
 
   const response = await fetchImpl(endpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': key
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
 
@@ -182,19 +179,6 @@ Output ONLY straight line segments as 4-tuples: [x1, y1, x2, y2].`;
     }
     if (response.status === 400 && /api[ _]?key/i.test(errorDetail)) {
       throw new Error('Invalid Gemini API key. Please verify your key.');
-    }
-    if (response.status === 403) {
-      if (/blocked/i.test(errorDetail)) {
-        throw new Error(
-          'Gemini API key is blocked (403). In Google Cloud Console (APIs & Services > Credentials), edit your key and set API Restrictions to allow "Generative Language API" (or set to "Don\'t restrict key"), or create a key in Google AI Studio (https://aistudio.google.com/app/apikey).'
-        );
-      }
-      throw new Error(`Gemini API permission denied (403): ${errorDetail}`);
-    }
-    if (response.status === 404) {
-      throw new Error(
-        `Gemini model not found (404): ${errorDetail}. Please select "Gemini 3.8 Flash" in the forecast dialog.`
-      );
     }
     if (response.status === 429) {
       throw new Error('Gemini API quota or rate limit exceeded. Please wait a moment and try again.');
