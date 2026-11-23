@@ -36,8 +36,6 @@ import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, m
 import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap} from "./encounters.mjs";
 import {defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt} from "./grid-view.mjs";
 import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
-import {listRooms, deleteRoom, artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
-  syncSessionPlayers, tablePanel, writeSession} from "./multiplayer.mjs";
 import {
   listRooms, deleteRoom, artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
   syncSessionPlayers, tablePanel, writeSession
