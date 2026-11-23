@@ -1,6 +1,8 @@
 import {createHash} from "node:crypto";
 import {cp, mkdir, readdir, readFile, rm, writeFile} from "node:fs/promises";
 
+// One shared, data-only validator is used by browser editing and room saves.
+await cp(new URL('../dist/spell-rule-schema.mjs',import.meta.url),new URL('../worker/spell-rule-schema.mjs',import.meta.url));
 const dist = new URL("../dist/",import.meta.url);
 const client = new URL("client/",dist);
 const server = new URL("server/",dist);
@@ -30,10 +32,16 @@ for (const name of await readdir(dist)) {
 }
 const sessionCode = await readFile(new URL("../worker/session.mjs",import.meta.url),"utf8");
 const roomOwnerCode = await readFile(new URL("../worker/room-owner.mjs",import.meta.url),"utf8");
-const bundledWorker = sessionCode.replace(
-  "import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';",
-  roomOwnerCode
-);
+const spellRuleSchemaCode = await readFile(new URL("../worker/spell-rule-schema.mjs",import.meta.url),"utf8");
+const bundledWorker = sessionCode
+  .replace(
+    "import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';",
+    roomOwnerCode
+  )
+  .replace(
+    "import {validRuleSet} from './spell-rule-schema.mjs';",
+    spellRuleSchemaCode.replace(/export /g, "")
+  );
 await writeFile(new URL("index.js",server),bundledWorker);
 await writeFile(new URL("_worker.js",client),bundledWorker);
 await writeFile(new URL("wrangler.json",server),JSON.stringify({
@@ -42,3 +50,7 @@ await writeFile(new URL("wrangler.json",server),JSON.stringify({
   d1_databases:[{binding:"DB",database_id:"af23b966-91b0-416b-87f5-89140e7ddbd2"}],
   r2_buckets:[{binding:"BUCKET",bucket_name:"wayfarer-art"}],
 },null,2));
+
+await cp(new URL("../worker/spell-rule-schema.mjs",import.meta.url),new URL("spell-rule-schema.mjs",server));
+
+await cp(new URL("../worker/spell-rule-schema.mjs",import.meta.url),new URL("spell-rule-schema.mjs",client));

@@ -150,3 +150,11 @@ The play screen renders map scenery and moving tokens on separate canvases. Anim
 Defeated hostiles award their CR XP once to initiative participants, splitting integer remainders deterministically. The finisher receives an additional 20% of their own share, rounded down. Bodies remain on the map. Carrying uses Strength/size capacity and halves speed; unspecified body weights use size estimates. Pickup and throwing cost an action in combat; placement within 5 feet is free. Throws reach 20 feet and deal 1d4 impact damage to the body; targeting a creature uses an improvised Strength attack, with a free adjacent landing space required. Healing a carried creature releases them when an adjacent space is available.
 
 Focused rules verification: `node scripts/test-world-interactions.mjs`.
+
+### Room-wide campaign saves
+
+Each shared room owns one canonical `state.battle` ledger across its adventure. Party HP, resources, inventory, XP, initiative, actor identities, loot and story belong to that room. NPCs carry a `sceneKey` for their current physical map; rules/rendering use a filtered active-scene view, and saves merge it back into the one room ledger. Scene records store only map metadata, arrival coordinates and physical environment (walls, terrain, exploration, treasure markers and zones), never independent parties or battles.
+
+Tools → Adventure map changes the map for every connected player between encounters. Visited-map metadata is retained in the room so guests can revisit without attaching the archive. The journal retains discoveries across maps, including identically numbered areas. Existing room saves normalize on resume; a migrated room rejects older clients attempting to drop campaign fields. Dashboard previews use one `wayfarer-preview-room-v2` save; old map-keyed browser entries remain untouched as migration backups.
+
+Checks: `node scripts/test-room-campaign.mjs` and `node scripts/test-room-campaign-session.mjs`.

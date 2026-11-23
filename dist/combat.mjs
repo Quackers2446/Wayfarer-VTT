@@ -1,3 +1,5 @@
+import {customSpellEffect} from './spell-rule-store.mjs';
+import {castCustomSpell,customZoneTriggers,expireCustomZones} from './custom-spells.mjs';
 import {awardDefeatXP} from "./encounter-rewards.mjs";
 import {crossesMapWall, mapFloor, mapLineClear, mapWalls} from "./map-walls.mjs";
 import {matchWeapon} from './rules-library.mjs';
@@ -145,11 +147,11 @@ function endConcentration(battle,caster) {
   for (const actor of battle.actors) {
     if (actor.conditions) actor.conditions = actor.conditions.filter((effect) => effect.concentration !== caster.id);
   }
-  if (battle.spellZones) battle.spellZones = battle.spellZones.filter((zone) => zone.caster !== caster.id);
+  if (battle.spellZones) battle.spellZones = battle.spellZones.filter((zone) => zone.caster !== caster.id || zone.concentration===false);
   delete caster.concentration;
 }
 
-function startConcentration(battle,caster,name,duration) {
+export function startConcentration(battle,caster,name,duration) {
   endConcentration(battle,caster);
   caster.concentration = {name,expires:(battle.elapsed ?? 0)+duration};
 }
@@ -167,6 +169,7 @@ export function addCondition(battle,actor,name,duration,properties = {}) {
 
 export function advanceTime(battle, seconds) {
   battle.elapsed = (battle.elapsed ?? 0) + seconds;
+  expireCustomZones(battle);
   for (const creature of battle.actors) {
     if (creature.astralArms?.expires <= battle.elapsed || incapacitated(creature) || !actorIsUp(creature)) delete creature.astralArms;
     if (creature.astralVisage?.expires <= battle.elapsed || incapacitated(creature) || !actorIsUp(creature)) delete creature.astralVisage;
@@ -195,6 +198,7 @@ export function advanceTime(battle, seconds) {
 }
 
 function resetActorTurn(battle,actor) {
+  customZoneTriggers(battle,actor,'start');
   actor.dodging=false;actor.disengaged=false;actor.reactionUsed=false;actor.steadyAim=false;
   for(const creature of battle.actors) {
     if(creature.slowedBy===actor.id) creature.slowedBy=null;
@@ -266,6 +270,7 @@ export function endTurn(battle, random = Math.random, selected = currentActor(ba
     error("Roll this character's death save before ending the turn.");
   }
   if (actor) {
+    customZoneTriggers(battle,actor,'end',undefined,random);
     for (const creature of battle.actors) {
       if (creature.conditions) creature.conditions = creature.conditions.filter((effect) =>
         effect.untilTurn !== actor.id || effect.untilRound > battle.round);
@@ -397,7 +402,7 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, score,
         if (dx && dy && (!footprintClear(battle,actor,cell.x+dx,cell.y,board) || !footprintClear(battle,actor,cell.x,cell.y+dy,board))) continue;
         const crossed=others.filter(other=>overlaps({...actor,x:col,y:row},other));
         if (crossed.some(other=>other.side!==actor.side && Math.abs(sizeRank(other)-sizeRank(actor))<2)) continue;
-        const difficult = actorCells({...actor,x:col,y:row}).some(c=>battle.terrain[keyAt(c.x,c.y)]==='difficult') || crossed.length>0;
+        const difficult = actorCells({...actor,x:col,y:row}).some(c=>battle.terrain[keyAt(c.x,c.y)]==='difficult'||battle.spellZones?.some(zone=>zone.difficult&&zone.cells.includes(keyAt(c.x,c.y)))) || crossed.length>0;
         const cost = cell.cost + (exploration ? 5 : (difficult ? 10 : 5) + (actor.prone ? 5 : 0));
         if (cost > budget || cost >= (known.get(next) ?? Infinity)) continue;
         known.set(next, cost);
@@ -427,9 +432,10 @@ export function exploreToken(battle, actor, x, y, board, stopAt) {
   let distance = 0;
   for (const step of result.path) {
     advanceTime(battle,30/Math.max(5,speedOf(actor)));
-    actor.x = step.x; actor.y = step.y;syncCarriedBody(battle,actor);
+    const previousSquare={x:actor.x,y:actor.y};actor.x = step.x; actor.y = step.y;syncCarriedBody(battle,actor);
     travelled.push({x:step.x,y:step.y});
     distance = step.cost;
+    customZoneTriggers(battle,actor,'enter',previousSquare);if(!actorIsUp(actor))break;
     // A route can cross friendly squares. The token must stop in a free square.
     if (battle.actors.some((other) => other.id !== actor.id && occupies(other) && overlaps({...actor,...step},other))) continue;
     if (stopAt(actor)) break;
@@ -479,11 +485,12 @@ function walkRemaining(battle, actor, board) {
       recordMovement();
       return;
     }
-    actor.x = next.x;
-    actor.y = next.y;syncCarriedBody(battle,actor);
+    const previousSquare={x:actor.x,y:actor.y};actor.x = next.x;
+    actor.y = next.y;customZoneTriggers(battle,actor,'enter',previousSquare);syncCarriedBody(battle,actor);
     walk.index += 1;
     walk.passed = [];
     checkSpellTethers(battle,board);
+    if(!actorIsUp(actor))break;
   }
   const distance = walk.path[walk.index-1]?.cost ?? 0;
   if (distance) {
@@ -808,7 +815,8 @@ export function canSee(battle,from,to,map) {
   if(tokenSize(from)>1 || tokenSize(to)>1) return actorCells(from).some(a=>actorCells(to).some(b=>canSee(battle,{...from,...a,creatureSize:'M'},{...to,...b,creatureSize:'M'},map)));
   if (!lineClear(battle,from,to,map,{vision:true})) return false;
   if (!battle.spellZones?.length || from.x === to.x && from.y === to.y) return true;
-  const zones = (from.astralVisage || hasFeature(from,"Devil's Sight")) && distanceFt(from,to) <= 120 ? battle.spellZones.filter((zone) => zone.name !== "Darkness") : battle.spellZones;
+  const sightZones=battle.spellZones.filter(zone=>zone.blocksVision!==false);
+  const zones = (from.astralVisage || hasFeature(from,"Devil's Sight")) && distanceFt(from,to) <= 120 ? sightZones.filter((zone) => zone.name !== "Darkness") : sightZones;
   const obscured = obscuredCells(zones);
   let {x,y} = from;
   const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
@@ -1006,7 +1014,7 @@ const spellEffects = {
 };
 
 export const breathTypes = ["acid","cold","fire","lightning","poison"];
-export const supportedSpell = (key) => Object.hasOwn(spellEffects,key) ? spellEffects[key] : undefined;
+export const supportedSpell = (key,rules) => customSpellEffect(key,rules) ?? (Object.hasOwn(spellEffects,String(key).split('|').at(-1)) ? spellEffects[String(key).split('|').at(-1)] : undefined);
 export const spellTargetCount = (effect,casterLevel,rank) => effect.moreTargets ? 1+Math.max(0,rank-effect.level) :
   effect.missiles ? 2+rank : effect.beams ? 1+[5,11,17].filter((limit) => casterLevel >= limit).length : effect.aid ? 3 : 1;
 
@@ -1030,7 +1038,7 @@ function castingPool(caster,slotLevel,slotPool) {
   return caster.slots[slotLevel];
 }
 
-function checkCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
+export function checkCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
   if (!actorIsUp(caster)) error("This token cannot cast at 0 hit points.");
   if (incapacitated(caster)) error("This character is incapacitated.");
   if (!occupies(caster)) error("Place the caster on the grid first.");
@@ -1054,7 +1062,7 @@ function checkCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
   }
 }
 
-function spendCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
+export function spendCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
   if (battle.round) {
     if (timing === "bonus") battle.bonusUsed = true;
     else if (timing === "reaction") caster.reactionUsed = true;
@@ -1251,7 +1259,9 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
 }
 
 function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage) {
-  const effect = supportedSpell(spell.key);
+  const custom=customSpellEffect(spell.reference ?? spell.key,battle.spellRules);
+  if(custom)return castCustomSpell(battle,caster,target,spell,slotLevel,options,random);
+  const effect = spellEffects[spell.key];
   if (!effect || spell.edition !== "2014" || spell.customUse) error("This spell needs manual adjudication.");
   if (effect.exhale) return exhaleBreath(battle,caster,options,random);
   const {level = 0, heal:healing} = effect;

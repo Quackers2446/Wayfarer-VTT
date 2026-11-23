@@ -15,7 +15,11 @@ export function discoverStory(battle, map, actor) {
   battle.story ??= {visited:[], rescued:false};
   if (!actorIsUp(actor) || actor.side !== "party" || !occupies(actor)) return;
   const region = regionAt(map,...cellCenter(map,actor));
-  if (region && !battle.story.visited.includes(region.id)) battle.story.visited.push(region.id);
+  battle.story.discoveries ??= (battle.story.visited ?? []).map(id=>map.regions.find(region=>region.id===id)).filter(Boolean).map(region=>({key:map.key+':'+region.id,map:map.title,name:region.entry?.name ?? region.id,entries:region.entry?.entries?.find(entry=>entry?.type==='insetReadaloud')?.entries}));
+  if(region && !battle.story.discoveries.some(entry=>entry.key===map.key+':'+region.id)){
+    battle.story.visited.push(region.id);
+    battle.story.discoveries.push({key:map.key+':'+region.id,map:map.title,name:region.entry?.name ?? region.id,entries:region.entry?.entries?.find(entry=>entry?.type==='insetReadaloud')?.entries});
+  }
 }
 
 export function storyVersion(battle) {
@@ -40,12 +44,12 @@ export function rescueSildar(battle, map, actor) {
 
 export function storyPanel(battle, map) {
   const story = battle.story;
-  const discoveries = (story?.visited ?? []).slice().reverse().map((id) => map.regions.find((region) => region.id === id)).filter(Boolean);
+  const discoveries = story?.discoveries?.slice().reverse() ?? (story?.visited ?? []).slice().reverse().map(id=>map.regions.find(region=>region.id===id)).filter(Boolean).map(region=>({name:region.entry?.name,entries:region.entry?.entries?.find(entry=>entry?.type==='insetReadaloud')?.entries}));
   const readAloud = (region) => region.entry?.entries?.find((entry) => entry?.type === "insetReadaloud");
   return `<div class="story-heading"><h2>Story journal</h2>
     <button type="button" class="game-button" data-play="game-story">Close</button></div>
     ${story?.rescued ? "<section><h3>Sildar is free</h3><p>Between breaths, Sildar tells you he believes the goblins took Gundren and his map to Cragmaw Castle. He asks you to see him safely to Phandalin, where someone might know the way to the castle.</p></section>" : ""}
-    ${discoveries.map((region) => `<section><h3>${escape(region.entry?.name ?? "Discovered area")}</h3>
-      ${formatEntries(readAloud(region)?.entries)}</section>`).join("")}
+    ${discoveries.map((region) => `<section><h3>${escape(region.name ?? "Discovered area")}</h3>
+      ${formatEntries(region.entries)}</section>`).join("")}
     <section><h3>${hideout(map) ? "Follow the goblin trail" : practice(map) ? "Challenge the guard" : "Explore the area"}</h3><p>${intro(map)}</p></section>`;
 }

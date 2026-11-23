@@ -1,3 +1,4 @@
+import {validRuleSet} from './spell-rule-schema.mjs';
 import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';
 const api = "/api/sessions";
 const sessionId = "[\\da-f]{8}-(?:[\\da-f]{4}-){3}[\\da-f]{12}";
@@ -46,10 +47,12 @@ function validVision(v){return v==null || record(v) && (v.enabled==null || typeo
 function validWalls(v){return v==null || record(v) && ['walls','doors'].every(type=>v[type]==null || Array.isArray(v[type]) && v[type].length<=2000 && v[type].every(s=>record(s) && ['x1','y1','x2','y2'].every(k=>Number.isFinite(s[k]) && Math.abs(s[k])<=90000) && (type!=='doors' || typeof s.id==='string' && ['open','closed','locked','secret'].includes(s.state))));}
 function validFogSettings(v){return v==null || record(v) && ['sharedVision','remember','blockMovement'].every(k=>v[k]==null || typeof v[k]==='boolean') && optionalRange(v,'opacity',0,1) && optionalRange(v,'exploredOpacity',0,1) && optionalRange(v,'softness',0,5);}
 
+const sceneKeys=new Set(['terrain','markers','wallData','wallRevision','fogMemory','fogMemoryByActor','explored','alignedGrid','gridManual','gridOverlay','sceneReady','worldLootVersion','spellZones']);
 function validState(state) {
   const battle = state?.battle;
   const alignment = state?.alignment;
-  return validRoom(state?.room) && record(battle) && Array.isArray(battle.actors) && battle.actors.length <= 500 &&
+  return validRoom(state?.room) && (battle?.spellRules==null || validRuleSet(battle.spellRules)) && (state.currentMap==null || validMap(state.currentMap)) &&
+    (state.world==null || state.currentMap && record(state.world) && state.world.version===1 && record(state.world.maps) && Object.keys(state.world.maps).length<=128 && Object.values(state.world.maps).every(scene=>record(scene) && scene.battle==null && scene.actors==null && (scene.map==null || validMap(scene.map)) && (scene.environment==null || record(scene.environment) && Object.keys(scene.environment).every(key=>sceneKeys.has(key)) && validWalls(scene.environment.wallData)))) && record(battle) && Array.isArray(battle.actors) && battle.actors.length <= 500 &&
     battle.actors.every((actor) => record(actor) && typeof actor.id === "string" && typeof actor.name === "string" &&
       validVision(actor.vision) && [actor.hp,actor.maxHp,actor.ac,actor.speed].every(Number.isFinite) && ["party","hostile","neutral"].includes(actor.side) &&
       [actor.tempHp,actor.successes,actor.failures].every((value) => value == null || Number.isFinite(value)) &&
@@ -222,7 +225,7 @@ async function get(env, id, after) {
   if (after === null) {
     const row = await env.DB.prepare("SELECT map,state,revision,artwork_type FROM game_sessions WHERE id=?").bind(id).first();
     if (!row) return fail(404,"This session could not be found. Check the invitation link.");
-    return reply({map:JSON.parse(row.map),state:JSON.parse(row.state),revision:row.revision,hasArtwork:Boolean(row.artwork_type)});
+    const state=JSON.parse(row.state);return reply({map:state.currentMap ?? JSON.parse(row.map),state,revision:row.revision,hasArtwork:Boolean(row.artwork_type)});
   }
   if (!/^\d+$/.test(after) || !Number.isSafeInteger(Number(after))) return fail(400,"The session revision was invalid.");
   const row = await env.DB.prepare("SELECT CASE WHEN revision>? THEN state END AS state,revision FROM game_sessions WHERE id=?").bind(Number(after),id).first();
@@ -238,7 +241,10 @@ async function update(request, env, id) {
   if (!Number.isSafeInteger(input?.revision) || input.revision < 0 || !validState(input.state)) {
     return fail(400,"The update was invalid.");
   }
-  const metadata=await env.DB.prepare("SELECT json_extract(state,'$.room') AS room FROM game_sessions WHERE id=?").bind(id).first();
+  const metadata=await env.DB.prepare("SELECT json_extract(state,'$.room') AS room,json_extract(map,'$.module') AS adventure,json_extract(state,'$.world.version') AS worldVersion,json_extract(state,'$.currentMap.key') AS currentMapKey,json_extract(state,'$.battle.round') AS round FROM game_sessions WHERE id=?").bind(id).first();
+  if(metadata?.worldVersion===1 && input.state.world?.version!==1){const current=await env.DB.prepare('SELECT state,revision FROM game_sessions WHERE id=?').bind(id).first();return reply({state:JSON.parse(current.state),revision:current.revision,message:'Reload this room to use its adventure-wide save.'},409);}
+  if(metadata?.round>0 && input.state.currentMap && metadata.currentMapKey && input.state.currentMap.key!==metadata.currentMapKey)return fail(400,'Finish combat before changing maps.');
+  if(input.state.currentMap && metadata?.adventure && input.state.currentMap.module!==metadata.adventure)return fail(400,"Choose a map from this room’s adventure.");
   if(metadata?.room) {
     const original=JSON.parse(metadata.room);
     input.state.room={...original,...input.state.room,createdAt:original.createdAt,ownerController:original.ownerController};
@@ -365,8 +371,8 @@ async function listRooms(request,env,url) {
   if(!controller || !uuid.test(controller)) return fail(400,'The player ID was invalid.');
   const {results}=await env.DB.prepare(`SELECT s.id,
     json_extract(s.state,'$.room') AS room,
-    json_extract(s.map,'$.title') AS mapName,
-    json_extract(s.map,'$.key') AS mapKey,
+    COALESCE(json_extract(s.state,'$.currentMap.title'),json_extract(s.map,'$.title')) AS mapName,
+    COALESCE(json_extract(s.state,'$.currentMap.key'),json_extract(s.map,'$.key')) AS mapKey,
     json_extract(s.map,'$.module') AS adventure,
     json_extract(s.state,'$.battle.round') AS round,
     (SELECT json_group_array(json_extract(value,'$.name')) FROM json_each(s.state,'$.battle.actors')

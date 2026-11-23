@@ -1,3 +1,4 @@
+import {mountSpellRuleEditor} from './spell-rule-editor.mjs';
 import {mountCharacterBuilder} from './character-builder.mjs';
 import {syncCharacterTokenRooms} from "./token-room-sync.mjs";
 import {setGameTokenImage, syncLocalCharacterToken, showPlay} from "./play.mjs";
@@ -29,6 +30,7 @@ const navItems = [
   ["overview", "Overview", "home"],
   ["characters", "Character sheets", "users"],
   ["library", "Adventure library", "book"],
+  ["spell-rules", "Spell rules", "sparkles"],
   ["play", "Rooms", "dice"],
 ];
 const featured = [
@@ -300,12 +302,13 @@ function render() {
       <div class="topbar${character ? " topbar-sheet" : ""}">
         <span class="crumb"><span>Workspace</span> ${icon("chevron", 13)} <strong>${pageLabel}</strong></span>
         ${character ? '<a class="button outline" href="#characters">Back to party</a>' :
-          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : button("Import character", "upload", "plus")}
+          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : page==='spell-rules' ? '' : button("Import character", "upload", "plus")}
       </div>
-      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : '<div id="play-mount"></div>'}</main>
+      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : page === "spell-rules" ? '<div id="spell-rules-mount"></div>' : '<div id="play-mount"></div>'}</main>
     </div>
   </div>`;
   if (page === "library") renderResults();
+  if(page==='spell-rules')void mountSpellRuleEditor(document.querySelector('#spell-rules-mount'));
   if(page==='characters' && !character && builderOpen){
     mountCharacterBuilder(document.querySelector('#character-builder'),{close:()=>{builderOpen=false;render();},create:record=>{
       const previous=state.characters;state.characters=[...previous,record];if(!save()){state.characters=previous;return false;}builderOpen=false;location.hash=sheetPath(record);notice('Character created. Use Party → Add in an adventure room.');return true;

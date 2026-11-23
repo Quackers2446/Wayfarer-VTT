@@ -58,7 +58,7 @@ export function entryReason(actor,battle,entry,canAct=true) {
   if(entry.mode==="move") return battle.round && moveLeft(battle,actor)<=0 ? "No movement remains." : "";
   if(entry.mode==="passive") return entry.resource && !entry.toggled && !(actor.resources?.[entry.resource]?.current>=entry.cost) ? "Not enough "+(actor.resources?.[entry.resource]?.name ?? entry.resource)+" remaining." : "";
   if(!battle.round) {
-    if(entry.mode==="common" && !["help-up","interact"].includes(entry.actionId)) return "No turn budget is needed while exploring.";
+    if(entry.mode==="common" && !["help-up","interact","control-spell-zone"].includes(entry.actionId)) return "No turn budget is needed while exploring.";
     if(entry.mode==="feature") return "Use this class ability during combat.";
   }
   if(entry.mode==="weapon" && battle.round) {
@@ -104,7 +104,7 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
   for(const [index,entry] of list.entries()) {
     if(entry.mode==="custom") continue;
     const data=entry.data;
-    const timing=entry.mode==="spell" ? data.timing ?? (supportedSpell(data.key)?.bonus ? "bonus" : "action") : "action";
+    const timing=entry.mode==="spell" ? data.timing ?? (supportedSpell(data.reference || data.key)?.bonus ? "bonus" : "action") : "action";
     const id=entry.mode+":"+(entry.mode==="spell" ? data.reference || data.key : data.name+(entry.thrown ? ":throw" : ""));
     const stats=entry.mode==="weapon" ? [data.damage+(data.type ? " "+data.type : "")+" damage",
       "Attack "+(data.bonus>=0 ? "+" : "")+data.bonus,data.normalRange ? "Range "+data.normalRange+"/"+(data.longRange || data.normalRange)+" ft" : "Reach "+(data.reach || 5)+" ft"] :
@@ -116,6 +116,7 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
       level:data.level ?? 0});
   }
   entries.push({id:'common:interact',actionId:'interact',name:actor.carrying?'Carrying body':'Interact',mode:'common',tab:'common',timing:'free',instant:false,symbol:'fist',description:'Select a body or treasure. Loot, carry, place, throw, or help from one contextual menu.'});
+  for(const zone of battle.spellZones??[])if(zone.custom&&zone.caster===actor.id&&zone.rule.shape==='sphere')entries.push({id:'zone:'+zone.id,actionId:'control-spell-zone',zoneId:zone.id,name:zone.name+' · Control',mode:'common',tab:'spell',timing:'bonus',instant:false,symbol:'flame',description:'Move up to '+zone.rule.move+' ft or ram a creature. Uses a bonus action, without another spell slot.'});
   for(const action of classActions(actor,battle)) entries.push({id:"feature:"+action.id,name:action.name,actionId:action.id,mode:"feature",tab:"feature",
     timing:action.timing,resource:action.resource,cost:action.cost,symbol:symbol(action.name,"feature"),data:action,
     description:featureText(features,action.feature),contextual:action.timing==="flurry",stats:action.timing==="flurry" ? [battle.flurry+" unarmed strikes remaining"] : [],

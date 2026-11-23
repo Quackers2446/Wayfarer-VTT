@@ -72,7 +72,7 @@ export function visionData(battle,map) {
   // Include map edges so no visibility ray escapes the artwork.
   segments.push({x1:0,y1:0,x2:map.cols,y2:0},{x1:map.cols,y1:0,x2:map.cols,y2:map.rows},{x1:map.cols,y1:map.rows,x2:0,y2:map.rows},{x1:0,y1:map.rows,x2:0,y2:0});
   for(const actor of visionActors(battle)) {
-    const zones=(battle.spellZones??[]).filter(z=>z.name!=='Darkness' || !(actor.astralVisage || hasFeature(actor,"Devil's Sight")));
+    const zones=(battle.spellZones??[]).filter(z=>z.blocksVision!==false).filter(z=>z.name!=='Darkness' || !(actor.astralVisage || hasFeature(actor,"Devil's Sight")));
     const zoneSegments=[];for(const zone of zones)for(const cell of zone.cells){const [x,y]=cell.split(':').map(Number);zoneSegments.push({x1:x,y1:y,x2:x+1,y2:y},{x1:x+1,y1:y,x2:x+1,y2:y+1},{x1:x+1,y1:y+1,x2:x,y2:y+1},{x1:x,y1:y+1,x2:x,y2:y});}
     const inZone=zones.some(z=>z.cells.includes(keyAt(actor.x,actor.y)));
     const polygon=inZone ? [{x:actor.x,y:actor.y},{x:actor.x+1,y:actor.y},{x:actor.x+1,y:actor.y+1},{x:actor.x,y:actor.y+1}] : polygonFor(actor,[...segments,...zoneSegments],map),visible=new Set(),r=Math.ceil(clamp(Number(visionSettings(actor).range)||0,0,300)/5)+4;
