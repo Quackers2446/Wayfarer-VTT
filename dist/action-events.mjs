@@ -29,7 +29,7 @@ export function captureImpact(battle, actor, details) {
 function append(battle, actor, event) {
   if (!actor) return;
   const events = battle.actionEvents ??= [...(battle.monsterEvents ?? [])];
-  events.push({id:(events.at(-1)?.id ?? 0)+1,actor:actor.id,name:actor.name,side:actor.side,
+  events.push({id:(events.at(-1)?.id ?? 0)+1,time:Date.now(),actor:actor.id,name:actor.name,side:actor.side,
     x:actor.x,y:actor.y,creatureSize:creatureSize(actor),...event});
   if (events.length > 48) events.splice(0,events.length-48);
   while (events.length>1 && JSON.stringify(events).length>120000) events.shift();
@@ -43,6 +43,7 @@ export function recordAction(battle, actor, event) {
 
 export function withActionEvent(battle, actor, details, run) {
   const previous = capture;
+  const healthBefore = new Map(battle.actors.map(actor=>[actor.id,healthState(actor)]));
   const current = {battle,actor,details:{...details},messages:[],rolls:[],impacts:[]};
   capture = current;
   try {
@@ -52,7 +53,9 @@ export function withActionEvent(battle, actor, details, run) {
       total:result.total,breakdown:result.breakdown.slice(0,600),
       ...(result.kept != null ? {kept:result.kept,modifier:result.total-result.kept} : {}),
     }));
-    append(battle,actor,{...current.details,rolls,messages:current.messages.slice(-8).map(message=>message.slice(0,700)),impacts:current.impacts.slice(0,24)});
+    append(battle,actor,{...current.details,rolls,messages:current.messages.slice(-8).map(message=>message.slice(0,700)),impacts:current.impacts.slice(0,24),healthChanges:battle.actors.flatMap(actor=>{const before=healthBefore.get(actor.id),after=healthState(actor);return before && JSON.stringify(before)!==JSON.stringify(after) ? [{actor:actor.id,name:actor.name,side:actor.side,x:actor.x,y:actor.y,before,after}] : [];})});
     return result;
   } finally {capture = previous;}
 }
+
+function healthState(actor){return {hp:actor.hp,tempHp:actor.tempHp ?? 0,dead:Boolean(actor.dead),prone:Boolean(actor.prone),stable:Boolean(actor.stable),successes:actor.successes ?? 0,failures:actor.failures ?? 0};}

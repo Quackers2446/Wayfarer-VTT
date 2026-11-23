@@ -1,3 +1,6 @@
+import {prepareMonsterRewards} from "./encounter-rewards.mjs";
+import {takeLoot,lootContents,carryBody,placeBody,syncRewardSheets,bodyWeight,initializeTreasure,releaseRevivedBodies} from "./world-interactions.mjs";
+import {createFloatingPanels} from "./floating-panels.mjs";
 import {createWallEditor} from './wall-editor.mjs';
 import {fogSettings,visionSettings,viewerVision,viewerMemory} from './dynamic-fog.mjs';
 import {knownRooms, forgetRoom, rememberRoom, rememberRooms, roomList} from './adventure-rooms.mjs';
@@ -9,6 +12,7 @@ import {enrichCharacter} from "./character-rules.mjs";
 import {alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState} from "./map-grid.mjs";
 import {areaKey, populateScene, rosterTokens} from "./scene-populate.mjs";
 import {gameScreen} from "./game-screen.mjs";
+import {createHealthPresentation} from "./health-presentation.mjs";
 import {createCombatCues} from "./combat-cues.mjs";
 import {createTokenHover} from "./token-hover.mjs";
 import {createTokenMotion} from './token-motion.mjs';
@@ -19,19 +23,19 @@ import {buildActionBar, entryReason, renderActionBar, renderActionResources} fro
 import {classActions, classSkillCheck, classWeapons, migratePactResources, restParty, syncClassResources, useClassAction} from "./class-actions.mjs";
 import {canRescue, discoverStory, rescueSildar, storyPanel, storyVersion} from "./adventure-story.mjs";
 import {enemyTurnPending, runEnemyTurns} from "./enemy-turn.mjs";
-import {enemyInSight, engageEnemy, noticesEnemy, partyVision, rememberVision} from "./exploration.mjs";
+import {enemyInSight, engageEnemy, noticesEnemy, partyEscaped, partyVision, rememberVision} from "./exploration.mjs";
 import {exploredCells, hasExplored, saveExplored,forgetExploration} from "./fog-memory.mjs";
 import {addDoor, addWall, doorAt, mapFloor, mapWalls, removeDoor, removeWall, segKey, toggleDoor} from "./map-walls.mjs";
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord} from "./rules-library.mjs";
-import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, trainingActors, trainingMap} from "./encounters.mjs";
+import {cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap} from "./encounters.mjs";
 import {defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt} from "./grid-view.mjs";
 import {createCamera, mapControls, mapHint, mapViewport} from "./map-camera.mjs";
 import {listRooms, deleteRoom, artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
   syncSessionPlayers, tablePanel, writeSession} from "./multiplayer.mjs";
 import {
-  actorIsUp, applyDamage, armorClass, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion,
+  actorIsUp, applyDamage, armorClass, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion, helpUp, throwHealingPotion,
   endInitiative, endTurn, fallingDamage, hasFeature, incapacitated, joinInitiative, keyAt, moveLeft,
   exploreToken, heal, lineClear, log, movementGroup, moveToken, newBattle, occupies, opportunity, placeToken, canStand, previewMovement, recordSpell, resolveDeflection, resolveOpportunity, rollDice,
   rollStrike, slotRank, spellCells, spellTargetCount, startInitiative, supportedSpell, sustainWitchBolt, turnAction, wakeCreature,
@@ -118,8 +122,33 @@ let toolsOpen = false;
 let storyOpen = false;
 let scheduledEnemyBattle;
 const combatCues = createCombatCues();
+let localChat;
+document.addEventListener('wayfarer:chat-roll', event => {
+  const rollEvent = event.detail;
+  if (!rollEvent) return;
+  combatCues.triggerRoll?.(rollEvent);
+  const currentBattle = table?.state?.battle ?? battle;
+  if (currentBattle) {
+    const events = currentBattle.actionEvents ??= [...(currentBattle.monsterEvents ?? [])];
+    const newId = (events.at(-1)?.id ?? 0) + 1;
+    events.push({ id: newId, time: Date.now(), ...rollEvent });
+    if (events.length > 48) events.splice(0, events.length - 48);
+  }
+});
+const floatingPanels=createFloatingPanels();
+const healthPresentation=createHealthPresentation();
+function displayedActor(actor){
+  const committed=table?.writing && table.state?.battle?.actors.find(entry=>entry.id===actor?.id);
+  return healthPresentation.actor(committed ? {...actor,hp:committed.hp,tempHp:committed.tempHp,dead:committed.dead,prone:committed.prone} : actor);
+}
+function prepareHealth(){healthPresentation.sync(table?.id ?? map.key,(table?.state?.battle ?? battle)?.actionEvents ?? []);}
 const tokenHover = createTokenHover();
-const tokenMotion = createTokenMotion(()=>paintBoard());
+let animatedBoard;
+function paintAnimationFrame(){
+  if(animatedBoard && animatedBoard.camera===camera && context?.game){const {drawingMap,state,options}=animatedBoard;camera.paint((canvas,view)=>drawGrid(canvas,view,drawingMap,state,options));}
+  else paintBoard();
+}
+const tokenMotion = createTokenMotion(paintAnimationFrame);
 let queuedMove=null;
 const controllerKey = "wayfarer-player-v1";
 let controller = globalThis.crypto.randomUUID();
@@ -184,6 +213,7 @@ async function createAdventureRoom() {
 
 let pathPreview;
 let previewMessage = "";
+let objectTarget=null,bodyPlacement='',potionUse='drink',weaponUse='melee';
 let spellSquare;
 let castSlot = "";
 let breathType = "fire";
@@ -245,7 +275,7 @@ function visibleTokens(sight = context?.game ? displayVision() : null, {includeD
 }
 
 function visibleMarkers(sight = context?.game ? displayVision() : null) {
-  const entries = battle.markers ?? [];
+  const entries = (battle.markers ?? []).filter(marker=>!marker.looted);
   return sight ? entries.filter((marker) => (!marker.hidden || marker.revealed) && (!fogActive() || sight.has(keyAt(marker.x,marker.y)))) : entries;
 }
 
@@ -314,6 +344,7 @@ function ensureScene(entry = map, state = battle) {
 function paintBoard() {
   const element = root();
   if (!element || !camera) return;
+  prepareHealth();
   const actor = selectedActor();
   const choice = combatChoice === "" ? null : choices(actor)[Number(combatChoice)];
   const effect = choice?.usable && choice.mode === "spell" ? supportedSpell(choice.data.key) : null;
@@ -339,10 +370,13 @@ function paintBoard() {
     footprint,showRegions:!context.game || !art || tool==="room",
     markers:visibleMarkers(sight),tokenImages,overlay:alignmentOpen && gridDraft ? "printed" : battle.gridOverlay ?? "artwork",
   };
-  camera.paint((canvas,view) => drawGrid(canvas,view,drawingMap,battle,options));
+  options.backgroundKey={};
+  const paintState={...battle,actors:battle.actors.map(actor=>displayedActor(actor))};
+  animatedBoard={camera,drawingMap,state:paintState,options};
+  camera.paint((canvas,view) => drawGrid(canvas,view,drawingMap,paintState,options));
   const frame=element.querySelector('.board-frame')?.parentElement;
   if(frame){let bar=frame.querySelector('.wall-editor-host');if(wallEditor.active){if(!bar){bar=document.createElement('div');bar.className='wall-editor-host';frame.append(bar);}bar.innerHTML=wallEditor.toolbar();}else bar?.remove();}
-  tokenHover.sync({map:drawingMap,battle:{...battle,actors:battle.actors.map(actor=>tokenMotion.positions.has(actor.id) && context.game ? {...actor,...tokenMotion.positions.get(actor.id)} : actor)},visible,surface:element.querySelector('#play-grid'),gesturing:()=>camera?.gesturing()});
+  tokenHover.sync({map:drawingMap,battle:{...battle,actors:battle.actors.map(actor=>tokenMotion.positions.has(actor.id) && context.game ? {...displayedActor(actor),...tokenMotion.positions.get(actor.id)} : displayedActor(actor))},visible,surface:element.querySelector('#play-grid'),gesturing:()=>camera?.gesturing()});
 }
 
 function setAlignment(alignment) {
@@ -457,8 +491,7 @@ function useMap(entry) {
   if (map.module === "training" && !battles[map.key]) battle.actors = trainingActors();
   const repaired = repairWallPlacement(map,battle);
   art = null; selectedId = ""; targetId = ""; combatChoice = ""; cursor = null;
-  const initialRoom = map.module === "LMoP" && map.id === "1ab" ? "01b" : map.regions[0]?.id;
-  room = map.regions.find(({id}) => id === initialRoom) ?? null;
+  room = startingRegion(map);
   selectedCreature = 0; tool = context?.game ? "move" : "room"; status = "";
   pathPreview = null; previewMessage = ""; spellSquare = null; pendingSquare = null;
   battles[map.key] = battle;
@@ -542,7 +575,7 @@ function input(label, id, value, type = "text", extra = "") {
 }
 function choices(actor) {
   if (!actor) return [];
-  const weapons = classWeapons(actor,battle).flatMap((weapon) => weapon.thrown ? [weapon, {...weapon, ...weapon.thrown, name:weapon.name+" (thrown)"}] : [weapon]);
+  const weapons = classWeapons(actor,battle).map(weapon=>weapon.thrown && weaponUse==='throw' ? {...weapon,...weapon.thrown} : weapon);
   const exhale = battle.round && condition(actor,"Dragon’s Breath") ?
     [{mode:"spell",name:"Exhale Dragon’s Breath",usable:true,data:{key:"exhale dragons breath",edition:"2014",name:"Dragon’s Breath",level:0}}] : [];
   return [
@@ -556,7 +589,7 @@ function choices(actor) {
         spell.edition === "2014" && ["action","bonus","reaction"].includes(spell.timing),
     })),
     ...exhale,
-    ...(actor.potions ?? []).map((potion) => ({mode:"potion",name:potion.name + " (" + potion.quantity + ")",data:potion,usable:potion.quantity > 0})),
+    ...(actor.potions ?? []).map(potion=>({mode:"potion",name:potion.name+" ("+potion.quantity+")",data:potion,usable:potion.quantity>0})),
     {mode:"custom",name:"Custom strike",usable:true},
   ];
 }
@@ -567,7 +600,7 @@ function combatSelection(actor, visible) {
   const firstWeapon = weapons && combatChoice === "" ? list.findIndex((entry) => entry.mode === "weapon" && entry.usable) : -1;
   const index = firstWeapon >= 0 ? String(firstWeapon) : combatChoice;
   const choice = index === "" ? null : list[Number(index)];
-  const targets = battle.actors.filter((entry) => occupies(entry) && (!visible || visible.has(entry.id)));
+  const targets = battle.actors.filter((entry) => (occupies(entry) || entry.carriedBy && !entry.dead) && (!visible || visible.has(entry.id)));
   let target = targets.find((entry) => entry.id === targetId);
   if (!target && weapons && choice && actorIsUp(actor) && occupies(actor)) {
     const enemies = targets.filter((entry) => entry.side === "hostile" && actorIsUp(entry))
@@ -637,11 +670,12 @@ function playOptions(actor) {
     ? `<p>${actor.stable ? "Stable at 0 HP" : "Unconscious · " + actor.successes + " successes, " + actor.failures + " failures"}</p>
       ${actor.stable || turnView(battle,actor).deathRolled ? "" : actionButton("Roll death save","death",{primary:true})}` : "";
   if (incapacitated(actor)) return "<p>" + (condition(actor,"Asleep") ? "Asleep" : "Paralyzed") + "</p>";
+  if(context.game && category==='interact') return worldInteractionPanel(actor);
   if (context.game && category === "feature") return featureOptions(actor);
   const {list,index,choice,targets,target} = combatSelection(actor,visibleTokens());
   const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.key) : null;
   const pickArea = effect?.area || effect?.cone || effect?.teleport;
-  const pickTarget = choice && choice.mode !== "potion" && !effect?.self && !pickArea;
+  const pickTarget = choice && (choice.mode !== "potion" || potionUse==='throw') && !effect?.self && !pickArea;
   const asleep = battle.round && battle.actors.find((target) => occupies(target) && target.side === actor.side &&
     condition(target,"Asleep") && distanceFt(actor,target) <= 5);
   const moveActions = battle.round ? ["dash","dodge","disengage"].map((act) =>
@@ -669,6 +703,8 @@ function playOptions(actor) {
     effect?.breath ? targets.filter((entry) => entry.side === actor.side) : targets;
   const missingWeaponTarget = context.game && category === "weapon" && pickTarget && !target;
   return `<form class="play-form" id="combat-form">
+    ${choice?.mode==='weapon'&&choice.data.thrown?`<div class="item-action-choices" role="group" aria-label="Weapon use"><button type="button" data-play="weapon-use" data-id="melee" aria-pressed="${weaponUse==='melee'}">Melee</button><button type="button" data-play="weapon-use" data-id="throw" aria-pressed="${weaponUse==='throw'}">Throw</button></div>`:''}
+    ${choice?.mode==='potion'?`<div class="item-action-choices" role="group" aria-label="Potion use"><button type="button" data-play="potion-use" data-id="drink" aria-pressed="${potionUse==='drink'}">Drink</button><button type="button" data-play="potion-use" data-id="throw" aria-pressed="${potionUse==='throw'}">Throw · 30 ft</button></div>`:''}
     ${context.game ? '' : field("Action","combat-choice",[
       option("","Choose " + (context.game ? {weapon:"a weapon",spell:"a spell",potion:"an item"}[category] : "an action"),index === ""),
       ...legalChoices.map(({entry,index:position}) => option(String(position),entry.name + (entry.data?.prepared === false ? " · unprepared" : entry.usable ? "" : " · manual"), index === String(position)))])}
@@ -1027,14 +1063,15 @@ function redraw() {
   if(selectedEntry?.index!=null) {combatChoice=String(selectedEntry.index);category=selectedEntry.mode;}
   if(selectedEntry?.mode==='feature') {featureChoice=selectedEntry.actionId;category='feature';}
   if(hotbarSelection && !selectedEntry) {hotbarSelection='';category='move';resetActionSelection();}
+  prepareHealth();
   element.innerHTML = context.game ? gameScreen({
-    map,battle,roomName:table?.state?.room?.name,saveStatus:table?.writing ? 'Saving…' : table?.online ? 'Saved' : 'Offline',selected:selectedActor(),party:battle.actors.filter((actor) => actor.side === "party"),
+    map,battle,roomName:table?.state?.room?.name,saveStatus:table?.writing ? 'Saving…' : table?.online ? 'Saved' : 'Offline',selected:displayedActor(selectedActor()),party:battle.actors.filter((actor) => actor.side === "party").map(actor=>displayedActor(actor)),
     visibleInitiative:visibleTokens(),
     category,actions:gameOptions(selectedActor()), tacticalTools:tableTools(), room,status,artworkNote,
     hotbar:hotbarActorNow ? renderActionBar(barEntries,hotbarActorNow,{tab:hotbarTab,filter:hotbarFilter,selected:hotbarSelection,expanded:hotbarExpanded,utilitiesOpen:hotbarTools}) : '',
     actionPanelOpen:Boolean(hotbarTools || selectedEntry && selectedEntry.mode!=='move' || pendingSquare || battle.classReaction || battle.movement || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && canRescue(battle,map,hotbarActorNow)),
     resourceControls:renderActionResources(hotbarActorNow,battle,hotbarFilter),
-    logOpen:eventLogPlacement!=='hidden' && eventLogMode!=='collapsed' && (eventLogPlacement!=='chat' || Boolean(table?.chat?.isOpen)),logHistory:table?.state?.battle.log ?? battle.log,eventLogMode,eventLogPlacement,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
+    logOpen:eventLogPlacement!=='hidden' && eventLogMode!=='collapsed' && (eventLogPlacement!=='chat' || !table || Boolean(table?.chat?.isOpen)),logHistory:table?.state?.battle.log ?? battle.log,eventLogMode,eventLogPlacement,toolsOpen,destination:previewMessage,cursor,hasToken:Boolean(cameraToken()),
     storyOpen,storyContent:storyOpen ? storyPanel(battle,map) : "",
     rescueAvailable:canControl(selectedActor()) && canRescue(battle,map,selectedActor()),
     canAct:canControl(selectedActor()), controllers:table ? battle.controllers ?? {} : null, controller,
@@ -1055,11 +1092,14 @@ function redraw() {
     else if(selected.offsetLeft+selected.offsetWidth>tabs.scrollLeft+tabs.clientWidth) tabs.scrollLeft=selected.offsetLeft+selected.offsetWidth-tabs.clientWidth;
   }
   const chatSlot = element.querySelector(".game-chat-slot");
-  if (chatSlot && table?.chat) {
-    const character = battle.actors.find((actor) => actor.side === "party" && battle.controllers?.[actor.id] === controller);
-    table.chat.mount(chatSlot,character?.name || table.player);
-    table.chat.setActivity(eventLogPlacement==='chat',element.querySelector('.game-event-slot'));
+  const activeChat = table?.chat ?? (localChat ??= createGameChat("local", (selectedActor()?.name ?? "Player")));
+  if (chatSlot && activeChat) {
+    const character = battle.actors.find((actor) => actor.side === "party" && (table ? battle.controllers?.[actor.id] === controller : true));
+    activeChat.mount(chatSlot, character?.name || table?.player || selectedActor()?.name || "Player");
+    activeChat.setActivity(eventLogPlacement==='chat' && eventLogMode!=='collapsed', element.querySelector('.game-live-log'), (table?.state?.battle ?? battle).actionEvents ?? (table?.state?.battle ?? battle).monsterEvents ?? []);
   }
+  floatingPanels.mount(element.querySelector(".game-screen"));
+  if(context.game) void prepareMonsterRewards(battle).catch(()=>{});
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open","");
   if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open","");
   const frame = element.querySelector(".board-frame");
@@ -1081,6 +1121,7 @@ function redraw() {
   const committedBattle = table?.state?.battle ?? battle;
   if(context.game) tokenMotion.sync(table?.id ?? map.key,committedBattle);
   combatCues.sync(table?.id ?? battle,committedBattle.actionEvents ?? committedBattle.monsterEvents ?? [],cueLayer ? {
+    onReveal:event=>{healthPresentation.reveal(event);requestAnimationFrame(()=>{if(root() && context?.game) redraw();});},
     layer:cueLayer,frame,grid:frame.querySelector("#play-grid"),map,sight:viewerVision(committedBattle,map,table?controller:null).visible,fogEnabled:fogActive(),feed:element.querySelector(".game-live-log"),motion:tokenMotion,
   } : null);
   restoreEventLogScroll();
@@ -1160,6 +1201,7 @@ function canRollInitiative() {
 
 function advanceCombat() {
   if (!battle.round) return;
+  if(partyEscaped(battle)){endInitiative(battle);status="Your party escaped. Free movement restored.";return;}
   checkSpellTethers(battle,map);
   const message = runEnemyTurns(battle,map);
   if (message && !status && (!context.game || !battle.round)) status = message;
@@ -1187,6 +1229,12 @@ function detectNearby(actor) {
 
 function checkGameCell(x,y,region,token) {
   const actor = selectedActor();
+  if(category==='interact' && bodyPlacement){requireControl(actor);const body=battle.actors.find(body=>body.id===actor.carrying);placeBody(battle,actor,body,{x,y},map,{thrown:bodyPlacement==='throw'});bodyPlacement='';status=battle.log.at(-1);return;}
+  if(category==='move' || category==='interact'){
+    const corpse=token?.hp===0 ? token : !token && battle.actors.find(body=>body.dead && !body.carriedBy && body.x!=null && containsCell(body,x,y));
+    const treasure=!token && visibleMarkers().find(marker=>marker.type==='treasure' && !marker.looted && marker.x===x && marker.y===y);
+    if((corpse || treasure) && (!fogActive() || displayVision().has(keyAt(x,y)))){requireControl(actor);objectTarget={type:corpse?'body':'treasure',id:(corpse ?? treasure).id};bodyPlacement='';combatChoice='';spellSquare=null;category='interact';hotbarSelection='common:interact';return;}
+  }
   if (!battle.round && token?.side === "party" && category === "move" && canControl(token)) {
     selectedId = token.id;
     detectNearby(token);
@@ -1213,7 +1261,7 @@ function checkGameCell(x,y,region,token) {
     else {
       targetId = token.id;
       if(hotbarSelection && category==='feature') executeClassSelection(root().querySelector('#class-action-form'),token);
-      else if(hotbarSelection && ['weapon','spell'].includes(category)) executeCombatSelection(root().querySelector('#combat-form'));
+      else if(hotbarSelection && ['weapon','spell','potion'].includes(category)) executeCombatSelection(root().querySelector('#combat-form'));
     }
     return;
   }
@@ -1239,7 +1287,8 @@ async function loadRoster(records, area) {
 
 async function launchGame(hostOptions=null,characters=context.characters) {
   await ensureScene();
-  const entry = map.regions.find(({id}) => id === "01b") ?? map.regions[0];
+  const entry = startingRegion(map);
+  if (entry) room = entry;
   if (!battle.round && !battle.actors.some((actor) => actor.side === "party")) {
     for (const character of characters.slice(0,4)) {
       try {add(partyActor(character),entry);} catch (error) {log(battle,error.message);}
@@ -1369,6 +1418,9 @@ function canUseMapSquare(x,y) {
   if (!context.game || !fogActive() || tool === "wall" || tool === "door" || tool === "erase-wall") return true;
   if (hasExplored(viewerMemory(battle,map,table?controller:null),x,y) || displayVision().has(keyAt(x,y))) return true;
   const actor = selectedActor();
+  const choice=combatChoice === "" ? null : choices(actor)[Number(combatChoice)];
+  const effect=choice?.mode === "spell" && supportedSpell(choice.data.key);
+  if(category === "spell" && (effect?.area || effect?.cone || effect?.teleport)) return true;
   return tool === "move" && category === "move" && actor?.side === "party" && occupies(actor) &&
     mapFloor(map,x,y,battle) && distanceFt(actor,{x,y}) <= 5;
 }
@@ -1541,6 +1593,7 @@ async function pollTable(connection) {
     const snapshot = await readSession(connection.id,connection.revision);
     if (table !== connection || connection.writing || camera?.gesturing()) return;
     if (snapshot && snapshot.revision > connection.revision) {
+      connection.activeUntil=Date.now()+8000;
       applyTableState(connection,snapshot);
       status = "";
       tableMessage = "";
@@ -1558,7 +1611,7 @@ async function pollTable(connection) {
     }
   } finally {
     connection.reading = false;
-    if (table === connection) connection.timer = setTimeout(() => pollTable(connection),document.hidden ? 9000 : 1500);
+    if (table === connection) connection.timer = setTimeout(() => pollTable(connection),document.hidden ? 9000 : connection.state?.battle?.round || Date.now()<(connection.activeUntil??0) ? 550 : 1500);
   }
 }
 
@@ -1716,7 +1769,14 @@ async function interact(run, {cosmetic = false, retryMove, remaining = 6} = {}) 
   }
   try {
     status = "";
+    if(!cosmetic){
+      for(const actor of battle.actors.filter(actor=>actor.side==='party')){const sheet=battle.sheets?.[actor.id] ?? importedCharacter(actor);actor.items ??= structuredClone(sheet?.items ?? []);actor.currency ??= structuredClone(sheet?.currency ?? {});actor.xp ??= sheet?.xp ?? 0;}
+      await prepareMonsterRewards(battle);initializeTreasure(battle,map);
+    }
+    const movementCursor=battle.actionEvents?.at(-1)?.id ?? 0;
     await run();
+    if(context?.game && connection && battle.actionEvents?.some(event=>event.id>movementCursor && event.kind==='move')){tokenMotion.sync(connection.id,battle);paintBoard();}
+    syncRewardSheets(battle);
     if (connection !== table) return;
     if (!cosmetic && context?.game && battle.round) {
       const heroes = battle.actors.filter((actor) => actor.side === "party");
@@ -1740,6 +1800,7 @@ async function interact(run, {cosmetic = false, retryMove, remaining = 6} = {}) 
       rememberVision(battle,map);
       saveExplored(battle,map);
     }
+    releaseRevivedBodies(battle,map);syncRewardSheets(battle);
     saveBattle();
   } catch (failure) {
     status = failure instanceof Error ? failure.message : "The action could not be completed.";
@@ -1773,6 +1834,7 @@ async function interact(run, {cosmetic = false, retryMove, remaining = 6} = {}) 
         } else {
           connection.state = structuredClone(next);
           connection.revision = result.revision;
+          connection.activeUntil=Date.now()+8000;
           connection.online = true;
         }
         tableMessage = "";
@@ -1824,6 +1886,8 @@ export async function setGameTokenImage(id,image,session) {
     if (!actor) throw new Error("This character is no longer in the party.");
     if (image) actor.tokenImage = image;
     else delete actor.tokenImage;
+    const sheet=battle.sheets?.[id];
+    if(sheet){if(image) sheet.tokenImage=image;else delete sheet.tokenImage;}
   },{cosmetic:true});
   if (!success) throw new Error(status || "The token could not be updated. Try again.");
 }
@@ -1919,7 +1983,7 @@ document.addEventListener("click", (event) => {
   }
   if(play==='game-log'){partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;}
   if(play==='game-log' && eventLogPlacement==='hidden'){setEventLogMode('compact');setActivityPlacement('separate');return;}
-  if(play==='game-log' && eventLogPlacement==='chat' && (!table?.chat?.isOpen || eventLogMode==='collapsed')){setEventLogMode('compact');table?.chat?.show();redraw();return;}
+  if(play==='game-log' && eventLogPlacement==='chat' && table?.chat && (!table.chat.isOpen || eventLogMode==='collapsed')){setEventLogMode('compact');table?.chat?.show();redraw();return;}
   if(['game-log','event-log-expand','event-log-toggle'].includes(play)) {
     const next=play==='event-log-expand' ? eventLogMode==='expanded' ? 'compact' : 'expanded' : eventLogMode==='collapsed' ? 'compact' : 'collapsed';
     setEventLogMode(next);
@@ -1962,7 +2026,8 @@ document.addEventListener("click", (event) => {
           if(entry.actionId==='cutting-words') actor.cuttingWords=!actor.cuttingWords;
           if(entry.actionId==='arm-inspiration') actor.inspirationArmed=!actor.inspirationArmed;
           if(entry.actionId==='arm-stun') actor.stunArmed=!actor.stunArmed;
-        } else if(entry.actionId==='wake') wakeCreature(battle,actor,battle.actors.find(target=>target.id===entry.targetId));
+        } else if(entry.actionId==='help-up') helpUp(battle,actor,battle.actors.find(target=>target.id===entry.targetId),map);
+        else if(entry.actionId==='wake') wakeCreature(battle,actor,battle.actors.find(target=>target.id===entry.targetId));
         else if(entry.actionId==='witch-bolt') sustainWitchBolt(battle,actor,map);
         else turnAction(battle,actor,entry.actionId);
         status=battle.log.at(-1) ?? '';
@@ -1971,13 +2036,16 @@ document.addEventListener("click", (event) => {
       hotbarSelection=entry.id;
       if(entry.index!=null) {combatChoice=String(entry.index);category=entry.mode;}
       if(entry.mode==='feature') {featureChoice=entry.actionId;category='feature';}
+      if(entry.actionId==='interact'){category='interact';objectTarget=null;bodyPlacement='';}
+      if(entry.mode==='potion')potionUse='drink';
+      if(entry.mode==='weapon')weaponUse='melee';
       if(entry.mode==='spell' && /^(slot|pact):/.test(hotbarFilter)) castSlot=hotbarFilter.startsWith('pact:') ? hotbarFilter : hotbarFilter.slice(5);
       redraw();
     }
     return;
   }
   if (play === "dice-effects") {combatCues.toggleDice();redraw();return;}
-  if(play==='game-chat'){partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;table?.chat?.toggle();redraw();return;}
+  if(play==='game-chat'){partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;(table?.chat ?? localChat)?.toggle();redraw();return;}
   if(play==='game-party'){partyOpen=!partyOpen;toolsOpen=false;tableOpen=false;storyOpen=false;redraw();return;}
   if(play==='game-tools'){partyOpen=false;toolsOpen=!toolsOpen;tableOpen=false;storyOpen=false;if(!toolsOpen){tool='move';gridDraft=null;}redraw();return;}
   if(play==='edit-walls'){toolsOpen=false;tool='move';resetActionSelection();wallEditor.setMode('draw');redraw();return;}
@@ -2024,6 +2092,13 @@ document.addEventListener("click", (event) => {
   }
   if (play === "archive-picker") {root().querySelector("#play-archive-file").click(); return;}
   if (play === "art") {root().querySelector("#play-art").click(); return;}
+  if(play==='weapon-use'){weaponUse=id==='throw'?'throw':'melee';redraw();return;}
+  if(play==='potion-use'){potionUse=id==='throw'?'throw':'drink';redraw();return;}
+  if(play==='world-select'){objectTarget={type:button.dataset.type,id};bodyPlacement='';redraw();return;}
+  if(['world-loot','world-carry','world-place','world-throw','world-help'].includes(play)){
+    if(play==='world-place'||play==='world-throw'){bodyPlacement=play==='world-throw'?'throw':'place';status='Choose an open map square '+(bodyPlacement==='throw'?'within 20 feet.':'within 5 feet.');redraw();return;}
+    void interact(()=>{const actor=selectedActor();requireControl(actor);const source=worldObject();if(play==='world-loot')takeLoot(battle,actor,source,map);if(play==='world-carry')carryBody(battle,actor,source,map);if(play==='world-help')helpUp(battle,actor,source,map);status=battle.log.at(-1);});return;
+  }
   if (play === "inspect-marker") {
     const marker = battle.markers?.find((entry) => entry.id === id);
     if (marker) document.dispatchEvent(new CustomEvent("wayfarer:marker",{detail:marker}));
@@ -2107,7 +2182,7 @@ document.addEventListener("click", (event) => {
         break;
       case "add-party": {
         const character = context.characters.find((entry) => entry.id === selectedParty);
-        if (character) add(partyActor(character), map.regions.find(({id}) => id === "01b") ?? room);
+        if (character) add(partyActor(character), room ?? startingRegion(map));
         selectedParty = "";
         break;
       }
@@ -2364,7 +2439,7 @@ function executeCombatSelection(form) {
           return;
         }
         if (!battle.round && (choice.mode === "weapon" || choice.mode === "custom" ||
-          (choice.mode === "spell" && !effect?.exploration))) {
+          (choice.mode === "spell" && !effect?.exploration && target?.side === "hostile"))) {
           const enemy = target?.side === "hostile" ? target : (effect?.area || effect?.cone) && spellSquare
             ? battle.actors.find((entry) => entry.side === "hostile" && actorIsUp(entry) && noticesEnemy(battle,map,actor,entry)) : null;
           if (!beginCombat(actor,enemy,false)) throw new Error("Choose an enemy to start combat.");
@@ -2373,9 +2448,14 @@ function executeCombatSelection(form) {
         if (choice.mode === "spell") {
           castSpell(battle,actor,target,choice.data,slotRank(value("cast-slot")),options);
           status = battle.log.at(-1);
+          if(!battle.round && !effect?.teleport){
+            const hitIds=new Set((battle.actionEvents?.at(-1)?.impacts ?? []).map(impact=>impact.actor));
+            const enemy=battle.actors.find(enemy=>enemy.side==='hostile' && actorIsUp(enemy) && hitIds.has(enemy.id));
+            if(enemy) beginCombat(actor,enemy,false);
+          }
           if (!battle.round && effect?.teleport) detectNearby(actor);
         }
-        else if (choice.mode === "potion") drinkPotion(battle,actor,choice.data);
+        else if (choice.mode === "potion") {if(potionUse==='throw') throwHealingPotion(battle,actor,target,choice.data,map);else drinkPotion(battle,actor,choice.data);}
         else {
           const weapon = choice.mode === "weapon" ? choice.data : {
             name:"Custom strike", bonus:value("custom-bonus") === "" ? null : Number(value("custom-bonus")),
@@ -2452,7 +2532,7 @@ document.addEventListener("submit", (event) => {
         const actor = partyActor(character);
         if (connection && actor.tokenImage) await uploadSessionToken(connection.id,actor.tokenImage);
         if (connection !== table) return;
-        add(actor,map.regions.find(({id}) => id === "01b") ?? map.regions[0]);
+        add(actor, room ?? startingRegion(map));
         (battle.sheets ??= {})[actor.id] = sharedSheet(character);
         status = actor.name + " joined the party.";
         break;
@@ -2542,3 +2622,28 @@ document.addEventListener('submit',event=>{
 
 document.addEventListener('wayfarer:activity-placement',event=>{if(event.detail==='chat')setEventLogMode('compact');setActivityPlacement(event.detail);});
 document.addEventListener('wayfarer:chat-visibility',event=>root()?.querySelector('[data-play=game-chat]')?.setAttribute('aria-pressed',String(event.detail)));
+
+
+export function syncLocalCharacterToken(characterId,image){
+  const id=characterId.startsWith('party:') ? characterId : 'party:'+characterId;
+  for(const saved of Object.values(battles)) {
+    const actor=saved.actors?.find(actor=>actor.id===id && actor.side==='party');
+    if(actor){if(image) actor.tokenImage=image;else delete actor.tokenImage;}
+  }
+  try{localStorage.setItem(saveKey,JSON.stringify(battles));}catch{}
+  document.dispatchEvent(new Event('wayfarer:character-token'));
+}
+
+
+function worldObject(){return objectTarget?.type==='body'?battle.actors.find(body=>body.id===objectTarget.id):battle.markers?.find(marker=>marker.id===objectTarget?.id);}
+function worldInteractionPanel(actor){
+ const source=worldObject(),carrying=actor.carrying && battle.actors.find(body=>body.id===actor.carrying);
+ const bodies=battle.actors.filter(body=>(body.dead||body.hp===0) && body.x!=null && !body.carriedBy && distanceFt(actor,body)<=15 && (!fogActive()||displayVision().has(keyAt(body.x,body.y))));
+ const treasures=visibleMarkers().filter(marker=>marker.type==='treasure' && !marker.looted && distanceFt(actor,marker)<=15);
+ if(bodyPlacement)return `<p>Choose an open square on the map to ${bodyPlacement==='throw'?'throw the body (20 ft, action, 1d4 impact damage)':'place the body (5 ft, free)'}. Throwing an unconscious creature can kill them.</p>`;
+ if(!source)return `<p>Select a body or treasure on the map. Move within 5 feet to interact.</p><div class="world-objects">${[...bodies,...treasures].map(object=>`<button type="button" class="game-button" data-play="world-select" data-type="${object.side?'body':'treasure'}" data-id="${escape(object.id)}">${escape(object.name)}${object.dead?' · Dead':object.hp===0?' · Unconscious':''}</button>`).join('')||'<p>No bodies or treasure nearby.</p>'}${carrying?`<button type="button" class="game-button" data-play="world-select" data-type="body" data-id="${escape(carrying.id)}">Carrying ${escape(carrying.name)}</button>`:''}</div>`;
+ const contents=lootContents(source),lootable=contents.items.length||Object.keys(contents.currency).length;
+ return `<div class="world-object-heading"><strong>${escape(source.name)}</strong><small>${source.side?(source.dead?'Dead':'Unconscious')+' · '+(source.weight==null?'≈':'')+bodyWeight(source)+' lb':'Treasure'}</small></div>
+ ${lootable?`<ul class="world-loot">${contents.items.map(item=>`<li>${escape(item.name)} × ${item.quantity}</li>`).join('')}${Object.entries(contents.currency).map(([unit,n])=>`<li>${n} ${escape(unit)}</li>`).join('')}</ul>`:'<p>No detailed loot remains.</p>'}
+ <div class="item-action-choices">${lootable&&(!source.side||source.dead)?actionButton('Take all','world-loot'):''}${source.side&&!source.carriedBy?actionButton('Pick up body','world-carry'):''}${source.side&&!source.dead&&source.hp===0&&source.side===actor.side?actionButton('Help Up · 1 HP','world-help'):''}${carrying?.id===source.id?actionButton('Place body','world-place')+actionButton('Throw body','world-throw'):''}</div>`;
+}

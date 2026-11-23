@@ -1,4 +1,4 @@
-import {turnView, canTakeTurn, actorIsUp, condition, currentActor, hasFeature, incapacitated, moveLeft, movementGroup, speedOf, supportedSpell} from "./combat.mjs";
+import {turnView, canTakeTurn, actorIsUp, condition, currentActor, distanceFt, hasFeature, incapacitated, moveLeft, movementGroup, speedOf, supportedSpell} from "./combat.mjs";
 import {classActions} from "./class-actions.mjs";
 import {escape} from "./format.mjs";
 import {icon} from "./icons.mjs";
@@ -58,7 +58,7 @@ export function entryReason(actor,battle,entry,canAct=true) {
   if(entry.mode==="move") return battle.round && moveLeft(battle,actor)<=0 ? "No movement remains." : "";
   if(entry.mode==="passive") return entry.resource && !entry.toggled && !(actor.resources?.[entry.resource]?.current>=entry.cost) ? "Not enough "+(actor.resources?.[entry.resource]?.name ?? entry.resource)+" remaining." : "";
   if(!battle.round) {
-    if(entry.mode==="common") return "No turn budget is needed while exploring.";
+    if(entry.mode==="common" && !["help-up","interact"].includes(entry.actionId)) return "No turn budget is needed while exploring.";
     if(entry.mode==="feature") return "Use this class ability during combat.";
   }
   if(entry.mode==="weapon" && battle.round) {
@@ -105,16 +105,17 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
     if(entry.mode==="custom") continue;
     const data=entry.data;
     const timing=entry.mode==="spell" ? data.timing ?? (supportedSpell(data.key)?.bonus ? "bonus" : "action") : "action";
-    const id=entry.mode+":"+(entry.mode==="spell" ? data.reference || data.key : data.name);
+    const id=entry.mode+":"+(entry.mode==="spell" ? data.reference || data.key : data.name+(entry.thrown ? ":throw" : ""));
     const stats=entry.mode==="weapon" ? [data.damage+(data.type ? " "+data.type : "")+" damage",
       "Attack "+(data.bonus>=0 ? "+" : "")+data.bonus,data.normalRange ? "Range "+data.normalRange+"/"+(data.longRange || data.normalRange)+" ft" : "Reach "+(data.reach || 5)+" ft"] :
-      entry.mode==="potion" ? [data.formula+" healing",data.quantity+" remaining"] : [data.level ? "Level "+data.level+" spell" : "Cantrip"];
+      entry.mode==="potion" ? [data.formula+" healing",...(entry.thrown ? ["Range 30 ft"] : []),data.quantity+" remaining"] : [data.level ? "Level "+data.level+" spell" : "Cantrip"];
     const source=data.reference && spellByKey(data.reference);
-    entries.push({...entry,id,index,name:data.name,tab:entry.mode,timing,symbol:symbol(data.name,entry.mode),stats,
-      description:entry.mode==="spell" ? plain(source?.entries) : entry.mode==="potion" ? "Restore hit points with this item." : "Select this attack, then choose a target on the map.",
+    entries.push({...entry,id,index,name:entry.thrown ? "Throw "+data.name : data.name,tab:entry.mode,timing,symbol:symbol(data.name,entry.mode),stats,
+      description:entry.mode==="spell" ? plain(source?.entries) : entry.mode==="potion" ? entry.thrown ? "Use your action to throw this potion to a creature within 30 feet along a clear path. Consumes one potion and rolls its normal healing." : "Restore hit points with this item." : "Select this attack, then choose a target on the map.",
       resource:data.castUsage?.resource,cost:data.castUsage?.cost ?? (data.castUsage?.maximum ? 1 : undefined),
       level:data.level ?? 0});
   }
+  entries.push({id:'common:interact',actionId:'interact',name:actor.carrying?'Carrying body':'Interact',mode:'common',tab:'common',timing:'free',instant:false,symbol:'fist',description:'Select a body or treasure. Loot, carry, place, throw, or help from one contextual menu.'});
   for(const action of classActions(actor,battle)) entries.push({id:"feature:"+action.id,name:action.name,actionId:action.id,mode:"feature",tab:"feature",
     timing:action.timing,resource:action.resource,cost:action.cost,symbol:symbol(action.name,"feature"),data:action,
     description:featureText(features,action.feature),contextual:action.timing==="flurry",stats:action.timing==="flurry" ? [battle.flurry+" unarmed strikes remaining"] : [],
@@ -124,6 +125,9 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
     entries.push({id:"common:"+id,actionId:id,name,mode:"common",tab:"common",timing:"action",instant:true,symbol:symbol(name,"common"),description});
   }
   if(actor.prone) entries.push({id:"common:stand",actionId:"stand",name:"Stand up",mode:"common",tab:"common",timing:"move",instant:true,symbol:"footprints",description:"Stand from prone by spending half your speed."});
+  for(const target of battle.actors.filter(target=>target.side===actor.side && target.x!=null && target.y!=null && !target.dead && target.hp===0 && Math.max(Math.abs(target.x-actor.x),Math.abs(target.y-actor.y))<=1)) {
+    entries.push({id:"common:help-up:"+target.id,actionId:"help-up",targetId:target.id,name:"Help Up "+target.name,mode:"common",tab:"common",timing:"action",instant:true,symbol:"heart",description:"Use your action to restore this adjacent unconscious ally to 1 HP."});
+  }
   for(const target of battle.actors.filter(target=>target.side===actor.side && target.x!=null && target.y!=null && !target.dead && condition(target,"Asleep") && Math.max(Math.abs(target.x-actor.x),Math.abs(target.y-actor.y))<=1)) {
     entries.push({id:"common:wake:"+target.id,actionId:"wake",targetId:target.id,name:"Wake "+target.name,mode:"common",tab:"common",timing:"action",instant:true,symbol:"heart",description:"Use your action to shake this adjacent ally awake."});
   }

@@ -1,3 +1,4 @@
+import {xpForCR,itemFromReference} from "./encounter-rewards.mjs";
 import {cellAt, cellCenter, gridGeometry, legacyGeometry, sourceGrid, validGeometry} from "./map-grid.mjs";
 import {diceTerms, makeActor, modifier} from "./combat.mjs";
 import {enrichCharacter} from "./character-rules.mjs";
@@ -117,6 +118,37 @@ export function pointInPolygon(x, y, points) {
 
 export {cellCenter};
 
+export function startingRegion(map) {
+  if (!map?.regions?.length) return null;
+  const tier1 = map.regions.find((r) => {
+    const name = (r.entry?.name ?? "").trim();
+    const id = (r.id ?? "").trim();
+    if (/^(?:area\s+|room\s+)?0*1(?:\.|\b|:|\s)/i.test(name)) return true;
+    if (/^0*1(?:\.|$)/.test(id)) return true;
+    if (/^(?:area|room)[-_ ]?0*1(?:\b|$)/i.test(id)) return true;
+    return false;
+  });
+  if (tier1) return tier1;
+
+  const tier2 = map.regions.find((r) => {
+    const name = (r.entry?.name ?? "").trim();
+    const id = (r.id ?? "").trim();
+    if (/^(?:area\s+|room\s+)?0*1[a-z](?:\.|\b|:|\s|$)/i.test(name)) return true;
+    if (/^0*1[a-z](?:\b|$)/i.test(id)) return true;
+    return false;
+  });
+  if (tier2) return tier2;
+
+  const tier3 = map.regions.find((r) => {
+    const name = (r.entry?.name ?? "").trim();
+    const id = (r.id ?? "").trim();
+    return /^(?:entry|entrance|start|gate)/i.test(name) || /^(?:entry|entrance|start|gate)/i.test(id);
+  });
+  if (tier3) return tier3;
+
+  return map.regions[0] ?? null;
+}
+
 export function regionAt(map, x, y) {
   return map.regions.find((region) => pointInPolygon(x,y,region.points));
 }
@@ -217,6 +249,7 @@ export function partyActor(record) {
     });
   }
   return makeActor({
+    strength:character.abilities.find(ability=>ability.abbr==='STR')?.score,items:structuredClone(character.items ?? []),currency:structuredClone(character.currency ?? {}),xp:character.xp ?? 0,
     id:"party:" + character.id, creatureSize:character.creation?.size, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
     initiative:character.initiative ?? scores.dex ?? 0, dex:character.abilities[1]?.score, ability:scores, saves,
@@ -280,9 +313,10 @@ export async function creatureActor({name, source, nickname, hp, side, currentHp
     name:nickname || data.name, ac:typeof baseAC === "number" ? baseAC : baseAC.ac,
     hp:currentHp ?? maxHp, maxHp,
     side:side ?? (named && data.isNpc ? "neutral" : "hostile"),
+    cr:data.cr,rewardXp:xpForCR(data.cr),loot:disarmed ? [] : (data.attachedItems ?? []).filter(item=>typeof item==='string').map(itemFromReference),lootInitialized:true,rewardsPrepared:true,
     statName:data.name, source:data.source, tokenArt,creatureSize:data.size?.[0],
     speed:typeof speed === "number" ? speed : speed?.number ?? 0,
-    dex:data.dex, initiative:modifier(data.dex) ?? 0, level:null,
+    strength:data.str,dex:data.dex, initiative:modifier(data.dex) ?? 0, level:null,
     ability:Object.fromEntries(abilities.map((key) => [key,modifier(data[key])])),
     saves:Object.fromEntries(Object.entries(data.save ?? {}).map(([key,value]) => [key,Number(value)])),
     creatureType:typeof data.type === "string" ? data.type : data.type?.type,

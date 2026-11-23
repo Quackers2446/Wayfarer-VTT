@@ -1,3 +1,4 @@
+import {awardDefeatXP} from "./encounter-rewards.mjs";
 import {crossesMapWall, mapFloor, mapLineClear, mapWalls} from "./map-walls.mjs";
 import {matchWeapon} from './rules-library.mjs';
 import {tokenSize,sizeRank,actorCells,containsCell,overlaps,spaceDistance,touchesArea} from './actor-space.mjs';
@@ -102,7 +103,7 @@ export function turnView(battle,actor) {
 }
 export const turnBudgetStamp=(battle,actor)=>{const view=turnView(battle,actor);return JSON.stringify(turnFields.map(key=>view[key]));};
 export const actorIsUp = (actor) => Boolean(actor && actor.hp > 0 && !actor.dead);
-export const occupies = (actor) => !actor.dead && actor.x != null && actor.y != null;
+export const occupies = (actor) => !actor.dead && !actor.carriedBy && actor.x != null && actor.y != null;
 export const modifier = (score) => score == null ? null : Math.floor((score - 10) / 2);
 export const hasFeature = (actor,name) => actor.classRules?.edition === "2014" && actor.classRules.traits.includes(name);
 export const condition = (actor,name) => actor?.conditions?.find((effect) => effect.name === name);
@@ -225,6 +226,7 @@ export function startInitiative(battle, random = Math.random, participantIds = n
     return actor;
   }).sort((a, b) => b.initiativeRoll - a.initiativeRoll || (b.dex ?? 0) - (a.dex ?? 0));
   battle.order = scores.map(({id}) => id);
+  battle.encounterParticipants=ready.filter(actor=>actor.side==='party').map(actor=>actor.id);
   battle.round = 1;
   battle.turn = 0;
   battle.deathRolled = false;
@@ -236,6 +238,7 @@ export function startInitiative(battle, random = Math.random, participantIds = n
 
 export function joinInitiative(battle, actor, random = Math.random) {
   if (!battle.round || !actorIsUp(actor) || !occupies(actor) || battle.order.includes(actor.id)) return;
+  if(actor.side==='party' && !(battle.encounterParticipants ??= []).includes(actor.id))battle.encounterParticipants.push(actor.id);
   actor.initiativeRoll = withActionEvent(battle,actor,{action:"Join initiative",kind:"initiative"},
     () => d20(actor.initiative,{random,label:"Initiative"})).total;
   const index = battle.order.findIndex((id) => {
@@ -337,7 +340,7 @@ export function endInitiative(battle) {
 }
 
 export const speedOf = (actor) => incapacitated(actor) || actor.steadyAim ? 0 :
-  Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0));
+  Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0))*(actor.carrying ? .5 : 1);
 export const armorClass = (actor) => actor.ac+(actor.bladesong ? Math.max(1,actor.ability.int ?? 0) : 0);
 export const movementBudget=(battle,actor)=>speedOf(actor)+(canTakeTurn(battle,actor) ? turnView(battle,actor).dash : 0);
 export const moveLeft=(battle,actor)=>battle.sharedEnded?.[actor.id] ? 0 : Math.max(0,movementBudget(battle,actor)-
@@ -424,7 +427,7 @@ export function exploreToken(battle, actor, x, y, board, stopAt) {
   let distance = 0;
   for (const step of result.path) {
     advanceTime(battle,30/Math.max(5,speedOf(actor)));
-    actor.x = step.x; actor.y = step.y;
+    actor.x = step.x; actor.y = step.y;syncCarriedBody(battle,actor);
     travelled.push({x:step.x,y:step.y});
     distance = step.cost;
     // A route can cross friendly squares. The token must stop in a free square.
@@ -477,7 +480,7 @@ function walkRemaining(battle, actor, board) {
       return;
     }
     actor.x = next.x;
-    actor.y = next.y;
+    actor.y = next.y;syncCarriedBody(battle,actor);
     walk.index += 1;
     walk.passed = [];
     checkSpellTethers(battle,board);
@@ -630,6 +633,8 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false, ra
       }
     }
   }
+  if(actor.dead && before>0){actor.defeatedAt=Date.now();actor.finalBlow=source?.id;awardDefeatXP(battle,actor,source,log);}
+  if((actor.dead || actor.hp===0) && actor.carrying){const body=battle.actors.find(body=>body.id===actor.carrying);if(body){body.carriedBy=null;body.x=actor.x;body.y=actor.y;}actor.carrying=null;}
   return {damage, absorbed, defeated:actor.dead, unconscious:!actor.dead && actor.hp === 0 && before > 0};
 }
 
@@ -714,7 +719,7 @@ function resolveDeathSave(battle, actor, random) {
 }
 
 function validTarget(attacker, target, allowDown = true) {
-  if (!occupies(attacker) || !target || !occupies(target) || (!allowDown && !actorIsUp(target))) {
+  if (!occupies(attacker) || !target || target.dead || target.x==null || target.y==null || (!allowDown && !actorIsUp(target))) {
     error("Choose a target on the grid.");
   }
 }
@@ -1251,7 +1256,6 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
   if (effect.exhale) return exhaleBreath(battle,caster,options,random);
   const {level = 0, heal:healing} = effect;
   const timing = effect.bonus ? "bonus" : "action";
-  if (!battle.round && !effect.exploration) error("Enter combat to cast this spell.");
   checkCast(battle,caster,level,slotLevel,timing,usage,options.slotPool);
   const tier = 1 + [5,11,17].filter((threshold) => caster.level >= threshold).length;
   const square = options.square;
@@ -1410,8 +1414,49 @@ function resolvePotion(battle, actor, item, random) {
   if (!item || item.quantity <= 0 || !item.formula) error("Choose an available healing potion.");
   const amount = rollDice(item.formula, {random});
   if (battle.round) battle.action = "potion";
-  item.quantity -= 1;
+  item.quantity -= 1;consumePotionInventory(actor,item);
   const restored = heal(actor, amount.total);
   captureImpact(battle,actor,{amount:restored,healing:true});
   log(battle, actor.name + " uses " + item.name + " and regains " + restored + " HP (" + amount.breakdown + ").");
 }
+
+
+// BG3-style Help Up deliberately restores 1 HP rather than stabilizing at zero.
+export function helpUp(battle,actor,target,map) {
+  battle=turnView(battle,actor);
+  if(battle.round) {assertTurn(battle,actor);if(battle.action) error("This token has used its action.");}
+  else if(!actorIsUp(actor) || incapacitated(actor)) error("Choose a conscious helper.");
+  validTarget(actor,target);
+  if(target.side!==actor.side || target.dead || target.hp!==0) error("Choose a living, unconscious ally.");
+  if(distanceFt(actor,target)>5 || !lineClear(battle,actor,target,map)) error("Move within 5 feet of your ally with a clear path.");
+  return withActionEvent(battle,actor,{action:"Help Up",kind:"heal",target:target.name,targetActor:target.id},()=>{
+    if(battle.round) battle.action="help-up";
+    const restored=heal(target,1);target.prone=false;captureImpact(battle,target,{amount:restored,healing:true});
+    log(battle,actor.name+" helps "+target.name+" up to 1 HP.");
+  });
+}
+
+export function throwHealingPotion(battle,actor,target,item,map,random=Math.random) {
+  battle=turnView(battle,actor);
+  if(battle.round) {assertTurn(battle,actor);if(battle.action) error("This token has used its action.");}
+  else if(!actorIsUp(actor) || incapacitated(actor)) error("Choose a conscious thrower.");
+  validTarget(actor,target);
+  if(target.dead) error("Healing cannot revive a dead creature.");
+  if(distanceFt(actor,target)>30 || !lineClear(battle,actor,target,map)) error("Choose a target within 30 feet with a clear throwing path.");
+  if(!item || !(actor.potions ?? []).includes(item) || item.quantity<=0 || !item.formula) error("Choose an available healing potion.");
+  return withActionEvent(battle,actor,{action:"Throw "+item.name,kind:"heal",target:target.name,targetActor:target.id},()=>{
+    const amount=rollDice(item.formula,{random});if(battle.round) battle.action="throw-potion";item.quantity--;consumePotionInventory(actor,item);
+    const restored=heal(target,amount.total);captureImpact(battle,target,{amount:restored,healing:true});
+    log(battle,actor.name+" throws "+item.name+" to "+target.name+", restoring "+restored+" HP ("+amount.breakdown+").");
+  });
+}
+
+
+export function spendObjectAction(battle,actor,name){
+  battle=turnView(battle,actor);
+  if(battle.round){assertTurn(battle,actor);if(battle.action)error("This token has used its action.");battle.action=name;}
+  else if(!actorIsUp(actor)||incapacitated(actor))error("Choose a conscious character.");
+}
+function syncCarriedBody(battle,actor){const body=actor.carrying && battle.actors.find(body=>body.id===actor.carrying);if(body){body.x=actor.x;body.y=actor.y;}}
+
+function consumePotionInventory(actor,item){const stored=actor.items?.find(entry=>entry.name.toLowerCase()===item.name.toLowerCase());if(stored)stored.quantity=Math.max(0,(stored.quantity??0)-1);}

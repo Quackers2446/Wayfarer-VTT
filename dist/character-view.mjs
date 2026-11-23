@@ -258,7 +258,7 @@ export function fillSheetResults(character, section) {
   if (section === "inventory") {
     const items = character.items.map((item, index) => ({...item, originalIndex: index}))
       .filter((item) => item.name.toLowerCase().includes(query));
-    target.innerHTML = `<p class="sheet-result-count" role="status">${plural(items.length, "item")}</p>` +
+    target.innerHTML = `<dl class="sheet-slot-summary sheet-currency" aria-label="Coins">${["cp","sp","ep","gp","pp"].map(unit=>`<div><dt>${unit.toUpperCase()}</dt><dd>${text(character.currency?.[unit] ?? 0)}</dd></div>`).join("")}</dl><p class="sheet-result-count" role="status">${plural(items.length, "item")}</p>` +
       (items.length ? `<table class="inventory-table">
         <thead><tr><th scope="col">Item</th><th scope="col">Qty</th><th scope="col">Weight</th><th scope="col" style="width:75px; text-align:center;">Actions</th></tr></thead>
         <tbody>${items.map((item) => {

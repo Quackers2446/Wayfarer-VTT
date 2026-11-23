@@ -61,3 +61,12 @@ export function engageEnemy(battle, map, actor, enemy, noticed = false, random =
     ? enemy.name + " spotted " + actor.name + ". Initiative rolled."
     : actor.name + " engaged " + enemy.name + ". Initiative rolled.";
 }
+
+
+// Keep the party in combat while anyone (including a downed ally) is still nearby.
+export function partyEscaped(battle) {
+  if(!battle.round || battle.movement || battle.classReaction) return false;
+  const party=battle.actors.filter(actor=>actor.side==='party' && !actor.dead && occupies(actor));
+  const enemies=battle.actors.filter(actor=>hostile(actor) && battle.order.includes(actor.id));
+  return party.length>0 && enemies.length>0 && party.every(ally=>enemies.every(enemy=>distanceFt(ally,enemy)>90));
+}

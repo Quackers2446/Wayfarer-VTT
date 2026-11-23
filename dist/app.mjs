@@ -1,5 +1,6 @@
 import {mountCharacterBuilder} from './character-builder.mjs';
-import {setGameTokenImage, showPlay} from "./play.mjs";
+import {syncCharacterTokenRooms} from "./token-room-sync.mjs";
+import {setGameTokenImage, syncLocalCharacterToken, showPlay} from "./play.mjs";
 import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
 import {localTokenBlob, paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
@@ -385,7 +386,8 @@ document.addEventListener("wayfarer:inspect", (event) => {
     tokenImage:actor.tokenImage, tokenSession:actor.tokenSession, gameActorId:actor.side === "party" ? actor.id : undefined,
     spellDC:actor.spellDC, spellAttack:actor.spellAttack, spellSlots:actor.slots,
     attacks:actor.attacks,resources:actor.resources,classRules:actor.classRules,
-    items:(imported?.items ?? []).map((item) => ({...item,quantity:potions.get(item.name) ?? item.quantity})),
+    xp:actor.xp ?? imported?.xp,currency:actor.currency ?? imported?.currency,
+    items:(actor.items ?? imported?.items ?? []).map((item) => ({...item,quantity:potions.get(item.name) ?? item.quantity})),
   });
 });
 
@@ -410,7 +412,11 @@ async function applyCharacterToken(source, character, image) {
       else delete local.tokenImage;
       saved = save();
     }
-    const message = !saved ? "Token changed for this visit. Browser storage is unavailable." : image ? "Token saved." : "Token removed.";
+    const tokenCharacterId=character.gameActorId ?? character.id;
+    syncLocalCharacterToken(tokenCharacterId,image);
+    const tokenSyncFailures=await syncCharacterTokenRooms(tokenCharacterId,image,{exclude:character.tokenSession});
+    const syncNote=tokenSyncFailures.length ? " Some rooms could not be reached. Retry the token update to sync them." : " Token synced to your adventure rooms.";
+    const message = !saved ? "Token changed for this visit. Browser storage is unavailable." : (image ? "Token saved." : "Token removed.")+syncNote;
     if (character.gameActorId) {
       document.dispatchEvent(new Event("wayfarer:character-token"));
       if (gameSheet === view && dialog.open) {
@@ -681,7 +687,7 @@ function updateActiveCharacter(targetElement, mutator) {
   return true;
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const control = event.target.closest("[data-action]");
   if (!control) return;
   const {action, id, index} = control.dataset;

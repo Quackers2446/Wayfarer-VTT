@@ -74,7 +74,7 @@ export function gameScreen({
         ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"${shared ?
           ` data-online="${online}" aria-label="Session" aria-description="${online} ${online === 1 ? "player" : "players"} online"` : ""}`)}
         ${button("Party","users","game-party",`aria-pressed="${partyOpen}"`)}
-        ${shared ? button("Chat","chat","game-chat",`aria-pressed="${chatOpen}"`) : ""}
+        ${button("Chat","chat","game-chat",`aria-pressed="${chatOpen}"`)}
         ${button("Story","book","game-story",`aria-pressed="${storyOpen}"`)}
         ${button("Log","book","game-log",`aria-pressed="${logOpen}"`)}
         ${button("Tools","map","game-tools",`aria-pressed="${toolsOpen}"`)}
@@ -107,7 +107,7 @@ export function gameScreen({
       </div>
       <div class="game-social-dock" aria-label="Messages and activity">
         <div class="game-activity-home" data-activity-placement="${eventLogPlacement}">${activityLog(logHistory,eventLogMode)}</div>
-        ${shared ? '<div class="game-chat-slot"></div>' : ""}
+        <div class="game-chat-slot"></div>
       </div>
     </div>
     <footer class="game-hud" aria-busy="${busy}">
@@ -127,7 +127,7 @@ export function gameScreen({
       </div>
       <div class="game-hud-body">
         ${canAct && !battle.movement && !movingEarly && !reacting && selected?.hp>0 ? hotbar : ''}
-        <div class="game-action-content"${actionPanelOpen ? ' role="region" aria-label="Selected action controls"' : ' hidden'}>
+        <div class="game-action-content"${actionPanelOpen && (rescueAvailable || actions?.trim?.()) ? ' role="region" aria-label="Selected action controls"' : ' hidden'}>
           ${rescueAvailable ? button("Free Sildar","users","rescue-sildar") : ""}
           ${actions}
         </div>

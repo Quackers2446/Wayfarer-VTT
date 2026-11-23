@@ -36,7 +36,7 @@ export function createTokenMotion(onFrame,now=()=>performance.now(),reduced=()=>
           if(!same(points.at(-1),destination)) points.push(destination);
           const route=points.filter((p,i)=>!i || !same(p,points[i-1]));
           if(moves.length && actor.hp>0 && !actor.dead && !reduced() && route.length>1) {
-            const duration=Math.min(2200,Math.max(180,(route.length-1)*(actor.side==='party' ? 160 : 190)));
+            const duration=Math.min(old ? 650 : 1800,Math.max(180,(route.length-1)*(actor.side==='party' ? 160 : 190)));
             tracks.set(actor.id,{points:route,started:time,duration});positions.set(actor.id,route[0]);
           } else {tracks.delete(actor.id);positions.set(actor.id,destination);}
           if(moves.length) {

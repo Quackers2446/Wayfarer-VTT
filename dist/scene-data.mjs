@@ -79,7 +79,8 @@ function markerSpecs(snippet) {
     if (kind !== "item" && !/\b(?:in this room|here|contains?|trap|hazard|room|floor|door|fil(?:l|led)|coats?|cover\w*|stands?|lurks?|locked|sits?|hidden|attack\w*|animatronic|statue|mounted|bolted|set into)\b/i.test(text)) continue;
     const type = kind==="item" ? "treasure" : kind;
     const hidden = type==="trap" || /\b(?:hidden|concealed|secret|locked|buried|search)\b/i.test(text+" "+headings.join(" "));
-    markers.push({type,name:kind==="item" ? "Treasure" : display || name,detail:text,hidden});
+    const quantity=countBefore(before).count ?? 1;
+    markers.push({type,name:display || name,detail:text,hidden,...(kind==='item'?{items:[{name:display || name,reference:(match[3] || 'DMG').toLowerCase()+'|'+name.toLowerCase(),quantity}]}:{})});
   }
   return markers;
 }
@@ -92,6 +93,21 @@ export function automaticRoom(region, mappedIds) {
       const key = ruleKey(spec.name)+"|"+spec.source.toLowerCase();
       const previous = creatures.get(key);
       if (!previous || spec.count>previous.count) creatures.set(key,spec);
+    }
+    const treasureSection=snippet.headings.some(heading=>/treasure|loot/i.test(heading));
+    if(treasureSection && !carried.test(snippet.text) && !conditional.test(snippet.text)){
+      const currency={};for(const match of snippet.text.matchAll(/([\d,]+)\s*(cp|sp|ep|gp|pp)\b/gi)){
+        const prefix=snippet.text.slice(Math.max(0,match.index-30),match.index);if(/worth|valued|value|sell|cost|price/i.test(prefix))continue;
+        const unit=match[2].toLowerCase();currency[unit]=(currency[unit]??0)+Number(match[1].replaceAll(',',''));
+      }
+      if(Object.keys(currency).length){const key='coins|'+snippet.text;markers.set(key,{type:'treasure',name:'Coins',detail:snippet.text,items:[],lootCurrency:currency,hidden:/hidden|concealed|locked|buried/i.test(snippet.text)});}
+    }
+    if(treasureSection && !carried.test(snippet.text) && !conditional.test(snippet.text) && !/\{@item/.test(snippet.text)){
+      const valuables=[];
+      for(const match of snippet.text.matchAll(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a|an)\s+((?:(?:small|large|silver|gold|golden|jeweled|carved|ivory|jade)\s+){0,3}(?:gemstones?|gems?|pearls?|diamonds?|emeralds?|sapphires?|rubies|rings?|necklaces?|bracelets?|combs?|art objects?))\b/gi)){
+        const amount=match[1].toLowerCase(),quantity=Number(amount)||Math.max(1,countWords.indexOf(amount)+1);valuables.push({name:match[2],quantity,notes:snippet.text});
+      }
+      if(valuables.length)markers.set('valuables|'+snippet.text,{type:'treasure',name:'Valuables',detail:snippet.text,items:valuables,hidden:/hidden|concealed|locked|buried/i.test(snippet.text)});
     }
     for (const marker of markerSpecs(snippet)) {
       const key = marker.type+"|"+ruleKey(marker.name);

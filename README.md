@@ -138,3 +138,15 @@ The physics check covers every result on all six standard dice, mixed pools, and
 - Bundles third-party libraries: SheetJS ([license](dist/assets/sheetjs-license.txt)) and JSZip ([license](dist/assets/jszip-license.txt)).
 - Built-in illustrations come from the original 5etools publication references, with no generated artwork. [Artwork sources](dist/assets/artwork-sources.json) records each local data reference, image path, and SHA-256. The build rejects unlisted or modified raster artwork. The supplied release omits image binaries, so the matching source images are fetched once and bundled unchanged.
 - Typography: DM Sans and Playfair Display under the SIL Open Font License.
+
+Activity can appear as system messages in the party chat timeline using **Include activity log**, or as a separate panel through **Tools → Activity log**. Expanding the separate panel does not reposition party portraits. The chat timeline reuses visibility-filtered, roll-paced activity entries and preserves the reader’s scroll position.
+
+### World interactions and movement rendering
+
+The play screen renders map scenery and moving tokens on separate canvases. Animation frames reuse the prepared scene instead of recomputing visibility, artwork and UI; validated movement starts before the multiplayer save completes, and stale saves still roll back through revision checks. Shared-room polling speeds up during combat and recent activity.
+
+`Interact` groups corpse loot, carrying, placement and throwing in one contextual menu. Potions and throwable weapons expose use choices beneath one item icon. Loot and currency persist in the room actor and its shared character sheet. Only explicit source equipment, tagged treasure, listed coins and recognized valuables become pickups; missing monster loot is not invented. Existing rooms gain supported treasure metadata without resetting encounters. Monster equipment/CR metadata comes from the local 5etools bestiary; regenerate with `python scripts/build-monster-rewards.py`.
+
+Defeated hostiles award their CR XP once to initiative participants, splitting integer remainders deterministically. The finisher receives an additional 20% of their own share, rounded down. Bodies remain on the map. Carrying uses Strength/size capacity and halves speed; unspecified body weights use size estimates. Pickup and throwing cost an action in combat; placement within 5 feet is free. Throws reach 20 feet and deal 1d4 impact damage to the body; targeting a creature uses an improvised Strength attack, with a free adjacent landing space required. Healing a carried creature releases them when an adjacent space is available.
+
+Focused rules verification: `node scripts/test-world-interactions.mjs`.

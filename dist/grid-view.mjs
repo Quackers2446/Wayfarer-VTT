@@ -145,14 +145,7 @@ function drawToken(c,map,actor,portrait,highlight) {
     c.strokeStyle = actor.dead ? "#efe6d1" : "#efe6c7";
     c.stroke();
     if (actor.dead) {
-      const half = map.size*.077;
-      c.beginPath();
-      c.moveTo(bx-half,by-half);
-      c.lineTo(bx+half,by+half);
-      c.moveTo(bx+half,by-half);
-      c.lineTo(bx-half,by+half);
-      c.lineWidth = map.size*.046;
-      c.stroke();
+      c.font='700 '+map.size*.30+'px system-ui';c.fillStyle='#eee0c9';c.fillText('☠',bx,by);
     } else {
       c.font = "700 " + map.size*.19 + "px system-ui";
       c.fillStyle = "#fff9e8";
@@ -161,20 +154,25 @@ function drawToken(c,map,actor,portrait,highlight) {
   }
 }
 
-export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, tokenPositions, movementLabels, overlay = "artwork", wallEditor}) {
+const backgroundFrames=new WeakMap();
+export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, tokenPositions, movementLabels, overlay = "artwork", wallEditor,backgroundKey}) {
   // Match the display density while keeping the backing buffer bounded by the visible area.
   const ratio = rasterPixelRatio(view.width,view.height,view.ratio);
   const pixelsWide = Math.max(1,Math.floor(view.width*ratio));
   const pixelsHigh = Math.max(1,Math.floor(view.height*ratio));
   if (canvas.width !== pixelsWide) canvas.width = pixelsWide;
   if (canvas.height !== pixelsHigh) canvas.height = pixelsHigh;
-  const c = canvas.getContext("2d");
+  let c = canvas.getContext("2d");
   const mapScaleX = view.mapWidth/map.width, mapScaleY = view.mapHeight/map.height;
   const rasterScaleX = pixelsWide/view.width, rasterScaleY = pixelsHigh/view.height;
   const left = view.x/mapScaleX, top = view.y/mapScaleY;
   const width = view.width/mapScaleX, height = view.height/mapScaleY;
   c.save();
   c.setTransform(rasterScaleX*mapScaleX,0,0,rasterScaleY*mapScaleY,-view.x*rasterScaleX,-view.y*rasterScaleY);
+  const cached=backgroundFrames.get(canvas),viewKey=[view.x,view.y,view.width,view.height,view.mapWidth,view.mapHeight,ratio].join(':');
+  const layered=backgroundKey && canvas.parentElement;
+  const reuse=layered && cached?.key===backgroundKey && cached.viewKey===viewKey;
+  if(!reuse){
   c.fillStyle = "#1f2b24";
   c.fillRect(left,top,width,height);
   c.imageSmoothingQuality = "high";
@@ -278,7 +276,18 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
     c.fillText({treasure:"◆",object:"◈",hazard:"!",trap:"!",creature:"?"}[marker.type] ?? "·",x,y);
   }
 
-  const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
+  }
+  c.restore();
+  if(layered){
+    const overlay=cached?.overlay ?? document.createElement('canvas');
+    if(!cached?.overlay){overlay.className='board-raster board-token-layer';overlay.setAttribute('aria-hidden','true');canvas.parentElement.append(overlay);}
+    overlay.style.cssText=canvas.style.cssText;
+    if(overlay.width!==canvas.width)overlay.width=canvas.width;if(overlay.height!==canvas.height)overlay.height=canvas.height;
+    c=overlay.getContext('2d');c.clearRect(0,0,overlay.width,overlay.height);c.imageSmoothingQuality='high';
+    backgroundFrames.set(canvas,{key:backgroundKey,viewKey,overlay});
+  }else if(cached){cached.overlay?.remove();backgroundFrames.delete(canvas);}
+  c.save();c.setTransform(rasterScaleX*mapScaleX,0,0,rasterScaleY*mapScaleY,-view.x*rasterScaleX,-view.y*rasterScaleY);
+  const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).filter(actor=>!actor.carriedBy).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
   // Living tokens appear on top when they move through a defeated creature's square.
   for (const actor of tokens.filter(defeatedCreature)) drawToken(c,map,actor,tokenImages?.get(actor.id));
   for (const actor of tokens.filter(occupies)) drawToken(c,map,actor,tokenImages?.get(actor.id),

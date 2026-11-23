@@ -65,13 +65,14 @@ export function createDiceTheatre() {
   const panel=document.createElement('section');panel.className='dice-theatre';panel.setAttribute('aria-label','Dice roll');
   panel.innerHTML='<div class="dice-heading"><div><small></small><strong></strong></div><button type="button" class="dice-skip" aria-label="Skip animation" title="Skip animation">Skip</button></div><canvas aria-hidden="true"></canvas><div class="dice-tallies" aria-live="polite"></div>';
   let canvas=panel.querySelector('canvas');const tallies=panel.querySelector('.dice-tallies');
-  let frame,finish,active,started,phaseStarted,scene,ctx,attempted=false,generation=0,dice=[],width=1,height=1,duration=0,quiet=false,pace=1;
+  let frame,finish,active,started,phaseStarted,scene,ctx,attempted=false,generation=0,dice=[],width=1,height=1,duration=0,quiet=false,pace=1,hasMorePending=false;
   let fallbackTable,viewportInsets={};
   let enabled=true;
   try {enabled=localStorage.getItem('wayfarer-dice-fx')!=='off';} catch {}
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 
   function stop() {
+    hasMorePending=false;
     generation++;cancelAnimationFrame(frame);panel.remove();scene?.clear();
     const done=finish;finish=undefined;active=undefined;done?.();
   }
@@ -117,11 +118,16 @@ export function createDiceTheatre() {
         height/2+((Math.floor(i/columns)-(rows-1)/2)*radius*2.7-view.z)*view.scale,radius*view.scale));
     }
     const phase=panel.dataset.phase;
+    const party=active.side==='party';
+    const naturalWait=party ? 220 : 160;
+    const modifierWait=party ? 250 : 180;
+    const totalWait=hasMorePending ? (party ? 350 : 250) : (party ? 650 : 450);
+    const quietWait=hasMorePending ? (party ? 1200 : 900) : (party ? 1700 : 1200);
     if(quiet) tally('total');
     else if(phase==='rolling' && elapsed>=duration) {tally('natural');phaseStarted=now;}
-    else if(phase==='natural' && now-phaseStarted>=(active.side==='party' ? 700 : 500)) {tally('modifier');phaseStarted=now;}
-    else if(phase==='modifier' && now-phaseStarted>=(active.side==='party' ? 750 : 600)) {tally('total');phaseStarted=now;}
-    if(quiet ? elapsed>(active.side==='party' ? 3000 : 2000) : panel.dataset.phase==='total' && now-phaseStarted>(active.side==='party' ? 1600 : 1100)) stop();else frame=requestAnimationFrame(animate);
+    else if(phase==='natural' && now-phaseStarted>=naturalWait) {tally('modifier');phaseStarted=now;}
+    else if(phase==='modifier' && now-phaseStarted>=modifierWait) {tally('total');phaseStarted=now;}
+    if(quiet ? elapsed>quietWait : panel.dataset.phase==='total' && now-phaseStarted>totalWait) stop();else frame=requestAnimationFrame(animate);
   }
 
   async function begin(token) {
@@ -136,7 +142,7 @@ export function createDiceTheatre() {
     }
     if(token!==generation || !active) return;
     quiet=!enabled || reduced.matches || !scene || !dice.some(die=>diceModel(die.faces));resize();
-    try {pace=active.side==='party' ? 1.2 : 1.08;duration=(scene ? scene.prepare(dice,quiet) : 0)*pace;}
+    try {pace=active.side==='party' ? 1.05 : 0.95;duration=(scene ? scene.prepare(dice,quiet) : 0)*pace;}
     catch {
       scene?.dispose();scene=undefined;quiet=true;duration=0;
       const replacement=canvas.cloneNode();canvas.replaceWith(replacement);canvas=replacement;ctx=canvas.getContext('2d');canvas.dataset.renderer='canvas';canvas.dataset.projection='orthographic-overhead';resize();
@@ -150,9 +156,16 @@ export function createDiceTheatre() {
   window.visualViewport?.addEventListener('resize',()=>{if(active) resize();});
   return {
     get enabled() {return enabled;},
+    get isPlaying() {return Boolean(active);},
     toggle() {enabled=!enabled;try {localStorage.setItem('wayfarer-dice-fx',enabled ? 'on' : 'off');}catch{}return enabled;},
-    play(event,done) {
-      stop();active=event;finish=done;
+    expedite() {
+      if(!active) return;
+      hasMorePending=true;
+      if(panel.dataset.phase==='total') stop();
+      else if(panel.dataset.phase) tally('total');
+    },
+    play(event,done,hasMore=false) {
+      stop();active=event;finish=done;hasMorePending=Boolean(hasMore);
       panel.querySelector('.dice-heading small').textContent=event.name;panel.querySelector('.dice-heading strong').textContent=event.action;
       delete panel.dataset.phase;document.body.append(panel);
       dice=visualDice(event.rolls);
