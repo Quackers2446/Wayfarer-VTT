@@ -181,4 +181,11 @@ assert(clericActor.spells.some(s => s.name === 'Healing Word' && s.prepared), 'H
   assert.ok(preparedChoice?.options?.some(o => o.name === 'Absorb Elements'), 'Druid prepared spells must include Absorb Elements (XGE)');
 }
 
+// Verify title and describeEquipment do not capitalize possessive 's
+import {describeEquipment} from '../dist/character-builder-rules.mjs';
+assert.equal(describeEquipment("dungeoneer's pack|phb"), "Dungeoneer's Pack", 'Possessive s must remain lowercase in Dungeoneer\'s Pack');
+assert.equal(describeEquipment("explorer's pack|phb"), "Explorer's Pack", 'Possessive s must remain lowercase in Explorer\'s Pack');
+assert.equal(describeEquipment({item: "dungeoneer's pack|phb"}), "Dungeoneer's Pack");
+assert.equal(describeEquipment("thieves' tools|phb"), "Thieves' Tools");
+
 console.log('Prepared spells metadata enrichment, level grouping (tabs), tags, and actor preparation verified.');

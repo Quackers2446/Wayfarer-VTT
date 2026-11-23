@@ -4,7 +4,7 @@ import {sourceProficiencies,sourceAllowed,skillAbilities} from './class-choice-r
 import {additionalSpellChoices} from './class-spell-choices.mjs';
 export const abilities=['str','dex','con','int','wis','cha'];
 export const builderId=r=>(r.name+'|'+r.source).toLowerCase();
-export const title=s=>String(s).replace(/\b\w/g,c=>c.toUpperCase());
+export const title=s=>String(s).replace(/(^|[\s(-])([a-z])/g,(_,p,c)=>p+c.toUpperCase());
 export const plain=s=>String(s??'').replace(/\{@\w+ ([^}]+)\}/g,(_,v)=>v.split('|').at(-1)||v.split('|')[0]);
 let loading;
 export const loadBuilderData=()=>loading??=Promise.all([fetch('character-builder-data.json').then(r=>{if(!r.ok)throw Error('Character builder data could not be loaded.');return r.json();}),fetch('character-rules.json').then(r=>r.json()),loadCharacterRules(),loadRules()]).then(([creation,features])=>({...creation,features}));
@@ -32,7 +32,7 @@ export function startingEquipment(draft,db,cls,background){
  const merged=new Map();for(const item of items){const key=(item.reference??builderId({...item,source:item.source??''})).toLowerCase();const old=merged.get(key);merged.set(key,{...item,quantity:(old?.quantity??0)+item.quantity});}
  return {groups,items:[...merged.values()],selectors,problems,copper};
 }
-export function describeEquipment(entry){if(typeof entry==='string')return title(entry.split('|')[0]);if(entry.value)return entry.value/100+' gp';return (entry.quantity>1?entry.quantity+' × ':'')+plain(entry.displayName??entry.item?.split('|')[0]??entry.special??equipmentTypeNames[entry.equipmentType]??'Equipment');}
+export function describeEquipment(entry){if(typeof entry==='string')return title(entry.split('|')[0]);if(entry.value)return entry.value/100+' gp';const name=entry.displayName??(entry.item?title(entry.item.split('|')[0]):null)??entry.special??equipmentTypeNames[entry.equipmentType]??'Equipment';return (entry.quantity>1?entry.quantity+' × ':'')+plain(name);}
 export function buildCharacter(draft,db){
  let species=db.species.find(c=>builderId(c)===draft.speciesId);
  if(!species){
