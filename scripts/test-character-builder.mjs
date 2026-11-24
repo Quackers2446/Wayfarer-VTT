@@ -189,3 +189,6 @@ assert.equal(describeEquipment({item: "dungeoneer's pack|phb"}), "Dungeoneer's P
 assert.equal(describeEquipment("thieves' tools|phb"), "Thieves' Tools");
 
 console.log('Prepared spells metadata enrichment, level grouping (tabs), tags, and actor preparation verified.');
+const describedSpell=structuredClone(w24.raw);describedSpell.spells=[{name:'Fireball (A description selected from the source.)',level:3,prepared:true,source:'XPHB'}];
+assert.equal(partyActor(describedSpell).spells.find(spell=>spell.name==='Fireball')?.reference,'xphb|fireball','Source-selected spells with description notes retain the chosen edition in play');
+console.log('Manually added spell source stays accurate when the sheet includes description notes.');

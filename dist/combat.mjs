@@ -376,8 +376,11 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, score,
   const occupied=(col,row)=>others.some(other=>overlaps({...actor,x:col,y:row},other));
   if(x!=null && y!=null && !canStand(battle,actor,x,y,board)) error('That space is blocked or occupied.');
   if (blockers.has(destination)) error("Another token occupies that square.");
-  const known = new Map([[origin, 0]]);
-  const pending = [{x:actor.x, y:actor.y, cost:0, previous:null}];
+  // Spend the fewest feet first. At equal cost, favor cardinal steps and fewer bends.
+  const compare=(a,b)=>a.cost-b.cost||a.diagonals-b.diagonals||a.bends-b.bends;
+  const start={x:actor.x,y:actor.y,cost:0,diagonals:0,bends:0,dx:0,dy:0,previous:null};
+  const known = new Map([[origin,start]]);
+  const pending = [start];
   let best = pending[0];
   const trace = (cell) => {
     const path = [];
@@ -386,14 +389,13 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, score,
   };
   let nextUnvisited = 0;
   while (exploration ? nextUnvisited < pending.length : pending.length) {
-    if (!exploration) pending.sort((a,b) => b.cost - a.cost);
+    if (!exploration) pending.sort((a,b) => compare(b,a));
     const cell = exploration ? pending[nextUnvisited++] : pending.pop();
     const here = keyAt(cell.x, cell.y);
-    if (cell.cost !== known.get(here)) continue;
+    if (cell !== known.get(here)) continue;
     if (here === destination || (goal && !occupied(cell.x,cell.y) && goal({...actor,...cell}))) return trace(cell);
     if (score && !occupied(cell.x,cell.y) && score({...actor,...cell}) > score({...actor,...best})) best = cell;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
+    for (const [dx,dy] of [[1,0],[0,1],[-1,0],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
         const col = cell.x + dx;
         const row = cell.y + dy;
         const next = keyAt(col,row);
@@ -404,10 +406,10 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, score,
         if (crossed.some(other=>other.side!==actor.side && Math.abs(sizeRank(other)-sizeRank(actor))<2)) continue;
         const difficult = actorCells({...actor,x:col,y:row}).some(c=>battle.terrain[keyAt(c.x,c.y)]==='difficult'||battle.spellZones?.some(zone=>zone.difficult&&zone.cells.includes(keyAt(c.x,c.y)))) || crossed.length>0;
         const cost = cell.cost + (exploration ? 5 : (difficult ? 10 : 5) + (actor.prone ? 5 : 0));
-        if (cost > budget || cost >= (known.get(next) ?? Infinity)) continue;
-        known.set(next, cost);
-        pending.push({x:col, y:row, cost, previous:cell});
-      }
+        const step={x:col,y:row,cost,diagonals:cell.diagonals+(dx&&dy?1:0),bends:cell.bends+(cell.previous&&(cell.dx!==dx||cell.dy!==dy)?1:0),dx,dy,previous:cell};
+        if (cost > budget || known.has(next)&&compare(step,known.get(next))>=0) continue;
+        known.set(next,step);
+        pending.push(step);
     }
   }
   return score ? trace(best) : null;
@@ -1018,7 +1020,7 @@ export const supportedSpell = (key,rules) => customSpellEffect(key,rules) ?? (Ob
 export const spellTargetCount = (effect,casterLevel,rank) => effect.moreTargets ? 1+Math.max(0,rank-effect.level) :
   effect.missiles ? 2+rank : effect.beams ? 1+[5,11,17].filter((limit) => casterLevel >= limit).length : effect.aid ? 3 : 1;
 
-function breakInvisibility(battle,actor) {
+export function breakInvisibility(battle,actor) {
   removeCondition(actor,condition(actor,"Hidden"));
   const effect = condition(actor,"Invisible");
   if (!effect) return;

@@ -61,7 +61,8 @@ export async function saveTokenImage(file) {
 const tokenURL = (session,id) => `/api/sessions/${session}/tokens/${id}`;
 
 export async function localTokenBlob(id) {
-  const blob = await storedImage(id);
+  let blob = await storedImage(id);
+  if(!blob){const response=await fetch('/api/account/tokens/'+id);if(response.ok){blob=await response.blob();await storedImage(id,blob);}}
   if (!blob) throw new Error("Choose the character’s token image again to share it.");
   return blob;
 }
@@ -89,6 +90,7 @@ function portraitEntry(id, session) {
       const response = await fetch(tokenURL(session,id),{signal:AbortSignal.timeout(12000)});
       if (response.ok) blob = await response.blob();
     }
+    if(!blob){const response=await fetch('/api/account/tokens/'+id,{signal:AbortSignal.timeout(12000)});if(response.ok){blob=await response.blob();await storedImage(id,blob);}}
     if (blob) entry.artwork = {image:await decodeImage(blob),path:id,type:"character"};
     return entry.artwork;
   })().catch(() => undefined).then((artwork) => {

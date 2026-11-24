@@ -1,3 +1,4 @@
+import {accounts} from './accounts.mjs';
 import {validRuleSet} from './spell-rule-schema.mjs';
 import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';
 const api = "/api/sessions";
@@ -51,7 +52,7 @@ const sceneKeys=new Set(['terrain','markers','wallData','wallRevision','fogMemor
 function validState(state) {
   const battle = state?.battle;
   const alignment = state?.alignment;
-  return validRoom(state?.room) && (battle?.spellRules==null || validRuleSet(battle.spellRules)) && (state.currentMap==null || validMap(state.currentMap)) &&
+  return record(state) && validRoom(state?.room) && (battle?.spellRules==null || validRuleSet(battle.spellRules)) && (state.currentMap==null || validMap(state.currentMap)) &&
     (state.world==null || state.currentMap && record(state.world) && state.world.version===1 && record(state.world.maps) && Object.keys(state.world.maps).length<=128 && Object.values(state.world.maps).every(scene=>record(scene) && scene.battle==null && scene.actors==null && (scene.map==null || validMap(scene.map)) && (scene.environment==null || record(scene.environment) && Object.keys(scene.environment).every(key=>sceneKeys.has(key)) && validWalls(scene.environment.wallData)))) && record(battle) && Array.isArray(battle.actors) && battle.actors.length <= 500 &&
     battle.actors.every((actor) => record(actor) && typeof actor.id === "string" && typeof actor.name === "string" &&
       validVision(actor.vision) && [actor.hp,actor.maxHp,actor.ac,actor.speed].every(Number.isFinite) && ["party","hostile","neutral"].includes(actor.side) &&
@@ -61,6 +62,7 @@ function validState(state) {
       [actor.x,actor.y].every((value) => value == null || Number.isInteger(value)) &&
       [actor.attacks,actor.spells].every(Array.isArray) && record(actor.slots)) &&
     Array.isArray(battle.order) && battle.order.every((id) => typeof id === "string") &&
+    (battle.controllers==null || record(battle.controllers)&&Object.keys(battle.controllers).length<=4&&Object.entries(battle.controllers).every(([id,controller])=>battle.actors.some(actor=>actor.id===id&&actor.side==='party')&&typeof controller==='string'&&uuid.test(controller))) &&
     validWalls(battle.wallData) && validFogSettings(battle.fogSettings) &&
     (battle.fogEnabled==null || typeof battle.fogEnabled==='boolean') &&
     (battle.fogMemoryByActor==null || record(battle.fogMemoryByActor) && Object.keys(battle.fogMemoryByActor).length<=500 && Object.entries(battle.fogMemoryByActor).every(([id,m])=>battle.actors.some(a=>a.id===id && a.side==='party') && record(m) && validFogMemory(m))) &&
@@ -201,6 +203,7 @@ async function create(request, env) {
   }
   const id = crypto.randomUUID();
   const owner=await newRoomOwner(request);
+  const account=await accounts.identity(request,env);
   const uploaded = [];
   try {
     if (artwork) {
@@ -214,6 +217,7 @@ async function create(request, env) {
     }
     await env.DB.prepare("INSERT INTO game_sessions (id,map,state,artwork_type,owner_key_hash) VALUES (?,?,?,?,?)")
       .bind(id,map,state,artwork?.type ?? null,owner.hash).run();
+    if(account)await accounts.addRoom(env,account,id,true);
   } catch (error) {
     await Promise.allSettled(uploaded.map((key) => imageStore(env).delete(key)));
     throw error;
@@ -241,7 +245,10 @@ async function update(request, env, id) {
   if (!Number.isSafeInteger(input?.revision) || input.revision < 0 || !validState(input.state)) {
     return fail(400,"The update was invalid.");
   }
-  const metadata=await env.DB.prepare("SELECT json_extract(state,'$.room') AS room,json_extract(map,'$.module') AS adventure,json_extract(state,'$.world.version') AS worldVersion,json_extract(state,'$.currentMap.key') AS currentMapKey,json_extract(state,'$.battle.round') AS round FROM game_sessions WHERE id=?").bind(id).first();
+  const metadata=await env.DB.prepare("SELECT json_extract(state,'$.room') AS room,json_extract(map,'$.module') AS adventure,json_extract(state,'$.world.version') AS worldVersion,json_extract(state,'$.currentMap.key') AS currentMapKey,json_extract(state,'$.battle.controllers') AS controllers,json_extract(state,'$.battle.round') AS round FROM game_sessions WHERE id=?").bind(id).first();
+  const beforeControllers=metadata?.controllers?JSON.parse(metadata.controllers):{},afterControllers=input.state.battle.controllers??{};
+  const changedIds=[...new Set([...Object.values(beforeControllers),...Object.values(afterControllers)])].filter(value=>typeof value==='string');
+  if(changedIds.length){const protectedIds=await env.DB.prepare('SELECT id FROM account_users WHERE id IN ('+changedIds.map(()=>'?').join(',')+')').bind(...changedIds).all();if(protectedIds.results.length){const account=await accounts.identity(request,env);for(const actorId of new Set([...Object.keys(beforeControllers),...Object.keys(afterControllers)])){if(beforeControllers[actorId]===afterControllers[actorId])continue;if(protectedIds.results.some(row=>(row.id===beforeControllers[actorId]||row.id===afterControllers[actorId])&&row.id!==account?.id))return fail(403,'Only that signed-in player can change their character claim.');}}}
   if(metadata?.worldVersion===1 && input.state.world?.version!==1){const current=await env.DB.prepare('SELECT state,revision FROM game_sessions WHERE id=?').bind(id).first();return reply({state:JSON.parse(current.state),revision:current.revision,message:'Reload this room to use its adventure-wide save.'},409);}
   if(metadata?.round>0 && input.state.currentMap && metadata.currentMapKey && input.state.currentMap.key!==metadata.currentMapKey)return fail(400,'Finish combat before changing maps.');
   if(input.state.currentMap && metadata?.adventure && input.state.currentMap.module!==metadata.adventure)return fail(400,"Choose a map from this room’s adventure.");
@@ -266,10 +273,13 @@ async function sessionPlayers(request, env, id) {
   if (!raw) return fail(413,"The username is too long.");
   let input;
   try {input = JSON.parse(await raw.text());} catch {return fail(400,"The player details could not be read.");}
+  const account=await accounts.identity(request,env);
   const controller = input?.controller;
+  if(account && controller!==account.id)return fail(403,"Reload Wayfarer to use your signed-in profile.");
+  if(!account && await env.DB.prepare("SELECT id FROM account_users WHERE id=?").bind(controller??"").first())return fail(403,"Sign in to use this player profile.");
   if (typeof controller !== "string" || !uuid.test(controller)) return fail(400,"The player ID was invalid.");
-  const choosingName = input.username !== undefined;
-  const name = typeof input.username === "string" ? input.username.normalize("NFKC").trim() : "";
+  const choosingName = input.username !== undefined || Boolean(account);
+  const name = typeof input.username === "string" ? input.username.normalize("NFKC").trim() : account?.display_name ?? "";
   if (choosingName && (!name || name.length > 24 || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name))) {
     return fail(400,"Enter a username of up to 24 characters.");
   }
@@ -291,6 +301,7 @@ async function sessionPlayers(request, env, id) {
   }
   const {results} = await env.DB.prepare(`SELECT controller AS id, username, last_seen FROM session_players
     WHERE session_id=? ORDER BY joined_at, controller`).bind(id).all();
+  if(account)await accounts.addRoom(env,account,id);
   const players = results.map(({id,username,last_seen}) => ({id,username,online:now - last_seen < 60000}));
   return reply({player:player.username,players});
 }
@@ -323,6 +334,8 @@ async function sessionChat(request, env, id, after) {
   }
   const row = await env.DB.prepare("SELECT state FROM game_sessions WHERE id=?").bind(id).first();
   if (!row) return fail(404,"This session could not be found.");
+  const account=await accounts.identity(request,env);
+  if(account && input.sender!==account.id || !account && await env.DB.prepare("SELECT id FROM account_users WHERE id=?").bind(input.sender).first())return fail(403,"Sign in to send messages as this player.");
   const {battle} = JSON.parse(row.state);
   const character = battle.actors.find((actor) => actor.side === "party" && battle.controllers?.[actor.id] === input.sender);
   const player = await env.DB.prepare("SELECT username FROM session_players WHERE session_id=? AND controller=?")
@@ -340,16 +353,18 @@ async function sessionChat(request, env, id, after) {
 
 async function removeRoom(request,env,id){
   const presented=await ownerHash(request);
-  if(!presented)return fail(403,'Deletion requires the private creator credential from the browser that created this room.');
+  const account=await accounts.identity(request,env),linkedOwner=await accounts.roomOwner(env,id);
+  if(linkedOwner?linkedOwner.user_id!==account?.id:!presented)return fail(403,'Deletion requires the room creator’s account or private browser credential.');
   const body=await boundedBody(request,2048);
   let input;try{input=body&&JSON.parse(await body.text());}catch{return fail(400,'The deletion request was invalid.');}
   if(!Number.isSafeInteger(input?.revision)||input.revision<0)return fail(400,'The deletion request was invalid.');
   const room=await env.DB.prepare('SELECT revision,owner_key_hash FROM game_sessions WHERE id=?').bind(id).first();
   if(!room)return fail(404,'This room has already been deleted.');
   // No controller ID, public owner value, first-member fallback, or state edit can prove ownership.
-  if(!ownsRoom(room.owner_key_hash,presented))return fail(403,'This browser does not hold the private creator credential for this room. Legacy rooms without a credential cannot be deleted.');
+  if(!linkedOwner&&!ownsRoom(room.owner_key_hash,presented))return fail(403,'This browser does not hold the private creator credential for this room. Legacy rooms without a credential cannot be deleted.');
   const live='EXISTS (SELECT 1 FROM game_sessions WHERE id=? AND revision=?)';
   const statements=[
+    env.DB.prepare(`DELETE FROM account_rooms WHERE room_id=? AND ${live}`).bind(id,id,input.revision),
     env.DB.prepare(`DELETE FROM session_chat WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
     env.DB.prepare(`DELETE FROM session_players WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
   ];
@@ -367,7 +382,9 @@ async function removeRoom(request,env,id){
 async function listRooms(request,env,url) {
   const presented=await ownerHash(request);
   if(request.method!=='GET') return fail(405,'This action is unavailable.');
-  const controller=url.searchParams.get('controller');
+  const account=await accounts.identity(request,env);
+  const controller=account?.id??url.searchParams.get('controller');
+  if(!account&&await env.DB.prepare("SELECT id FROM account_users WHERE id=?").bind(controller??"").first())return fail(403,"Sign in to view your account’s rooms.");
   if(!controller || !uuid.test(controller)) return fail(400,'The player ID was invalid.');
   const {results}=await env.DB.prepare(`SELECT s.id,
     json_extract(s.state,'$.room') AS room,
@@ -378,13 +395,14 @@ async function listRooms(request,env,url) {
     (SELECT json_group_array(json_extract(value,'$.name')) FROM json_each(s.state,'$.battle.actors')
       WHERE json_extract(value,'$.side')='party') AS party,
     s.owner_key_hash AS ownerKeyHash,
+    (SELECT user_id FROM account_rooms WHERE room_id=s.id AND role='owner') AS accountOwner,
     p.joined_at AS joinedAt,p.last_seen AS lastVisited
-    FROM game_sessions s JOIN session_players p ON p.session_id=s.id
-    WHERE p.controller=? ORDER BY COALESCE(json_extract(s.state,'$.room.updatedAt'),p.last_seen) DESC LIMIT 100`)
-    .bind(controller).all();
+    FROM game_sessions s LEFT JOIN session_players p ON p.session_id=s.id AND p.controller=?
+    WHERE p.controller=? OR EXISTS(SELECT 1 FROM account_rooms ar WHERE ar.room_id=s.id AND ar.user_id=?) ORDER BY COALESCE(json_extract(s.state,'$.room.updatedAt'),p.last_seen) DESC LIMIT 100`)
+    .bind(controller,controller,account?.id??'').all();
   return reply({rooms:results.map(row=>{
     const room=row.room ? JSON.parse(row.room) : {};
-    return {id:row.id,canDelete:ownsRoom(row.ownerKeyHash,presented),name:room.name || row.mapName,adventure:room.adventure || row.adventure,
+    return {id:row.id,canDelete:row.accountOwner?row.accountOwner===account?.id:ownsRoom(row.ownerKeyHash,presented),name:room.name || row.mapName,adventure:room.adventure || row.adventure,
       adventureName:room.adventureName || row.adventure,mapName:row.mapName,mapKey:row.mapKey,
       party:JSON.parse(row.party || '[]'),round:row.round,createdAt:room.createdAt || row.joinedAt,
       updatedAt:room.updatedAt || row.lastVisited,lastVisited:row.lastVisited};
@@ -393,21 +411,22 @@ async function listRooms(request,env,url) {
 
 export async function sessionRequest(request, env) {
   const url = new URL(request.url);
+  if(url.pathname.startsWith("/api/auth/")||url.pathname.startsWith("/api/account"))return accounts.route(request,env,{ownerHash,ownsRoom,validToken});
   const match = sessionPath.exec(url.pathname);
   if (url.pathname !== api && url.pathname !== "/api/rooms" && url.pathname !== "/api/ai/forecast" && !match) return fail(404,"Session endpoint not found.");
   if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) return fail(403,"Open Wayfarer to update this session.");
   try {
     if(url.pathname==="/api/rooms") return await listRooms(request,env,url);
     if(url.pathname==="/api/ai/forecast") {
-      if (request.method !== "POST") return fail(405, "This action is unavailable.");
-      const apiKey = request.headers.get("x-gemini-key")?.trim();
-      if (!apiKey) return fail(400, "A Gemini API key is required.");
-      const model = request.headers.get("x-gemini-model") || "gemini-3.8-flash";
-      const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      if (request.method !== 'POST') return fail(405, 'This action is unavailable.');
+      const apiKey = request.headers.get('x-gemini-key')?.trim();
+      if (!apiKey) return fail(400, 'A Gemini API key is required.');
+      const model = request.headers.get('x-gemini-model') || 'gemini-3.8-flash';
+      const targetUrl = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent';
       const body = await request.text();
       const geminiRes = await fetch(targetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key':apiKey },
         body
       });
       const data = await geminiRes.text();
@@ -415,8 +434,9 @@ export async function sessionRequest(request, env) {
         status: geminiRes.status,
         headers: {
           ...headers,
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store"
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          ...(geminiRes.headers.get('Retry-After')?{'Retry-After':geminiRes.headers.get('Retry-After')}:{})
         }
       });
     }

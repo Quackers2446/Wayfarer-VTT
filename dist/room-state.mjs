@@ -4,10 +4,16 @@ import {startingRegion,regionCells} from './encounters.mjs';
 
 // One canonical battle/character ledger belongs to a room. Scenes contain only
 // physical map data; they never contain another battle, party, XP or inventory.
-export const sceneFields=['terrain','markers','wallData','wallRevision','fogMemory','fogMemoryByActor','explored','alignedGrid','gridManual','gridOverlay','sceneReady','worldLootVersion','spellZones'];
+export const sceneFields=['terrain','markers','wallData','wallRevision','fogMemory','fogMemoryByActor','explored','alignedGrid','gridManual','gridOverlay','sceneReady','worldLootVersion','spellZones','showDmArtwork'];
 const clone=value=>structuredClone(value);
 const savedMap=map=>({...map,regions:map.regions.map(region=>({...region,entry:region.entry?{name:region.entry.name,entries:(region.entry.entries??[]).filter(entry=>entry?.type==='insetReadaloud')}:undefined}))});
-export function roomMapChoices(state,available=[]){const choices=new Map();for(const entry of [...available,state.currentMap,...Object.values(state.world?.maps??{}).map(scene=>scene.map)])if(entry?.module===state.currentMap?.module && !choices.has(entry.key))choices.set(entry.key,entry);return [...choices.values()];}
+export function roomMapChoices(state,available=[]){
+  const choices=new Map();
+  for(const entry of [...available,state.currentMap,...Object.values(state.world?.maps??{}).map(scene=>scene.map)])
+    if(entry?.module===state.currentMap?.module && !choices.has(entry.key))choices.set(entry.key,entry);
+  const list=[...choices.values()],paired=new Set(list.filter(m=>m.playerAsset).map(m=>m.playerAsset));
+  return list.filter(m=>(m.playerAsset||!paired.has(m.asset))&&m.title!=='Player Version');
+}
 const scenery=battle=>Object.fromEntries(sceneFields.filter(key=>battle[key]!==undefined).map(key=>[key,clone(battle[key])]));
 const positions=battle=>Object.fromEntries(battle.actors.filter(actor=>actor.side==='party').map(actor=>[actor.id,{x:actor.x,y:actor.y}]));
 export function commitRoomState(previous,map,battle,alignment=null){

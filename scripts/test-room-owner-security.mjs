@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFile} from 'node:fs/promises';
 import {sessionRequest} from '../worker/session.mjs';import {newBattle} from '../dist/combat.mjs';import {trainingMap,trainingActors} from '../dist/encounters.mjs';
-const db=new DatabaseSync(':memory:');for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql'])db.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+const db=new DatabaseSync(':memory:');for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql'])db.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
 const DB={prepare(sql){let args=[];return{bind(...values){args=values;return this;},async first(key){const row=db.prepare(sql).get(...args);return key?row?.[key]??null:row??null;},async all(){return{results:db.prepare(sql).all(...args)};},async run(){return{meta:{changes:Number(db.prepare(sql).run(...args).changes)}};}};},async batch(items){db.exec('BEGIN');try{const results=[];for(const item of items)results.push(await item.run());db.exec('COMMIT');return results;}catch(e){db.exec('ROLLBACK');throw e;}}};
 const env={DB};
 const origin='https://test.example',creator=crypto.randomUUID(),attacker=crypto.randomUUID(),cookieJar=new Map();

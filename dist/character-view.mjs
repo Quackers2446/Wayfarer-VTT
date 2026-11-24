@@ -293,7 +293,7 @@ export function fillSheetResults(character, section) {
       <h3>${level === 0 ? "Cantrips" : "Level " + level}</h3>
       <ul>${spells.filter((spell) => spell.level === level).map((spell) => {
         const description = describe(spell.name);
-        const reference = matchSpell(spell.name);
+        const reference = (spell.source && spellByKey(spell.source.toLowerCase()+"|"+ruleKey(spell.name.split(" (")[0]))) || matchSpell(spell.name);
         const spellName = reference ? `<button type="button" class="spell-link" data-action="spell" data-id="${escape(spellKey(reference))}"
             aria-label="View 5e spell ${escape(reference.name)}">${text(description.name)}</button>` : text(description.name);
         return `<li><div>${spellName}${reference ? `<small class="spell-source">${escape(reference.source)}${spell.level !== reference.level ? " · Reference level " + reference.level : ""}</small>` : ""}

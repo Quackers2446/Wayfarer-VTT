@@ -23,10 +23,29 @@ export async function moduleMaps(id) {
   if (!chapters) return [];
   const maps = [];
   const seen = new Set();
+  // Track player-variant images by their parent DM image id, path, or title.
+  const playerByParent = new Map();
   for (const chapter of chapters) {
     const nodes = [...walk(chapter)];
     const entries = new Map(nodes.filter((entry) => entry.id && !entry.href).map((entry) => [entry.id, entry]));
     const images = nodes.filter((entry) => entry.type === "image" && ["map","mapPlayer"].includes(entry.imageType));
+    // Pre-pass: index player-variant images by parent reference or previous DM image in this chapter.
+    let prevDm = null;
+    for (const image of images) {
+      const isPlayer = image.imageType === "mapPlayer" || image.title === "Player Version" || Boolean(image.title && /\(player\)/i.test(image.title));
+      const parentId = typeof image.mapParent === "string" ? image.mapParent : image.mapParent?.id;
+      if (isPlayer) {
+        if (parentId) {
+          playerByParent.set(parentId, image);
+        } else if (prevDm) {
+          if (prevDm.id) playerByParent.set(prevDm.id, image);
+          if (prevDm.href?.path) playerByParent.set(prevDm.href.path, image);
+          if (prevDm.title) playerByParent.set(prevDm.title, image);
+        }
+      } else {
+        prevDm = image;
+      }
+    }
     for (const image of images) {
       if (image.grid?.type !== "square" || !image.grid.size || !image.width || !image.height) continue;
       const {width, height, grid} = image;
@@ -34,7 +53,8 @@ export async function moduleMaps(id) {
       const source = sourceGrid(grid);
       const geometry = gridGeometry({width,height,sourceGrid:source});
       if (!validGeometry(geometry)) continue;
-      const parent = image.mapParent?.autoScale ? images.find((entry) => entry.id === image.mapParent.id) : null;
+      const parentId = typeof image.mapParent === "string" ? image.mapParent : image.mapParent?.id;
+      const parent = parentId ? images.find((entry) => entry.id === parentId) : null;
       const baseRegions = image.mapRegions ?? parent?.mapRegions ?? [];
       const instances = new Map();
       const regions = baseRegions.map((region) => {
@@ -43,7 +63,7 @@ export async function moduleMaps(id) {
         return {
           id:region.area, key:occurrence === 1 ? region.area : region.area + ":" + occurrence,
           entry:entries.get(region.area),
-          points:parent && !image.mapRegions
+          points:parent && !image.mapRegions && parent.width && parent.height
             ? region.points.map(([x,y]) => [x * width / parent.width, y * height / parent.height])
             : region.points,
         };
@@ -51,15 +71,45 @@ export async function moduleMaps(id) {
       const key = image.href?.path ?? image.id ?? image.title;
       if (!key || seen.has(key)) continue;
       seen.add(key);
+      // If this is a DM map and a player variant exists, attach playerAsset so the
+      // game displays the clean player artwork while preserving all DM data (regions,
+      // monster rosters, room story text).
+      const isPlayer = image.imageType === "mapPlayer" || image.title === "Player Version" || Boolean(image.title && /\(player\)/i.test(image.title));
+      const playerVariant = !isPlayer ? (
+        (image.id ? playerByParent.get(image.id) : null) ??
+        (image.href?.path ? playerByParent.get(image.href.path) : null) ??
+        (image.title ? playerByParent.get(image.title) : null)
+      ) : null;
+      const playerAsset = playerVariant?.href?.path ?? null;
       maps.push({
         key, module:id, id:image.id ?? parent?.id, width, height, regions,
         sourceGrid:source, legacyGrid:legacyGeometry(grid,width,height), ...geometry,
         title:image.title === "Player Version" && parent?.title ? parent.title + " (Player)" : image.title ?? key,
         caption:chapter.name ?? "", asset:image.href?.path, artist:image.credit,
+        ...(playerAsset ? { playerAsset } : {}),
       });
     }
   }
-  return maps;
+  // Remove standalone player-variant maps that are paired with their DM parent,
+  // as well as any orphaned bare "Player Version" entries or redundant (Player) variants.
+  const pairedPlayerAssets = new Set(maps.filter(m => m.playerAsset).map(m => m.playerAsset));
+  const dmTitles = new Set(maps.filter(m => !m.title.includes("(Player)") && m.title !== "Player Version").map(m => m.title));
+  return maps.filter(m => {
+    if (m.playerAsset) return true;
+    if (m.asset && pairedPlayerAssets.has(m.asset)) return false;
+    if (m.title === "Player Version") return false;
+    if (m.title.endsWith(" (Player)")) {
+      const baseTitle = m.title.slice(0, -9).trim();
+      if (dmTitles.has(baseTitle)) {
+        const dmMap = maps.find(other => other.title === baseTitle);
+        if (dmMap && !dmMap.playerAsset && m.asset) {
+          dmMap.playerAsset = m.asset;
+        }
+        return false;
+      }
+    }
+    return true;
+  });
 }
 
 const pilotRooms = {
@@ -218,7 +268,7 @@ export function partyActor(record) {
   }
   const resources = structuredClone(character.resources);
   const spells = character.spells.map(({name,level,prepared,source,castUsage,castingAbility,grantedBy}) => {
-    const spell = (source && spellByKey(source.toLowerCase()+"|"+ruleKey(name))) || matchSpell(name);
+    const spell = (source && spellByKey(source.toLowerCase()+"|"+ruleKey(name.split(" (")[0]))) || matchSpell(name);
     const note = spell && ruleKey(name) !== ruleKey(spell.name) ? name : "";
     const customUse = !spell || !castUsage && /without rolling|no spell slot|charges|unlimited|on snakes|infinite cast/i.test(note);
     const resource = castUsage?.resourceKey ? Object.keys(resources).find(key=>ruleKey(resources[key].name)===castUsage.resourceKey) ?? "missing:"+castUsage.resourceKey :

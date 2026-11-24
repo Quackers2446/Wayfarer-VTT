@@ -1,3 +1,5 @@
+import {dismissOnBackdrop} from './modal-dismiss.mjs';
+import {initSheetSuggestions} from './sheet-suggestions.mjs';
 import {escape, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 
@@ -14,6 +16,7 @@ function getSubeditorDialog() {
     dialog.className = "sheet-subeditor-dialog";
     dialog.setAttribute("aria-labelledby", "sheet-subeditor-title");
     document.body.appendChild(dialog);
+    dismissOnBackdrop(dialog);
   }
   return dialog;
 }
@@ -66,10 +69,11 @@ export function openSubeditor({title, subtitle = "", iconName = "edit", formHtml
     }
   });
 
+  initSheetSuggestions(dialog);
   if (!dialog.open) {
     dialog.showModal();
   }
-  const firstInput = form.querySelector("input, select, textarea");
+  const firstInput = form.querySelector("input:not([type=hidden]), select, textarea");
   firstInput?.focus();
 }
 
@@ -96,7 +100,7 @@ export function openAttackEditor({character, attackIndex = -1, onSave}) {
   const formHtml = `
     <label>
       Action / Weapon name
-      <input type="text" name="name" value="${escape(rawName)}" placeholder="e.g. Longsword, Fire Bolt, Dagger" required maxlength="120">
+      <input type="text" name="name" data-suggest="weapons" value="${escape(rawName)}" placeholder="e.g. Longsword, Fire Bolt, Dagger" required maxlength="120">
     </label>
     <div class="subeditor-grid">
       <label>
@@ -162,7 +166,7 @@ export function openItemEditor({character, itemIndex = -1, onSave}) {
   const formHtml = `
     <label>
       Item name
-      <input type="text" name="name" value="${escape(rawName)}" placeholder="e.g. Potion of Healing, Rope (50 ft)" required maxlength="140">
+      <input type="text" name="name" data-suggest="equipment" value="${escape(rawName)}" placeholder="e.g. Potion of Healing, Rope (50 ft)" required maxlength="140">
     </label>
     <div class="subeditor-grid">
       <label>
@@ -339,11 +343,11 @@ export function openDetailsEditor({character, onSave}) {
       </label>
       <label>
         Class &amp; Subclass
-        <input type="text" name="characterClass" value="${escape(character.characterClass || "")}" placeholder="e.g. Druid, Fighter" maxlength="120">
+        <input type="text" name="characterClass" data-suggest="classes" value="${escape(character.characterClass || "")}" placeholder="e.g. Druid, Fighter" maxlength="120">
       </label>
       <label>
         Species / Lineage
-        <input type="text" name="species" value="${escape(character.species || "")}" placeholder="e.g. Human, Elf" maxlength="120">
+        <input type="text" name="species" data-suggest="species" value="${escape(character.species || "")}" placeholder="e.g. Human, Elf" maxlength="120">
       </label>
       <label>
         Level
@@ -351,7 +355,7 @@ export function openDetailsEditor({character, onSave}) {
       </label>
       <label>
         Background
-        <input type="text" name="background" value="${escape(character.background || "")}" placeholder="e.g. Folk Hero, Acolyte" maxlength="120">
+        <input type="text" name="background" data-suggest="backgrounds" value="${escape(character.background || "")}" placeholder="e.g. Folk Hero, Acolyte" maxlength="120">
       </label>
       <label>
         Alignment
@@ -463,9 +467,10 @@ export function openSpellEditor({character, spellIndex = -1, onSave}) {
   ];
 
   const formHtml = `
+    <input type="hidden" name="source" value="${escape(spell.source??'')}">
     <label>
       Spell name
-      <input type="text" name="name" value="${escape(rawName)}" placeholder="e.g. Cure Wounds, Shield, Fireball" required maxlength="120">
+      <input type="text" name="name" data-suggest="spells" value="${escape(rawName)}" placeholder="e.g. Cure Wounds, Shield, Fireball" required maxlength="120">
     </label>
     <div class="subeditor-grid">
       <label>
@@ -474,7 +479,7 @@ export function openSpellEditor({character, spellIndex = -1, onSave}) {
           ${levels.map(([lvl, lbl]) => `<option value="${lvl}"${spell.level === lvl ? " selected" : ""}>${lbl}</option>`).join("")}
         </select>
       </label>
-      <label class="sheet-editor-check" style="align-self: flex-end; margin-bottom: 8px;">
+      <label class="sheet-editor-check subeditor-prepared">
         <input type="checkbox" name="prepared"${spell.prepared ? " checked" : ""}>
         <span>Prepared spell</span>
       </label>
@@ -502,6 +507,7 @@ export function openSpellEditor({character, spellIndex = -1, onSave}) {
         name: formattedName,
         level,
         prepared,
+        source: data.get("source") || undefined,
         note
       });
     }

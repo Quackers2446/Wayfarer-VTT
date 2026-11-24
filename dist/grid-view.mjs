@@ -248,7 +248,7 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
     c.stroke();
   }
 
-  drawWallsAndDoors(c, map, battle, fog);
+  if (wallEditor) drawWallsAndDoors(c, map, battle, fog);
 
   if (fog) drawFog(c,map,fog);
 

@@ -51,6 +51,7 @@ function baseReason(actor,battle,canAct) {
 
 export function entryReason(actor,battle,entry,canAct=true) {
   battle=turnView(battle,actor);
+  if(entry.controlZone){const cast=entryReason(actor,battle,{...entry,controlZone:null},canAct),control=entryReason(actor,battle,{mode:'common',timing:'bonus',actionId:'control-spell-zone'},canAct);return cast&&control?cast:'';}
   if(entry.inspect) return "";
   if(entry.mode==='move' && canAct && actorIsUp(actor) && !incapacitated(actor) && !battle.classReaction && !battle.movement && (!battle.round || movementGroup(battle).includes(actor))) return battle.round && moveLeft(battle,actor)<=0 ? 'No movement remains.' : '';
   const blocked=baseReason(actor,battle,canAct);
@@ -116,7 +117,11 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
       level:data.level ?? 0});
   }
   entries.push({id:'common:interact',actionId:'interact',name:actor.carrying?'Carrying body':'Interact',mode:'common',tab:'common',timing:'free',instant:false,symbol:'fist',description:'Select a body or treasure. Loot, carry, place, throw, or help from one contextual menu.'});
-  for(const zone of battle.spellZones??[])if(zone.custom&&zone.caster===actor.id&&zone.rule.shape==='sphere')entries.push({id:'zone:'+zone.id,actionId:'control-spell-zone',zoneId:zone.id,name:zone.name+' · Control',mode:'common',tab:'spell',timing:'bonus',instant:false,symbol:'flame',description:'Move up to '+zone.rule.move+' ft or ram a creature. Uses a bonus action, without another spell slot.'});
+  for(const zone of battle.spellZones??[])if(zone.custom&&zone.caster===actor.id&&zone.rule.shape==='sphere'){
+    const spell=entries.find(entry=>entry.mode==='spell'&&entry.data.reference===zone.rule.reference);
+    if(spell){spell.controlZone=zone.id;spell.stats=[...(spell.stats??[]),'Active sphere · control with a bonus action'];}
+    else entries.push({id:'zone:'+zone.id,actionId:'control-spell-zone',zoneId:zone.id,name:zone.name+' · Control',mode:'common',tab:'spell',timing:'bonus',instant:false,symbol:'flame',description:'Move up to '+zone.rule.move+' ft or ram a creature. Uses a bonus action, without another spell slot.'});
+  }
   for(const action of classActions(actor,battle)) entries.push({id:"feature:"+action.id,name:action.name,actionId:action.id,mode:"feature",tab:"feature",
     timing:action.timing,resource:action.resource,cost:action.cost,symbol:symbol(action.name,"feature"),data:action,
     description:featureText(features,action.feature),contextual:action.timing==="flurry",stats:action.timing==="flurry" ? [battle.flurry+" unarmed strikes remaining"] : [],

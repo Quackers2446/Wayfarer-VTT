@@ -114,7 +114,8 @@ assert(processed.doors[0].id.length > 0);
 
 // Verify door carved a gap between 4.8 and 5.2
 const doorWallLeft = processed.walls.find(w => w.x1 === 0 && Math.abs(w.x2 - 4.8) < 0.1);
-const doorWallRight = processed.walls.find(w => Math.abs(w.x1 - 5.2) < 0.1 && w.x2 === 20);
+const doorWallRight = processed.walls.find(w => Math.abs(w.x1 - 5.2) < 0.1 && w.x2 > 9.8);
+assert(processed.walls.some(w=>Math.abs(w.x1-10)<.1&&w.x2===20),'Intersecting walls expose a shared T-junction vertex');
 assert(doorWallLeft, 'Door should carve wall leaving left segment up to door');
 assert(doorWallRight, 'Door should carve wall leaving right segment starting after door');
 
@@ -128,7 +129,7 @@ console.log('✓ Vertex welding, straightening, and door carving verified');
 const mockFetch = async (url, options) => {
   assert(url.includes('generativelanguage.googleapis.com'));
   assert(url.includes('gemini-3.8-flash'));
-  assert(url.includes('key=test-api-key'));
+  assert(!url.includes('key='));assert.equal(options.headers['x-goog-api-key'],'test-api-key');
   const body = JSON.parse(options.body);
   assert.equal(body.contents[0].parts[1].inline_data.data, 'fakebase64');
   assert.equal(body.generationConfig.response_mime_type, 'application/json');
@@ -240,3 +241,30 @@ await assert.rejects(
 console.log('✓ 403 blocked key guidance verified');
 
 console.log('\nAll AI Forecast engine tests passed successfully!');
+
+const success=()=>new Response(JSON.stringify({candidates:[{content:{parts:[{thought:true,text:'private reasoning'},{text:JSON.stringify({walls:[[0,0,1000,0]],doors:[]})}]}}]}),{status:200});
+const failure=(status,detail='Service temporarily overloaded',headers={})=>new Response(JSON.stringify({error:{message:detail}}),{status,headers:{'Content-Type':'application/json',...headers}});
+{
+ let calls=0;const delays=[],progress=[];
+ const result=await callGeminiVision({base64:'map',apiKey:'test',random:()=>0,sleep:async ms=>delays.push(ms),onProgress:p=>progress.push(p),fetchImpl:async()=>++calls<3?failure(503):success()});
+ assert.equal(calls,3);assert.deepEqual(delays,[1000,2000]);assert.equal(result.walls.length,1);assert(progress.some(p=>p.message.includes('busy')));
+}
+{
+ const models=[],delays=[];
+ await callGeminiVision({base64:'map',apiKey:'test',fallbackModel:'gemini-3.6-flash',random:()=>0,sleep:async ms=>delays.push(ms),fetchImpl:async url=>{models.push(url);return models.length<4?failure(503):success();}});
+ assert.equal(models.length,4);assert(models[2].includes('3.8-flash'));assert(models[3].includes('3.6-flash'));assert.deepEqual(delays,[1000,2000,4000]);
+}
+{
+ let calls=0;await assert.rejects(()=>callGeminiVision({base64:'map',apiKey:'test',sleep:async()=>{},fetchImpl:async()=>{calls++;return failure(503);}}),/still busy after 4 attempts/);assert.equal(calls,4);
+}
+{
+ const delays=[];let calls=0;await callGeminiVision({base64:'map',apiKey:'test',sleep:async ms=>delays.push(ms),fetchImpl:async()=>++calls===1?failure(503,'Busy',{'Retry-After':'8'}):success()});assert.deepEqual(delays,[8000]);
+ for(const [status,message] of [[400,'bad input'],[403,'Permission denied'],[404,'not found'],[429,'Daily quota exceeded']]){let calls=0;await assert.rejects(()=>callGeminiVision({base64:'map',apiKey:'test',sleep:async()=>assert.fail('Should not retry'),fetchImpl:async()=>{calls++;return failure(status,message);}}));assert.equal(calls,1);}
+ let longCalls=0;await assert.rejects(()=>callGeminiVision({base64:'map',apiKey:'test',sleep:async()=>assert.fail('Do not shorten provider cooldown'),fetchImpl:async()=>{longCalls++;return failure(503,'Busy',{'Retry-After':'120'});}}));assert.equal(longCalls,1);
+}
+{
+ const controller=new AbortController();let calls=0;
+ await assert.rejects(()=>callGeminiVision({base64:'map',apiKey:'test',signal:controller.signal,sleep:async()=>controller.abort(),fetchImpl:async()=>{calls++;return failure(503);}}),{name:'AbortError'});assert.equal(calls,1);
+ let relay=0;const urls=[];await callGeminiVision({base64:'map',apiKey:'test',sleep:async()=>{},fetchImpl:async url=>{urls.push(url);if(url.startsWith('https:'))throw new TypeError('Blocked');return ++relay<2?failure(503):success();}});assert.equal(relay,2);assert.equal(urls.length,4);
+}
+console.log('Bounded retries, overload fallback, Retry-After, quota/credential errors, cancellation, relay retries and thought filtering verified.');

@@ -1,4 +1,4 @@
-import {actorIsUp,occupies,incapacitated,canTakeTurn,turnView,distanceFt,lineClear,canStand,rollDice,d20,armorClass,savingThrow,applyDamage,log,checkCast,spendCast,startConcentration,addCondition,hasFeature,charmedBy} from './combat.mjs';
+import {actorIsUp,occupies,incapacitated,canTakeTurn,turnView,distanceFt,lineClear,canStand,rollDice,d20,armorClass,savingThrow,applyDamage,heal,log,checkCast,spendCast,startConcentration,addCondition,hasFeature,charmedBy,breakInvisibility,advanceTime} from './combat.mjs';
 import {actorCells} from './actor-space.mjs';
 import {mapFloor,crossesMapWall} from './map-walls.mjs';
 import {captureImpact,recordAction,withActionEvent} from './action-events.mjs';
@@ -25,21 +25,31 @@ export function customSpellCells(rule,caster,square,map,{end,hotSide='left',area
  return cells;
 }
 const touches=(actor,cells)=>actorCells(actor).some(cell=>cells.includes?cells.includes(key(cell.x,cell.y)):cells.has(key(cell.x,cell.y)));
-function componentFormula(component,rule,slot){const extra=Math.max(0,slot-rule.level);return component.formula+(component.upcast?Array.from({length:extra},()=> '+'+component.upcast).join(''):'');}
-function applyBlock(battle,caster,targets,rule,block,slot,dc,random,critical=false){
+function componentFormula(component,rule,slot,level,ability){
+ const extra=rule.level===0&&component.scaleWithCaster?[5,11,17].filter(tier=>level>=tier).length:Math.max(0,slot-rule.level),term=component.upcast?.replace(/\s+/g,'').replace(/[−–]/g,'-');
+ return component.formula+(term?Array.from({length:extra},()=>/^[+-]/.test(term)?term:'+'+term).join(''):'')+(component.addAbility?(ability>=0?'+':'')+ability:'');
+}
+function applyBlock(battle,caster,targets,rule,block,slot,dc,random,critical=false,level=caster.level??1,ability=caster.spellAbility){
+ const healing=block.kind==='healing';
+ targets=targets.filter(target=>!target.dead&&!(healing&&block.excludeUndeadConstructs&&['undead','construct'].includes(target.creatureType)));
  if(!targets.length)return;
- const rolls=block.damage.map(component=>({component,result:rollDice(componentFormula(component,rule,slot),{random,doubleDice:critical,label:rule.name+' · '+component.type})}));
+ const rolls=block.damage.map(component=>({component,result:rollDice(componentFormula(component,rule,slot,level,ability),{random,doubleDice:critical&&!healing,label:rule.name+' · '+(healing?'healing':component.type)})}));
  for(const target of targets){
   const saved=block.save?((target.hp===0||incapacitated(target))&&['str','dex'].includes(block.save)?false:savingThrow(target,block.save,{random,advantage:block.save==='dex'&&target.dodging&&actorIsUp(target)}).total>=dc):false;
   if(block.save)log(battle,target.name+' '+block.save.toUpperCase()+' save vs DC '+dc+' · '+(saved?'succeeds':'fails')+'.');
-  for(const {component,result} of rolls){const evasion=block.save==='dex'&&block.onSave==='half'&&hasFeature(target,'Evasion')&&!incapacitated(target);const amount=evasion?(saved?0:Math.floor(Math.max(0,result.total)/2)):saved?(block.onSave==='half'?Math.floor(Math.max(0,result.total)/2):0):Math.max(0,result.total);const outcome=applyDamage(battle,target,amount,component.type,critical,random,caster,{spell:true,magical:true});captureImpact(battle,target,{amount:outcome.damage,absorbed:outcome.absorbed,defeated:outcome.defeated,critical});log(battle,target.name+' takes '+outcome.damage+' '+component.type+' damage ('+result.breakdown+').');}
-  if(block.condition&&!saved){if(block.condition==='Prone')target.prone=true;else addCondition(battle,target,block.condition,rule.duration||6,{source:caster.id,concentration:rule.concentration?caster.id:null});}
+  for(const {component,result} of rolls){
+   if(healing){const restored=heal(target,Math.max(0,result.total));captureImpact(battle,target,{amount:restored,healing:true});log(battle,target.name+' regains '+restored+' HP ('+result.breakdown+').');continue;}
+   const evasion=block.save==='dex'&&block.onSave==='half'&&hasFeature(target,'Evasion')&&!incapacitated(target),amount=evasion?(saved?0:Math.floor(Math.max(0,result.total)/2)):saved?(block.onSave==='half'?Math.floor(Math.max(0,result.total)/2):0):Math.max(0,result.total);
+   const outcome=applyDamage(battle,target,amount,component.type,critical,random,caster,{spell:true,magical:true});captureImpact(battle,target,{amount:outcome.damage,absorbed:outcome.absorbed,defeated:outcome.defeated,critical});log(battle,target.name+' takes '+outcome.damage+' '+component.type+' damage ('+result.breakdown+').');
+  }
+  if(block.condition&&!saved){if(block.condition==='Prone'){if(!(target.conditionImmune??[]).includes('prone'))target.prone=true;}else addCondition(battle,target,block.condition,rule.duration||6,{source:caster.id,concentration:rule.concentration?caster.id:null});}
  }
 }
+
 export function castCustomSpell(battle,caster,target,spell,slot,options={},random=Math.random){
  const rule=customSpellRule(spell.reference ?? spell.key,battle.spellRules);if(!rule)throw Error('This spell has no enabled rules in this room.');
  if(rule.level!==spell.level||rule.edition!==spell.edition)throw Error('The automation must match this spell’s source level and edition.');
- if(rule.shape==='target'&&charmedBy(caster,target))throw Error('This character is charmed by the target.');
+ if(rule.shape==='target'&&rule.effects.some(effect=>effect.kind!=='healing'&&(effect.damage.length||effect.condition&&effect.condition!=='Invisible'))&&charmedBy(caster,target))throw Error('This character is charmed by the target.');
  const usage=spell.castUsage&&slot===0?spell.castUsage:undefined;checkCast(battle,caster,rule.level,usage?rule.level:slot,rule.timing,usage,options.slotPool);
  const aimed=!['target','self'].includes(rule.shape),square=rule.shape==='self'?{x:caster.x,y:caster.y}:options.square;
  if(aimed){
@@ -50,13 +60,15 @@ export function castCustomSpell(battle,caster,target,spell,slot,options={},rando
  }else if(rule.shape==='target'){
   if(!target||target.dead||target.x==null||distanceFt(caster,target)>rule.range||!lineClear(battle,caster,target,options.map))throw Error('Choose a creature in range with a clear path.');
  }
+ if(rule.effects.some(effect=>effect.damage.some(component=>component.addAbility))&&!Number.isFinite(caster.spellAbility))throw Error('Set the spellcasting ability modifier first.');
+ if(rule.shape==='target'&&rule.effects.every(effect=>effect.kind==='healing'&&effect.excludeUndeadConstructs)&&['undead','construct'].includes(target?.creatureType))throw Error('This healing rule excludes undead and constructs.');
  if(rule.effects.some(effect=>effect.save)&&!Number.isFinite(caster.spellDC))throw Error('Set this character’s spell save DC first.');
  if(rule.attack&&!Number.isFinite(caster.spellAttack))throw Error('Set this character’s spell attack bonus first.');
- spendCast(battle,caster,rule.level,slot,rule.timing,usage,options.slotPool);
+ spendCast(battle,caster,rule.level,slot,rule.timing,usage,options.slotPool);breakInvisibility(battle,caster);
  if(rule.concentration)startConcentration(battle,caster,rule.name,rule.duration);
  log(battle,caster.name+' casts '+rule.name+(rule.level?' · level '+(usage?rule.level:slot)+' slot.':'.'));
  let critical=false,hit=true;
- if(rule.attack){const roll=d20(caster.spellAttack,{random,label:rule.name+' attack'});critical=roll.kept===20;hit=critical||roll.kept!==1&&roll.total>=armorClass(target);recordAction(battle,caster,{outcome:critical?'Critical hit':hit?'Hit':'Miss',total:roll.total,roll:roll.breakdown,target:target.name,targetActor:target.id});}
+ if(rule.attack){const roll=d20(caster.spellAttack,{random,advantage:options.mode==='advantage',disadvantage:options.mode==='disadvantage',label:rule.name+' attack'});critical=roll.kept===20;hit=critical||roll.kept!==1&&roll.total>=armorClass(target);recordAction(battle,caster,{outcome:critical?'Critical hit':hit?'Hit':'Miss',total:roll.total,roll:roll.breakdown,target:target.name,targetActor:target.id});}
  const effectiveSlot=usage?rule.level:slot;
  for(const effect of rule.effects.filter(effect=>effect.trigger==='cast')){
   const cells=aimed?customSpellCells(rule,caster,square,options.map,{...options,area:effect.area}):null;
@@ -65,7 +77,7 @@ export function castCustomSpell(battle,caster,target,spell,slot,options={},rando
  }
  if(rule.persistent && (!rule.concentration||caster.concentration?.name===rule.name)){
   const cells=customSpellCells(rule,caster,square??caster,options.map,options),effectCells=rule.effects.map(effect=>[...customSpellCells(rule,caster,square??caster,options.map,{...options,area:effect.area})]);
-  const zone={id:crypto.randomUUID(),custom:true,caster:caster.id,name:rule.name,rule:structuredClone(rule),slot:effectiveSlot,dc:caster.spellDC,concentration:rule.concentration,blocksVision:rule.blocksVision,difficult:rule.difficult,cells:[...cells],effectCells,square:square??{x:caster.x,y:caster.y},end:options.end,hotSide:options.hotSide??'left',triggered:{},createdElapsed:battle.elapsed??0,expires:rule.endNextTurn?(battle.round?null:(battle.elapsed??0)+6):(battle.elapsed??0)+rule.duration,endRound:rule.endNextTurn?battle.round+1:null};
+  const zone={id:crypto.randomUUID(),custom:true,caster:caster.id,name:rule.name,rule:structuredClone(rule),slot:effectiveSlot,dc:caster.spellDC,level:caster.level??1,ability:caster.spellAbility,concentration:rule.concentration,blocksVision:rule.blocksVision,difficult:rule.difficult,cells:[...cells],effectCells,square:square??{x:caster.x,y:caster.y},end:options.end,hotSide:options.hotSide??'left',triggered:{},createdElapsed:battle.elapsed??0,expires:rule.endNextTurn?(battle.round?null:(battle.elapsed??0)+6):(battle.elapsed??0)+rule.duration,endRound:rule.endNextTurn?battle.round+1:null};
   battle.spellZones=[...(battle.spellZones??[]),zone];
  }
 }
@@ -79,7 +91,7 @@ export function customZoneTriggers(battle,actor,phase,from,random=Math.random){
    if(phase==='enter'&&from&&touches({...actor,...from},zone.effectCells[i]))continue;
    const turn=battle.round?battle.round+':'+battle.order?.[battle.turn]:Math.floor((battle.elapsed??0)/6),stamp=actor.id+':'+phase+':'+i;
    if(zone.triggered[stamp]===turn)continue;zone.triggered[stamp]=turn;
-   withActionEvent(battle,caster,{action:zone.name+' · '+({enter:'entered area',start:'start of turn',end:'end of turn'}[phase]??phase),kind:'spell',target:actor.name,targetActor:actor.id},()=>applyBlock(battle,caster,[actor],zone.rule,block,zone.slot,zone.dc,random));
+   withActionEvent(battle,caster,{action:zone.name+' · '+({enter:'entered area',start:'start of turn',end:'end of turn'}[phase]??phase),kind:'spell',target:actor.name,targetActor:actor.id},()=>applyBlock(battle,caster,[actor],zone.rule,block,zone.slot,zone.dc,random,false,zone.level??caster.level??1,zone.ability??caster.spellAbility));
   }
  }
  if(phase==='end')battle.spellZones=(battle.spellZones??[]).filter(zone=>!zone.custom||zone.endRound==null||zone.caster!==actor.id||battle.round<zone.endRound);
@@ -95,7 +107,7 @@ export function moveCustomSphere(battle,caster,zoneId,square,map,random=Math.ran
  if(path.slice(1,-1).some(cell=>battle.actors.some(actor=>occupies(actor)&&actorCells(actor).some(c=>c.x===cell.x&&c.y===cell.y))))throw Error('A creature blocks the sphere’s path.');
  return withActionEvent(battle,caster,{action:zone.name+(target?' · Ram':' · Move'),kind:'spell',target:target?.name,targetActor:target?.id},()=>{
   if(battle.round)battle.bonusUsed=true;zone.square=destination;zone.cells=[...customSpellCells(zone.rule,caster,destination,map)];zone.effectCells=zone.rule.effects.map(effect=>[...customSpellCells(zone.rule,caster,destination,map,{area:effect.area})]);
-  if(target)for(const block of zone.rule.effects.filter(block=>block.trigger==='ram'))applyBlock(battle,caster,[target],zone.rule,block,zone.slot,zone.dc,random);
-  log(battle,caster.name+' moves '+zone.name+(target?' into '+target.name:'')+'.');
+  if(target)for(const block of zone.rule.effects.filter(block=>block.trigger==='ram'))applyBlock(battle,caster,[target],zone.rule,block,zone.slot,zone.dc,random,false,zone.level??caster.level??1,zone.ability??caster.spellAbility);
+  log(battle,caster.name+' moves '+zone.name+(target?' into '+target.name:'')+'.');if(!battle.round)advanceTime(battle,6);
  });
 }

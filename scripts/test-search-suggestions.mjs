@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {rankSuggestions,searchKey} from '../dist/search-suggestions.mjs';
+const records=[{label:'Greater Fireball',detail:'PHB'},{label:'Fire Bolt',detail:'PHB · Cantrip'},{label:'Fireball',detail:'PHB · Level 3'},{label:'Fireball',detail:'XPHB · Level 3'},{label:'Ice Storm',detail:'PHB · Evocation'}];
+assert.equal(searchKey('Melf’s Ácid Arrow'),'melfs acid arrow');
+assert.equal(rankSuggestions(records,'fireball')[0].label,'Fireball');
+assert.equal(rankSuggestions(records,'fire b')[0].label,'Fire Bolt');
+assert.deepEqual(rankSuggestions(records,'xphb').map(record=>record.detail),['XPHB · Level 3']);
+assert.equal(rankSuggestions(records,'zzzzz').length,0);
+assert.equal(rankSuggestions(records,'',2).length,2);
+assert.equal(rankSuggestions(records,'ice evocation')[0].label,'Ice Storm');
+assert.equal(rankSuggestions([{label:"Melf's Acid Arrow"}],'melf’s')[0].label,"Melf's Acid Arrow");
+assert.deepEqual(records.map(r=>r.label),['Greater Fireball','Fire Bolt','Fireball','Fireball','Ice Storm'],'Ranking must not change the source list');
+console.log('Suggestion ranking, source/word matching, punctuation, accents, result limits and no-match behavior verified.');

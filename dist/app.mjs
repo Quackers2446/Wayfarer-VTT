@@ -1,7 +1,12 @@
+import {prepareAccountWorkspace,startAccounts,accountLibraryChanged,accountState} from './account-client.mjs';
+import {accountBadge,mountAccountProfile} from './account-view.mjs';
+import {dismissOnBackdrop} from './modal-dismiss.mjs';
+import './site-search.mjs';
+import {registerSuggestions} from './search-suggestions.mjs';
 import {mountSpellRuleEditor} from './spell-rule-editor.mjs';
 import {mountCharacterBuilder} from './character-builder.mjs';
 import {syncCharacterTokenRooms} from "./token-room-sync.mjs";
-import {setGameTokenImage, syncLocalCharacterToken, showPlay} from "./play.mjs";
+import {setGameTokenImage, syncLocalCharacterToken, showPlay, syncAccountCharacters} from "./play.mjs";
 import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
 import {localTokenBlob, paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
@@ -32,6 +37,7 @@ const navItems = [
   ["library", "Adventure library", "book"],
   ["spell-rules", "Spell rules", "sparkles"],
   ["play", "Rooms", "dice"],
+  ["profile", "Profile", "users"],
 ];
 const featured = [
   {id:"LMoP", image:"lmop-cover.webp", detail:"Follow the trail from Phandalin into the wilds of the Sword Coast."},
@@ -54,6 +60,7 @@ function currentRoute(hash = location.hash) {
   return {page, character:character ? enrichCharacter(character) : null, section};
 }
 
+prepareAccountWorkspace();
 let state;
 try {
   const remembered = JSON.parse(localStorage.getItem(storageKey));
@@ -67,6 +74,7 @@ let localSamples = [];
 let localArchive = "";
 let spellRequest = 0;
 let gameSheet;
+dismissOnBackdrop(dialog,()=>Boolean(gameSheet));
 let builderOpen=false;
 let catalogKind = "adventures";
 let search = "";
@@ -78,6 +86,7 @@ let dialogReturnFocus;
 function save() {
   try {
     localStorage.setItem(storageKey, JSON.stringify(state));
+    accountLibraryChanged();
     return true;
   } catch {
     return false;
@@ -301,12 +310,13 @@ function render() {
     <div class="work-area">
       <div class="topbar${character ? " topbar-sheet" : ""}">
         <span class="crumb"><span>Workspace</span> ${icon("chevron", 13)} <strong>${pageLabel}</strong></span>
-        ${character ? '<a class="button outline" href="#characters">Back to party</a>' :
-          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : page==='spell-rules' ? '' : button("Import character", "upload", "plus")}
+        ${accountBadge()}${character ? '<a class="button outline" href="#characters">Back to party</a>' :
+          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : page==='spell-rules'||page==='profile' ? '' : button("Import character", "upload", "plus")}
       </div>
-      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : page === "spell-rules" ? '<div id="spell-rules-mount"></div>' : '<div id="play-mount"></div>'}</main>
+      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : page === "profile" ? '<div id="account-profile-mount"></div>' : page === "spell-rules" ? '<div id="spell-rules-mount"></div>' : '<div id="play-mount"></div>'}</main>
     </div>
   </div>`;
+  if(page==='profile')mountAccountProfile(document.querySelector('#account-profile-mount'));
   if (page === "library") renderResults();
   if(page==='spell-rules')void mountSpellRuleEditor(document.querySelector('#spell-rules-mount'));
   if(page==='characters' && !character && builderOpen){
@@ -1097,7 +1107,16 @@ Promise.allSettled(requests).then(([index, , samples, archive]) => {
   }
   if (samples?.status === "fulfilled" && Array.isArray(samples.value)) localSamples = samples.value;
   if (archive?.status === "fulfilled" && archive.value) localArchive = archive.value;
+  // Background catalog loading must not replace an editor the user has already opened.
+  if (currentRoute().page === "spell-rules" && document.querySelector(".spell-rule-desk")) return;
   const searchHasFocus = document.activeElement?.id === "catalog-search";
   render();
   if (searchHasFocus) document.querySelector("#catalog-search")?.focus();
 });
+
+registerSuggestions('#catalog-search',{options:()=>catalog[catalogKind].filter(entry=>!Number(startLevel)||catalogKind!=='adventures'||entry.level?.start<=Number(startLevel)&&Number(startLevel)<=(entry.level.end??20)).map(entry=>({label:entry.name,search:[entry.id,entry.author,entry.source].filter(Boolean).join(' '),detail:[entry.source??entry.id,entry.level?'Levels '+entry.level.start+'–'+(entry.level.end??20):'',entry.storyline].filter(Boolean).join(' · ')}))});
+registerSuggestions('#sheet-search',{options:()=>{const route=gameSheet??currentRoute(),character=route.character;if(!character)return [];const inventory=route.section==='inventory',prepared=document.querySelector('#prepared-only')?.checked;return (inventory?character.items:character.spells).filter(record=>inventory||!prepared||record.prepared).map(record=>({label:record.name.split(' (')[0],search:record.name,detail:inventory?'Inventory · '+(record.quantity??1)+' owned':(record.level?'Level '+record.level:'Cantrip')+(record.source?' · '+record.source:'')}));}});
+
+document.addEventListener('wayfarer:cloud-workspace',event=>{state={characters:[],active:null,...event.detail};if(currentRoute().page==='game'){syncAccountCharacters(state.characters);return;}if(!dialog.open&&!builderOpen&&!document.activeElement?.matches('input,textarea,select'))render();});
+document.addEventListener('wayfarer:account-status',()=>{const host=document.querySelector('#account-profile-mount');if(host)mountAccountProfile(host);for(const badge of document.querySelectorAll('.account-badge'))badge.textContent=accountState().user?.displayName??'Sign in';});
+void startAccounts();

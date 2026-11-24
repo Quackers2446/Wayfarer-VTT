@@ -33,7 +33,9 @@ for (const name of await readdir(dist)) {
 const sessionCode = await readFile(new URL("../worker/session.mjs",import.meta.url),"utf8");
 const roomOwnerCode = await readFile(new URL("../worker/room-owner.mjs",import.meta.url),"utf8");
 const spellRuleSchemaCode = await readFile(new URL("../worker/spell-rule-schema.mjs",import.meta.url),"utf8");
+const accountsCode=await readFile(new URL("../worker/accounts.mjs",import.meta.url),"utf8");
 const bundledWorker = sessionCode
+  .replace("import {accounts} from './accounts.mjs';",accountsCode.replace("import {validRuleSet} from './spell-rule-schema.mjs';",'').replace(/export /g,''))
   .replace(
     "import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';",
     roomOwnerCode
@@ -51,6 +53,7 @@ await writeFile(new URL("wrangler.json",server),JSON.stringify({
   r2_buckets:[{binding:"BUCKET",bucket_name:"wayfarer-art"}],
 },null,2));
 
+await cp(new URL("../worker/accounts.mjs",import.meta.url),new URL("accounts.mjs",server));
 await cp(new URL("../worker/spell-rule-schema.mjs",import.meta.url),new URL("spell-rule-schema.mjs",server));
 
 await cp(new URL("../worker/spell-rule-schema.mjs",import.meta.url),new URL("spell-rule-schema.mjs",client));

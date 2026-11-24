@@ -3445,4 +3445,5 @@ body:has(.game-main) {
 
 .chat-line.chat-system time {
   font-size: .7rem
-}
+}#dialog.ai-review-dialog{width:min(1200px,96vw);max-width:96vw}.ai-review-dialog .dialog-content{padding:16px 20px}.ai-review-dialog p{font-size:.88rem;line-height:1.5;margin:8px 0}.forecast-review-controls{display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin:12px 0}.forecast-review-controls label{display:flex;gap:10px;align-items:center}.forecast-review-viewport{overflow:auto;max-height:60vh;background:#13241d;border-radius:8px;overscroll-behavior:contain;border:1px solid #7c8f75}.forecast-review-viewport canvas{display:block;margin:auto;max-width:none;touch-action:pan-x pan-y}.forecast-review-status{color:#9c4932;min-height:1em}
+#dialog.ai-review-dialog[open]{display:flex;flex-direction:column;height:min(92vh,960px);max-height:92vh;overflow:hidden}.ai-review-dialog .dialog-header{flex:none;grid-template-columns:minmax(0,1fr) auto}.ai-review-dialog .dialog-content{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}.ai-review-dialog .dialog-content>p,.ai-review-dialog .forecast-review-controls,.ai-review-dialog .ai-forecast-dialog-actions{flex:none}.ai-review-dialog .forecast-review-viewport{flex:1;min-height:120px;max-height:none}.ai-review-dialog .forecast-review-status:empty{display:none}

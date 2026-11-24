@@ -111,7 +111,7 @@ export function tablePanel(table, characters, battle, message, needsSignIn, cont
     ${full ? "<p>The party has four characters. Claim an available portrait to play.</p>" : `<form id="session-party-form" class="session-inline">
       ${options.length ? `<label class="play-field">Your character<select id="session-character">${options.map(({id,name}) =>
         `<option value="${escape(id)}">${escape(name)}</option>`).join("")}</select></label>
-      <button class="game-button" type="submit"${battle.round ? " disabled" : ""}>Add to party</button>` : '<a href="#characters" class="game-link">Import a character</a>'}
+      <button class="game-button" type="submit">Add to party</button>` : '<a href="#characters" class="game-link">Import a character</a>'}
     </form>
-    ${options.length && battle.round ? "<p>Party members can join between encounters.</p>" : ""}`}`;
+    ${options.length && battle.round ? "<p>New characters roll initiative and join this encounter.</p>" : ""}`}`;
 }

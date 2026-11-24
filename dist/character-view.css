@@ -907,3 +907,10 @@ dialog:not([open]).sheet-subeditor-dialog { display: none; }
 }
 
 
+
+.subeditor-form .sheet-editor-check{display:flex;align-items:center;gap:10px;min-height:36px;align-self:end;cursor:pointer}
+.subeditor-form .sheet-editor-check input[type=checkbox]{appearance:none;display:grid;place-content:center;flex:0 0 20px;width:20px;height:20px;margin:0;padding:0;border:1.5px solid #82977f;border-radius:5px;background:#fffdf8;cursor:pointer}
+.subeditor-form .sheet-editor-check input[type=checkbox]:checked{background:#2f503d;border-color:#2f503d}
+.subeditor-form .sheet-editor-check input[type=checkbox]:checked::after{content:"";width:10px;height:6px;border-left:2px solid white;border-bottom:2px solid white;transform:translateY(-1px) rotate(-45deg)}
+.subeditor-form .sheet-editor-check input[type=checkbox]:focus-visible{outline:3px solid #a38336;outline-offset:3px}
+@media(forced-colors:active){.subeditor-form .sheet-editor-check input[type=checkbox]{appearance:auto}}

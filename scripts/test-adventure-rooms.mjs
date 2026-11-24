@@ -5,7 +5,7 @@ import {sessionRequest} from '../worker/session.mjs';
 import {trainingMap,trainingActors} from '../dist/encounters.mjs';
 import {newBattle} from '../dist/combat.mjs';
 const sqlite=new DatabaseSync(':memory:');
-for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
 const DB={prepare(sql){let values=[];return{bind(...args){values=args;return this;},async first(column){const row=sqlite.prepare(sql).get(...values);return column ? row?.[column]??null : row??null;},async all(){return{results:sqlite.prepare(sql).all(...values)};},async run(){const result=sqlite.prepare(sql).run(...values);return{meta:{changes:Number(result.changes)}};}};},async batch(statements){return Promise.all(statements.map(statement=>statement.run()));}};
 const env={DB},origin='https://test.example',alice=crypto.randomUUID(),bob=crypto.randomUUID(),other=crypto.randomUUID();
 const cookies=new Map();
