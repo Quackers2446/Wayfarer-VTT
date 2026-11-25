@@ -1,12 +1,23 @@
+import {createDamageEffects} from './damage-effects.mjs';
 import {keyAt} from "./combat.mjs";
 import {escape} from "./format.mjs";
 import {cellCenter} from "./map-grid.mjs";
 import {createDiceTheatre} from "./dice-theatre.mjs";
 import {fogOfWarEnabled} from "./game-settings.mjs";
+import {createSpellVisuals} from './spell-visuals.mjs';
+import {createZoneVisuals} from './zone-visuals.mjs';
 
-const clamp = (value,min,max) => Math.min(Math.max(value,min),Math.max(min,max));
 export const movementEvent=event=>event.kind==='move' || /^Moved /.test(event.action ?? '');
 export const cueDuration=event=>event.healthChanges?.some(change=>!change.before.dead && change.after.dead) ? (event.healthChanges.some(change=>change.side==='party' && change.after.dead)?6500:4800) : movementEvent(event) ? 0 : event.outcome ? event.side==='party' ? event.outcome==='Critical hit' ? 5000 : 4200 : 3200 : event.rolls?.length ? event.side==='party' ? 3600 : 2600 : 1800;
+
+/** Backlog depth → stagger / motion soft-gate / cue & FX compression. Depth 1 stays readable; deeper stacks overlap hard. */
+export function resolvePace(depth){
+  const n=Math.max(1,depth|0);
+  if(n<=1) return {stagger:380,motionScale:1,cueScale:1,revealAfter:null,fxScale:1,maxInFlight:1};
+  if(n===2) return {stagger:200,motionScale:0.32,cueScale:0.7,revealAfter:160,fxScale:0.82,maxInFlight:3};
+  if(n<=4) return {stagger:110,motionScale:0.1,cueScale:0.52,revealAfter:70,fxScale:0.68,maxInFlight:4};
+  return {stagger:65,motionScale:0,cueScale:0.38,revealAfter:35,fxScale:0.55,maxInFlight:5};
+}
 const visibleAt = (sight, event, fogEnabled=fogOfWarEnabled) => !fogEnabled || event.side === "party" || sight.has(keyAt(event.x,event.y));
 
 function visibleEvent(event,sight,fogEnabled) {
@@ -15,7 +26,7 @@ function visibleEvent(event,sight,fogEnabled) {
   if (visible) return {...event,visible};
   // An attack from fog may be shown without revealing the attacker or weapon.
   return {...event,name:"Unseen enemy",action:"Attack",visible:false,messages:[],
-    rolls:(event.rolls ?? []).map(roll=>({...roll,label:"Attack roll"})),impacts:[]};
+    rolls:(event.rolls ?? []).map(roll=>({...roll,label:"Attack roll"})),impacts:(event.impacts??[]).filter(impact=>sight.has(keyAt(impact.x,impact.y))),visual:null,visualPoint:null};
 }
 
 function groupActions(events, sight,fogEnabled) {
@@ -41,15 +52,50 @@ function groupActions(events, sight,fogEnabled) {
   return cues;
 }
 
+const CRIT_WORDS = {
+  slashing: "CLEAVE!",
+  piercing: "IMPALE!",
+  bludgeoning: "CRUSH!",
+  fire: "BLAZE!",
+  cold: "SHATTER!",
+  lightning: "CRACK!",
+  thunder: "BOOM!",
+  acid: "BURN!",
+  poison: "TOXIC!",
+  necrotic: "WITHER!",
+  radiant: "FLARE!",
+  force: "BLAST!",
+  psychic: "MIND!",
+};
+
+const HIT_WORDS = {
+  slashing: "SLASH",
+  piercing: "STAB",
+  bludgeoning: "SMASH",
+  fire: "SCORCH",
+  cold: "CHILL",
+  lightning: "ZAP",
+  thunder: "BOOM",
+  acid: "HISS",
+  poison: "VENOM",
+  necrotic: "DRAIN",
+  radiant: "FLARE",
+  force: "BLAST",
+  psychic: "MIND",
+};
+
+function eventDamageType(event) {
+  return event.type || event.impacts?.find(impact => impact.type && !impact.healing)?.type || "";
+}
+
+/** Comic impact words only when the outcome has a clear punch — never for quiet casts/abilities. */
 function impactWord(event) {
-  if (event.outcome === "Critical hit") return "KRAK!";
-  if (event.outcome === "Miss") return event.blocked ? "CLANG!" : "WHOOSH!";
-  if (event.kind === "spell") return "FWOOM!";
-  if (event.kind === "heal") return "GLOW";
-  if (event.kind === "fall") return "THUD!";
-  if (event.outcome === "Hit") return ({slashing:"SCHWING!",piercing:"THUNK!",bludgeoning:"THWACK!"})[event.type] ?? "POW!";
-  if (event.kind === "ability") return "FOCUS!";
-  if (event.kind === "chat-roll") return "ROLL!";
+  const type = eventDamageType(event);
+  if (event.outcome === "Critical hit") return CRIT_WORDS[type] ?? "CRIT!";
+  if (event.outcome === "Miss") return event.blocked ? "BLOCKED" : "";
+  if (event.outcome === "Hit") return HIT_WORDS[type] ?? "";
+  if (event.kind === "heal" || event.impacts?.some(impact => impact.healing)) return "HEAL";
+  if (event.kind === "fall") return "THUD";
   return "";
 }
 
@@ -80,7 +126,7 @@ function cueText(event) {
     ${messages.map(message=>'<div class="combat-cue-note">'+escape(message)+"</div>").join("")}`;
 }
 
-export function createCombatCues() {
+export function createCombatCues({skipDice = false} = {}) {
   const feed=document.createElement("div");
   feed.className="game-event-feed";
   feed.setAttribute("role","log");
@@ -90,10 +136,21 @@ export function createCombatCues() {
   let cursor = 0;
   let queue = [];
   let isRolling = false;
+  let inFlight = 0;
+  let nextSlot = 0;
+  let wakeTimer = 0;
   let view;
+  const spellVisuals=createSpellVisuals(()=>view);
+  const zoneVisuals=createZoneVisuals(()=>view);
+  const damageEffects=createDamageEffects(()=>view);
   const activeCues = [];
 
   const hasDice = event => Boolean(event?.rolls?.some(roll => roll.dice?.length) && (event.kind !== "initiative" || event.side === "party"));
+  const backlogDepth = () => queue.length + inFlight + (isRolling ? 1 : 0);
+  function scheduleProcess(delay=0) {
+    clearTimeout(wakeTimer);
+    wakeTimer = setTimeout(() => { wakeTimer = 0; processQueue(); }, Math.max(0, delay));
+  }
 
   function appendFeed(events, pending=false) {
     const scroller=feed.closest('.game-event-body');
@@ -128,111 +185,80 @@ export function createCombatCues() {
   }
 
   function placeImpacts() {
-    if(!view) return;
-    const grid=view.grid.getBoundingClientRect(),origin=view.layer.getBoundingClientRect();
-    const actorCounts = new Map();
+    if (!view) return;
+    const grid = view.grid.getBoundingClientRect(), origin = view.layer.getBoundingClientRect();
+    const byActor = new Map();
     for (const cue of activeCues) {
-      for (const {element, impact} of cue.impacts) {
-        const [x,y]=cellCenter(view.map,impact);
-        const count = actorCounts.get(impact.actor) ?? 0;
-        actorCounts.set(impact.actor, count + 1);
-        const offsetX = (count % 3 - 1) * 16;
-        const offsetY = Math.floor(count / 3) * -18;
-        element.style.left=(grid.left-origin.left+x/view.map.width*grid.width+offsetX)+"px";
-        element.style.top=(grid.top-origin.top+y/view.map.height*grid.height-22+offsetY)+"px";
-        if(element.parentElement!==view.layer) {
-          element.style.animationDelay=(cue.revealedAt-performance.now())+'ms';
+      for (const entry of cue.impacts) {
+        const key = entry.impact.actor ?? `${entry.impact.x}:${entry.impact.y}`;
+        const list = byActor.get(key) ?? [];
+        list.push({...entry, revealedAt: cue.revealedAt});
+        byActor.set(key, list);
+      }
+    }
+    for (const entries of byActor.values()) {
+      const numbers = entries.filter(({impact}) => !impact.deathBanner);
+      const deaths = entries.filter(({impact}) => impact.deathBanner);
+      numbers.forEach(({element, impact, revealedAt}, index) => {
+        const [x, y] = cellCenter(view.map, impact);
+        // Vertical lane above the token — no sideways scatter into neighboring cues.
+        const stack = index * 26;
+        element.style.left = (grid.left - origin.left + x / view.map.width * grid.width) + "px";
+        element.style.top = (grid.top - origin.top + y / view.map.height * grid.height - 28 - stack) + "px";
+        element.style.zIndex = String(5 + index);
+        if (element.parentElement !== view.layer) {
+          element.style.animationDelay = (revealedAt - performance.now()) + "ms";
           view.layer.append(element);
         }
-      }
+      });
+      // Death banners sit in a reserved band above the number stack so they never cover floats.
+      const numberBand = numbers.length ? 28 + (numbers.length - 1) * 26 + 36 : 20;
+      deaths.forEach(({element, impact, revealedAt}, index) => {
+        const [x, y] = cellCenter(view.map, impact);
+        element.style.left = (grid.left - origin.left + x / view.map.width * grid.width) + "px";
+        element.style.top = (grid.top - origin.top + y / view.map.height * grid.height - numberBand - index * 52) + "px";
+        element.style.zIndex = String(8 + index);
+        if (element.parentElement !== view.layer) {
+          element.style.animationDelay = (revealedAt - performance.now()) + "ms";
+          view.layer.append(element);
+        }
+      });
     }
   }
 
   function place() {
+    spellVisuals.place();
+    zoneVisuals.place();
+    damageEffects.place();
     if (!view?.layer.isConnected || !activeCues.length) return;
-    const {layer,frame,grid,map,sight} = view;
-    const board = frame.getBoundingClientRect();
-    const surface = grid.getBoundingClientRect();
-    const origin = layer.getBoundingClientRect();
+    const board = view.frame.getBoundingClientRect();
+    const origin = view.layer.getBoundingClientRect();
     const gap = 8;
-    const radius = map.size*.42/map.height*surface.height;
-    const placedBoxes = [];
+    // Predictable action rail: stack along the board's right edge (newest on top).
+    // Keeps messages off token damage/death floats and avoids scatter-dodge placement.
+    const railMax = Math.min(238, Math.max(160, board.width * 0.34));
+    let cursorY = board.top + gap;
+    const ordered = [...activeCues].sort((a, b) => b.revealedAt - a.revealedAt);
 
-    for (const cue of activeCues) {
-      const event = cue.event;
+    for (const cue of ordered) {
       const bubble = cue.element;
-      const [worldX,worldY] = cellCenter(map,event);
-      const x = surface.left + worldX/map.width*surface.width;
-      const y = surface.top + worldY/map.height*surface.height;
-      const onToken = event.visible && visibleAt(sight,event,view.fogEnabled) &&
-        x >= board.left && x <= board.right && y >= board.top && y <= board.bottom;
-      const width = bubble.offsetWidth || 220;
+      bubble.dataset.layout = "rail";
+      bubble.dataset.point = "";
+      const width = Math.min(bubble.offsetWidth || railMax, railMax);
       const height = bubble.offsetHeight || 80;
-      let left = onToken ? clamp(x-width/2,board.left+gap,board.right-width-gap) : board.right-width-gap;
-      let top = board.top+gap;
-      let point = "";
-
-      if (onToken) {
-        if (y-radius-height-gap >= board.top+gap) {
-          top = y-radius-height-gap;
-          point = "bottom";
-        } else if (y+radius+gap+height <= board.bottom-gap) {
-          top = y+radius+gap;
-          point = "top";
-        } else {
-          top = clamp(y-height-gap,board.top+gap,board.bottom-height-gap);
-        }
+      const left = board.right - width - gap;
+      // Prefer hiding overflow over collapsing messages onto the same spot.
+      if (cursorY + height > board.bottom - gap) {
+        bubble.style.visibility = "hidden";
+        continue;
       }
-
-      // Anti-overlap positioning: adjust position if overlapping another active cue
-      for (const box of placedBoxes) {
-        const overlapX = left < box.right + gap && left + width > box.left - gap;
-        const overlapY = top < box.bottom + gap && top + height > box.top - gap;
-        if (overlapX && overlapY) {
-          if (point === "bottom") {
-            if (box.top - height - gap >= board.top + gap) {
-              top = box.top - height - gap;
-            } else if (box.bottom + gap + height <= board.bottom - gap) {
-              top = box.bottom + gap;
-              point = "top";
-            } else if (box.right + gap + width <= board.right - gap) {
-              left = box.right + gap;
-            } else if (box.left - gap - width >= board.left + gap) {
-              left = box.left - gap - width;
-            } else {
-              top = clamp(box.top - 24, board.top + gap, board.bottom - height - gap);
-              left = clamp(box.left + 18, board.left + gap, board.right - width - gap);
-            }
-          } else if (point === "top") {
-            if (box.bottom + gap + height <= board.bottom - gap) {
-              top = box.bottom + gap;
-            } else if (box.top - height - gap >= board.top + gap) {
-              top = box.top - height - gap;
-              point = "bottom";
-            } else if (box.right + gap + width <= board.right - gap) {
-              left = box.right + gap;
-            } else if (box.left - gap - width >= board.left + gap) {
-              left = box.left - gap - width;
-            } else {
-              top = clamp(box.top + 24, board.top + gap, board.bottom - height - gap);
-              left = clamp(box.left + 18, board.left + gap, board.right - width - gap);
-            }
-          } else {
-            top = box.bottom + gap;
-            if (top + height > board.bottom - gap) {
-              top = board.top + gap;
-              left = Math.max(board.left + gap, box.left - width - gap);
-            }
-          }
-        }
-      }
-
-      placedBoxes.push({left, top, right: left + width, bottom: top + height});
-
-      bubble.dataset.point = point;
-      bubble.style.setProperty("--cue-tip",clamp(x-left,10,width-10)+"px");
-      bubble.style.left = left-origin.left+"px";
-      bubble.style.top = top-origin.top+"px";
+      bubble.style.visibility = "";
+      bubble.style.left = left - origin.left + "px";
+      bubble.style.top = cursorY - origin.top + "px";
+      bubble.style.width = width + "px";
+      if (typeof bubble.style.removeProperty === "function") bubble.style.removeProperty("--cue-tip");
+      else delete bubble.style["--cue-tip"];
+      cursorY += height + gap;
     }
 
     placeImpacts();
@@ -251,9 +277,9 @@ export function createCombatCues() {
     bubble.dataset.outcome = event.outcome ?? event.kind ?? "action";
     bubble.dataset.eventId = String(event.id);
 
-    const impacts = (event.impacts ?? [])
-      .filter(impact => !fogOfWarEnabled || view.sight.has(keyAt(impact.x,impact.y)))
-      .map(impact => {
+    const visibleImpacts=(event.impacts??[]).filter(impact=>!view.fogEnabled||view.sight.has(keyAt(impact.x,impact.y)));
+    damageEffects.play(visibleImpacts);
+    const impacts = visibleImpacts.map(impact => {
         const element = document.createElement("div");
         element.className = "token-impact-number" + (impact.healing ? " healing" : "") + (impact.critical ? " critical" : "");
         element.textContent = (impact.healing ? "+" : "−") + impact.amount +
@@ -266,7 +292,7 @@ export function createCombatCues() {
       if(death.before.dead || !death.after.dead || view.fogEnabled && death.side!=='party' && !view.sight.has(keyAt(death.x,death.y)))continue;
       const element=document.createElement('div');element.className='token-death-cue'+(death.side==='party'?' party-fallen':'');
       const label=document.createElement('strong'),name=document.createElement('span');label.textContent=death.side==='party'?'FALLEN':'DEFEATED';name.textContent=death.name; element.append(label,name);
-      impacts.push({element,impact:{actor:death.actor,x:death.x,y:death.y}});
+      impacts.push({element,impact:{actor:death.actor,x:death.x,y:death.y,creatureSize:death.creatureSize??event.impacts?.find(impact=>impact.actor===death.actor)?.creatureSize,deathBanner:true}});
     }
     const cue = {
       id: event.id,
@@ -299,10 +325,12 @@ export function createCombatCues() {
     if (!view || isRolling || !queue.length) return;
 
     const next = queue[0];
-    if (!hasDice(next)) {
+    // When dice FX are off (user toggle) or preview forces skip, go straight to cast videos.
+    // Preview uses skipDice so it never mutates the player's wayfarer-dice-fx preference.
+    if (skipDice || !dice.enabled || !hasDice(next)) {
       queue.shift();
-      reveal(next);
-      processQueue();
+      isRolling=true;
+      finishBatch([next]);
       return;
     }
 
@@ -324,9 +352,7 @@ export function createCombatCues() {
     if (batch.length === 1) {
       const event = batch[0];
       dice.play(event, () => {
-        isRolling = false;
-        reveal(event);
-        processQueue();
+        finishBatch([event]);
       }, hasMore);
     } else {
       const combinedRolls = batch.flatMap(e =>
@@ -342,14 +368,21 @@ export function createCombatCues() {
         partyEvents: batch
       };
       dice.play(combinedEvent, () => {
-        isRolling = false;
-        batch.forEach(e => reveal(e));
-        processQueue();
+        finishBatch(batch);
       }, hasMore);
     }
   }
 
+  function finishBatch(batch){
+    if(!batch.length){isRolling=false;processQueue();return;}
+    const [event,...remaining]=batch;
+    spellVisuals.play(event,()=>{reveal(event);finishBatch(remaining);});
+  }
+
   function reset() {
+    spellVisuals.stop();
+    zoneVisuals.reset();
+    damageEffects.reset();
     queue = [];
     isRolling = false;
     while (activeCues.length) {
@@ -373,6 +406,9 @@ export function createCombatCues() {
         cursor = latest;
       }
       view = viewport;
+      spellVisuals.place();
+      zoneVisuals.sync(view?.battle ?? null);
+      damageEffects.place();
       if (!view) {
         reset();
         cursor = latest;
@@ -408,7 +444,7 @@ export function createCombatCues() {
     },
     triggerRoll(event, done) {
       if (!event) return;
-      if (dice.enabled) {
+      if (!skipDice && dice.enabled) {
         dice.play(event, () => {
           reveal(event);
           done?.();
@@ -419,8 +455,9 @@ export function createCombatCues() {
       }
     },
     place,
+    aimPreview(preview) { zoneVisuals.aimPreview(preview); },
     reset,
-    get diceEnabled() {return dice.enabled;},
+    get diceEnabled() {return !skipDice && dice.enabled;},
     toggleDice:() => dice.toggle(),
   };
 }

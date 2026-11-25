@@ -194,6 +194,8 @@ export function sheetEditor(character, skills) {
   const walking = Number.parseInt(character.speed,10);
   const currentSkill = new Map(character.skills.map((skill) => [skill.name.toLowerCase(),skill]));
   const hasCasting = character.spells.length || Object.keys(character.spellSlots ?? {}).length;
+  const castingAbility = edits.spellcastingAbility ?? (typeof character.spellcastingAbility === "string"
+    ? character.spellcastingAbility.toLowerCase().slice(0,3) : "");
   return `<form id="character-edit-form" class="sheet-box sheet-editor">
     <header class="sheet-box-heading"><h2>Complete character sheet</h2><button class="button primary small" type="submit">Save changes</button></header>
     <p class="sheet-editor-note">Blank fields use the workbook or the rules. New tokens start with these values.</p>
@@ -239,8 +241,8 @@ export function sheetEditor(character, skills) {
     <details${hasCasting ? " open" : ""}><summary>Spellcasting and slots</summary>
       <fieldset><legend>Spellcasting</legend><div class="sheet-editor-grid">
         <label>Spellcasting ability<select name="spellcastingAbility" aria-label="Spellcasting ability">${selectOption("",
-          character.spellcastingAbility && !edits.spellcastingAbility ? `Use sheet or class (${character.spellcastingAbility})` : "Use sheet or class",edits.spellcastingAbility ?? character.spellcastingAbility)}
-          ${abilities.map(([key,label]) => selectOption(key,label,edits.spellcastingAbility ?? (character.spellcastingAbility?.toLowerCase().slice(0,3) === key ? key : "")))}</select></label>
+          character.spellcastingAbility != null && !edits.spellcastingAbility ? `Use sheet or class (${character.spellcastingAbility})` : "Use sheet or class",castingAbility)}
+          ${abilities.map(([key,label]) => selectOption(key,label,castingAbility)).join("")}</select></label>
         ${casting.map((field) => numberField(field,character[field[0]],edits)).join("")}
       </div></fieldset>
       <fieldset><legend>Spell slots</legend><div class="sheet-editor-slots">

@@ -1,0 +1,45 @@
+// Level 4 combat spells. Ice Storm / Wall of Fire have legacy starters; also expressed here as data.
+import {spell, dmg, damage, condition, status, onTriggers, zoneTriggers} from './builders.mjs';
+
+export const batch = [
+  spell('Ice Storm', 4, {range: 300, shape: 'circle', radius: 20, persistent: true, difficult: true, endNextTurn: true, duration: 6,
+    effects: [damage([dmg('2d8', 'bludgeoning', {upcast: '1d8'}), dmg('4d6', 'cold')], {save: 'dex', onSave: 'half'})]}),
+  spell('Wall of Fire', 4, {range: 120, shape: 'wall', length: 60, radius: 10, concentration: true, duration: 60, persistent: true, blocksVision: true,
+    effects: [
+      {...damage(dmg('5d8', 'fire', {upcast: '1d8'}), {save: 'dex', onSave: 'half'}), trigger: 'cast'},
+      {...damage(dmg('5d8', 'fire', {upcast: '1d8'})), trigger: 'enter'},
+      {...damage(dmg('5d8', 'fire', {upcast: '1d8'}), {area: 'hotSide'}), trigger: 'end'},
+    ]}),
+  spell('Blight', 4, {range: 30, effects: [damage(dmg('8d8', 'necrotic', {upcast: '1d8'}), {save: 'con', onSave: 'half'})]}),
+  spell('Phantasmal Killer', 4, {range: 120, sight: true, concentration: true, duration: 60, targets: {base: 1, side: 'enemy'},
+    effects: [
+      condition('Frightened', {save: 'wis', repeatSave: 'end'}),
+      damage(dmg('4d10', 'psychic', {upcast: '1d10'}), {save: 'wis', onSave: 'half'}),
+    ]}),
+  spell('Banishment', 4, {range: 60, sight: true, concentration: true, duration: 60, targets: {base: 1, perSlot: 1, side: 'enemy'},
+    effects: [condition('Incapacitated', {save: 'cha'})]}),
+  spell('Greater Invisibility', 4, {range: 5, concentration: true, duration: 60, targets: {base: 1, side: 'ally'},
+    effects: [condition('Invisible')]}),
+  spell('Stoneskin', 4, {range: 5, concentration: true, duration: 3600, targets: {base: 1, side: 'ally'},
+    effects: [status({name: 'Stoneskin', resist: ['bludgeoning', 'piercing', 'slashing']})]}),
+  spell('Fire Shield', 4, {range: 0, shape: 'self', duration: 600,
+    effects: [status({name: 'Fire Shield', resist: ['cold'], riders: [{formula: '2d8', type: 'fire', when: 'melee'}]})]}),
+  spell("Evard's Black Tentacles", 4, {range: 90, shape: 'cube', side: 20, concentration: true, duration: 60, persistent: true, difficult: true,
+    effects: onTriggers(condition('Restrained', {save: 'dex', escape: {ability: 'str'}}), zoneTriggers.casting).concat([
+      {...damage(dmg('3d6', 'bludgeoning')), trigger: 'start'},
+    ])}),
+  spell('Death Ward', 4, {range: 5, duration: 28800, targets: {base: 1, side: 'ally'},
+    effects: [status({name: 'Death Ward'})]}),
+  spell('Dimension Door', 4, {range: 500, shape: 'point',
+    effects: [{kind: 'teleport', trigger: 'cast', teleport: {who: 'self', sight: false}}]}),
+  spell('Confusion', 4, {range: 90, shape: 'circle', radius: 10, concentration: true, duration: 60,
+    effects: [condition('Incapacitated', {save: 'wis', repeatSave: 'end'})]}),
+  spell('Dominate Beast', 4, {range: 60, sight: true, concentration: true, duration: 60, targets: {base: 1, side: 'enemy', types: ['beast']},
+    effects: [condition('Charmed', {save: 'wis', repeatSave: 'damaged', dominated: true})]}),
+  spell('Staggering Smite', 4, {timing: 'bonus', range: 0, shape: 'self', concentration: true, duration: 60,
+    effects: [status({name: 'Staggering Smite', riders: [{formula: '4d6', type: 'psychic', when: 'weapon', consume: true}]})]}),
+  spell('Aura of Life', 4, {range: 0, shape: 'aura', radius: 30, concentration: true, duration: 600, persistent: true,
+    effects: [status({name: 'Aura of Life', resist: ['necrotic']})]}),
+  spell('Aura of Purity', 4, {range: 0, shape: 'aura', radius: 30, concentration: true, duration: 600, persistent: true,
+    effects: [status({name: 'Aura of Purity', resist: ['poison']})]}),
+];

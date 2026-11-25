@@ -1,17 +1,26 @@
+import {upgradeOpenedRoom, upgradeRoomState} from './room-upgrades.mjs';
+import {applyHestiasFury} from './hestias-fury.mjs';
 import {forecastTiles,scanForecastTiles,forecastImageData,refineForecastPixels} from './forecast-quality.mjs';
+import './custom-select.mjs';
+import {loadRestEncounters,restTableChoices,restPolicy,restRiskSummary,restBlocked,takeDungeonRest} from './dungeon-rests.mjs';
 import {openForecastReview} from './forecast-review.mjs';
 import { loadSpellRules, setSpellRuleContext, customSpellRule } from './spell-rule-store.mjs';
-import { customSpellCells, moveCustomSphere } from './custom-spells.mjs';
+import { customSpellCells, moveCustomSphere, fireZoneBeam } from './custom-spells.mjs';
+import { directional, needsEndpoint } from './spell-shapes.mjs';
+import { allowsWallRing, formRule } from './spell-animation-library.mjs';
+import { armReaction, disarmReaction, isArmed, reactionSpells } from './reactions.mjs';
+import { resetSceneBoard } from "./board-reset.mjs";
 import { commitRoomState, normalizeRoomState, roomBattle, travelRoom, roomMapChoices } from "./room-state.mjs";
 import { prepareMonsterRewards } from "./encounter-rewards.mjs";
-import { takeLoot, lootContents, carryBody, placeBody, syncRewardSheets, bodyWeight, initializeTreasure, releaseRevivedBodies } from "./world-interactions.mjs";
+import { withinReach, takeLoot, lootContents, carryBody, placeBody, syncRewardSheets, bodyWeight, initializeTreasure, releaseRevivedBodies } from "./world-interactions.mjs";
 import { createFloatingPanels } from "./floating-panels.mjs";
 import { createWallEditor } from './wall-editor.mjs';
+import { applyBakedWalls } from './baked-walls.mjs';
 import { getApiKey, setApiKey, clearApiKey, hasApiKey, isKeyRemembered, callGeminiVision, processForecastGeometry } from './ai-forecast.mjs';
 import { fogSettings, visionSettings, viewerVision, viewerMemory } from './dynamic-fog.mjs';
 import { knownRooms, forgetRoom, rememberRoom, rememberRooms, roomList } from './adventure-rooms.mjs';
 import { turnView, canTakeTurn, sharedTurnGroup, turnBudgetStamp } from './combat.mjs';
-import { tokenSize, actorCells, containsCell, touchesArea } from './actor-space.mjs';
+import { creatureSize, tokenSize, actorCells, containsCell, touchesArea } from './actor-space.mjs';
 import { drawMonsterArtwork, monsterArtwork } from "./monster-art.mjs";
 import { characterTokenArtwork, localTokenBlob, uploadSessionToken } from "./character-token.mjs";
 import { enrichCharacter } from "./character-rules.mjs";
@@ -25,10 +34,11 @@ import { createTokenMotion } from './token-motion.mjs';
 import { createGameChat } from "./game-chat.mjs";
 import { withActionEvent } from "./action-events.mjs";
 import { fogOfWarEnabled } from "./game-settings.mjs";
-import { buildActionBar, entryReason, renderActionBar, renderActionResources } from "./action-bar.mjs";
-import { classActions, classSkillCheck, classWeapons, migratePactResources, restParty, syncClassResources, useClassAction } from "./class-actions.mjs";
+import { buildActionBar, entryReason, renderActionBar, renderActionResources, toggleHotbarFilter, parseHotbarFilters } from "./action-bar.mjs";
+import { classActions, classSkillCheck, classWeapons, migratePactResources, shortRestsLeft, syncClassResources, useClassAction } from "./class-actions.mjs";
 import { canRescue, discoverStory, rescueSildar, storyPanel, storyVersion } from "./adventure-story.mjs";
 import { enemyTurnPending, runEnemyTurns } from "./enemy-turn.mjs";
+import { DOMINATE_ORDERS, issueDominateCommand, seizeDominateControl } from "./dominate.mjs";
 import { enemyInSight, engageEnemy, noticesEnemy, partyEscaped, partyVision, rememberVision } from "./exploration.mjs";
 import { exploredCells, hasExplored, saveExplored, forgetExploration } from "./fog-memory.mjs";
 import { addDoor, addWall, doorAt, mapFloor, mapWalls, removeDoor, removeWall, segKey, toggleDoor } from "./map-walls.mjs";
@@ -36,6 +46,8 @@ import { escape, plural, signed, text } from "./format.mjs";
 import { icon } from "./icons.mjs";
 import { attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord } from "./rules-library.mjs";
 import { cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap } from "./encounters.mjs";
+import { listHomebrew } from "./homebrew-store.mjs";
+import { monsterStatBlock } from "./homebrew-schema.mjs";
 import { defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt } from "./grid-view.mjs";
 import { createCamera, mapControls, mapHint, mapViewport } from "./map-camera.mjs";
 import {
@@ -46,7 +58,7 @@ import {
   actorIsUp, applyDamage, armorClass, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion, helpUp, throwHealingPotion,
   endInitiative, endTurn, fallingDamage, hasFeature, incapacitated, joinInitiative, keyAt, moveLeft,
   exploreToken, heal, lineClear, log, movementGroup, moveToken, newBattle, occupies, opportunity, placeToken, canStand, previewMovement, recordSpell, resolveDeflection, resolveOpportunity, rollDice,
-  rollStrike, slotRank, spellCells, spellTargetCount, startInitiative, supportedSpell, sustainWitchBolt, turnAction, wakeCreature,
+  rollStrike, sneakAttackStatus, slotRank, spellCells, spellTargetCount, startInitiative, supportedSpell, sustainWitchBolt, turnAction, wakeCreature,
 } from "./combat.mjs";
 
 const saveKey = "wayfarer-encounters-v1";
@@ -60,6 +72,7 @@ let moduleId = "training";
 let map = trainingMap;
 let context;
 let selectedId = "";
+let lastPortraitClick;
 let targetId = "";
 let combatChoice = "";
 let battle;
@@ -77,6 +90,7 @@ let cover = "";
 let rollMode = "";
 let customWeapon = { name: "Custom strike", bonus: "", damage: "", type: "", normalRange: "", reach: "" };
 let selectedCreature = 0;
+let selectedHomebrew = 0;
 let selectedParty = "";
 let camera;
 let focusedGameMap;
@@ -89,16 +103,24 @@ let aiForecastMessage = "";
 let table;
 let tableOpen = false;
 let partyOpen = false;
+let restOpen=false;
 let tableMessage = "";
 let needsHostSignIn = false;
 let showInvitation;
 let category = "move";
-let hotbarTab = "all", hotbarFilter = "", hotbarSelection = "", hotbarActor = "", hotbarExpanded = false, hotbarTools = false;
+let hotbarTab = "all", hotbarFilter = "", hotbarSearch = "", hotbarSelection = "", hotbarActor = "", hotbarExpanded = false, hotbarTools = false;
 let eventLogMode = 'compact';
 try { const saved = localStorage.getItem('wayfarer-log-mode-v1'); if (['compact', 'expanded', 'collapsed'].includes(saved)) eventLogMode = saved; } catch { }
-let eventLogPlacement = 'separate';
-try { const saved = localStorage.getItem('wayfarer-activity-placement-v1'); if (['separate', 'chat', 'hidden'].includes(saved)) eventLogPlacement = saved; } catch { }
-function setActivityPlacement(value) { eventLogPlacement = value; try { localStorage.setItem('wayfarer-activity-placement-v1', value); } catch { } redraw(); }
+let eventLogPlacement = 'chat';
+try {
+  const saved = localStorage.getItem('wayfarer-activity-placement-v2');
+  if (['separate', 'chat', 'hidden'].includes(saved)) eventLogPlacement = saved;
+} catch { }
+function setActivityPlacement(value) {
+  eventLogPlacement = value;
+  try { localStorage.setItem('wayfarer-activity-placement-v2', value); } catch { }
+  redraw();
+}
 const eventLogScroll = new Map(); let eventLogScope;
 function setEventLogMode(mode) {
   eventLogMode = mode;
@@ -157,7 +179,16 @@ function displayedActor(actor) {
   return healthPresentation.actor(committed ? { ...actor, hp: committed.hp, tempHp: committed.tempHp, dead: committed.dead, prone: committed.prone } : actor);
 }
 function prepareHealth() { healthPresentation.sync(table?.id ?? map.key, (table?.state?.battle ?? battle)?.actionEvents ?? []); }
-const tokenHover = createTokenHover();
+let hoverFrame;
+const tokenHover = createTokenHover(id => {
+  if(!animatedBoard || animatedBoard.camera!==camera || !context?.game)return;
+  animatedBoard.options.hovered=id;
+  if(hoverFrame!=null)return;
+  hoverFrame=requestAnimationFrame(()=>{
+    hoverFrame=null;
+    if(animatedBoard?.camera===camera && camera && context?.game)paintAnimationFrame();
+  });
+});
 let animatedBoard;
 function paintAnimationFrame() {
   if (animatedBoard && animatedBoard.camera === camera && context?.game) { const { drawingMap, state, options } = animatedBoard; camera.paint((canvas, view) => drawGrid(canvas, view, drawingMap, state, options)); }
@@ -171,8 +202,8 @@ try {
   controller = localStorage.getItem(controllerKey) || controller;
   localStorage.setItem(controllerKey, controller);
 } catch { }
-let rooms = knownRooms(), roomsLoading = false, roomsError = '', roomSetupOpen = false, roomListRequest = 0, deletingRoom = '';
-const roomDraft = { name: '', username: '', prepared: false, party: null };
+let rooms = knownRooms(), roomsLoading = false, roomsError = '', roomListRequest = 0, deletingRoom = '';
+const roomDraft = { name: '', username: '', prepared: false, party: null, adventure: 'training' };
 async function refreshRooms() {
   const request = ++roomListRequest; rooms = knownRooms(); roomsLoading = true; roomsError = '';
   try {
@@ -186,26 +217,31 @@ async function refreshRooms() {
   }
 }
 function roomNameDefault() {
-  const name = context?.adventures.find(entry => entry.id === map.module)?.name ?? map.title;
-  return (name + ' · Room ' + (rooms.filter(room => room.adventure === map.module).length + 1)).slice(0, 80);
+  const name = context?.adventures.find(entry => entry.id === roomDraft.adventure)?.name ?? (roomDraft.adventure === "training" ? trainingMap.title : roomDraft.adventure);
+  return (name + ' · Room ' + (rooms.filter(room => room.adventure === roomDraft.adventure).length + 1)).slice(0, 80);
 }
-function roomCreationForm() {
+function roomCreationForm(moduleOptions, ready) {
   const selected = roomDraft.party ?? new Set(context.characters.slice(0, 4).map(character => character.id));
   return `<form id="create-room-form" class="room-create-form">
+    <div class="play-field-row">
+      ${field("Adventure","play-module",moduleOptions,pending?"disabled":"")}
+      ${roomDraft.adventure!=="training"&&ready?field("Starting map","play-map",maps.map(entry=>option(entry.key,entry.title,map.key===entry.key)),pending?"disabled":""):""}
+    </div>
+    ${roomDraft.adventure!=="training"&&!hasArchive()?archivePanel():""}
     <div class="play-field-row">${input('Room name', 'new-room-name', roomDraft.name || roomNameDefault(), 'text', 'required maxlength="80"')}
       ${input('Your username', 'new-room-username', roomDraft.username || rememberedUsername(), 'text', 'required maxlength="24" autocomplete="nickname"')}</div>
-    <div class="room-party-guidance"><p>1. Import your character sheets. 2. Select up to four characters below. 3. Create the room.</p><button type="button" class="button outline small" data-action="upload">Import character sheets</button></div>
+    <div class="room-party-guidance"><p>You can add more characters in the room.</p><button type="button" class="button outline small" data-action="upload">Import character sheets</button></div>
     ${context.characters.length ? `<fieldset class="room-party-picker"><legend>Starting party · choose up to four</legend>${context.characters.map(character =>
     `<label><input type="checkbox" name="room-character" value="${escape(character.id)}" ${selected.has(character.id) ? 'checked' : ''} ${roomDraft.prepared ? 'disabled' : ''}>${escape(character.name)}</label>`).join('')}</fieldset>` :
-      '<p class="play-hint">The practice yard includes Rowan. Import characters to start an adventure with your own party.</p>'}
-    <label class="room-prepared"><input id="new-room-prepared" type="checkbox" ${roomDraft.prepared ? 'checked' : ''}> Use the prepared encounter below, including its current party and progress</label>
-    <div class="play-action-row"><button type="submit" class="button primary small" ${pending || sceneJobs.has(battle) ? 'disabled' : ''}>${pending ? 'Preparing room…' : 'Create room'}</button>
-      <span class="play-hint">${escape(map.title)} · Saves automatically</span></div>
+      (roomDraft.adventure==='training'?'<p class="play-hint">The practice yard includes a ready-to-play character.</p>':'')}
+    ${roomDraft.prepared?'<p class="play-hint">The room will use your prepared encounter and its party.</p>':''}
+    <div class="play-action-row"><button type="submit" class="button primary small" ${pending || !ready || sceneJobs.has(battle) ? 'disabled' : ''}>${pending ? 'Preparing room…' : 'Create room'}</button>
+      <span class="play-hint">${ready?"Saves automatically":""}</span></div>
     <p class="room-create-status" role="status">${escape(status || tableMessage)}</p>
   </form>`;
 }
 async function createAdventureRoom() {
-  if (pending || table) return;
+  if (pending || table || !context?.newRoom || map.module!==roomDraft.adventure || (map.module!=="training"&&!hasArchive())) return;
   const name = (roomDraft.name || roomNameDefault()).normalize('NFKC').trim(), username = (roomDraft.username || rememberedUsername()).normalize('NFKC').trim();
   if (!name || name.length > 80 || !username || username.length > 24) { status = 'Enter a room name and a username.'; redraw(); return; }
   const characters = context.characters.filter(character => (roomDraft.party ?? new Set(context.characters.slice(0, 4).map(character => character.id))).has(character.id));
@@ -218,8 +254,7 @@ async function createAdventureRoom() {
   battle = fresh; selectedId = ''; pending = true; status = ''; redraw();
   try {
     await launchGame({ roomName: name, username }, characters);
-    roomDraft.name = ''; roomDraft.prepared = false; rooms = knownRooms(); roomSetupOpen = false;
-    root()?.querySelector('#room-setup')?.removeAttribute('open');
+    roomDraft.name = ''; roomDraft.prepared = false; rooms = knownRooms();
   } catch (error) { if (location.hash === route) status = error.message; }
   finally {
     if (battle === fresh) ({ battle, selectedId, room, tool, category,previewState } = previous);
@@ -229,8 +264,9 @@ async function createAdventureRoom() {
 
 let pathPreview;
 let previewMessage = "";
+let interactionPosition = null;
 let objectTarget = null, bodyPlacement = '', potionUse = 'drink';
-let spellEnd=null,spellHotSide='left',controlledZone=null;
+let spellEnd=null,spellHotSide='left',spellWallForm='wall',controlledZone=null;
 let spellSquare;
 let castSlot = "";
 let breathType = "fire";
@@ -344,10 +380,13 @@ function paintTokenPreviews(images) {
 }
 
 function ensureScene(entry = map, state = battle) {
-  if (entry.module === "training" || state.sceneReady) return Promise.resolve();
+  if (entry.module === "training") return Promise.resolve();
+  if (state.sceneReady && state.wallData) return Promise.resolve();
   if (sceneJobs.has(state)) return sceneJobs.get(state);
-  const loading = populateScene(entry, state).then(() => {
-    if (!table && battle===state && map.key===entry.key) saveBattle(entry,state);
+  const fresh = !state.sceneReady;
+  const loading = Promise.all([applyBakedWalls(entry, state), fresh ? populateScene(entry, state) : null]).then(([baked]) => {
+    if (baked && map === entry && battle === state) rememberVision(state, entry);
+    if ((baked || fresh) && !table && battle===state && map.key===entry.key) saveBattle(entry,state);
   }).catch(() => {
     if (map === entry && battle === state) status = "Some starting tokens could not be read. Reopen the map to retry.";
   }).finally(() => {
@@ -356,6 +395,16 @@ function ensureScene(entry = map, state = battle) {
   });
   sceneJobs.set(state, loading);
   return loading;
+}
+
+function wallAimRule() {
+  if (category !== 'spell' || !spellSquare || spellEnd) return null;
+  const actor = selectedActor();
+  const choice = combatChoice === '' ? null : choices(actor)[Number(combatChoice)];
+  const effect = choice?.usable && choice.mode === 'spell' ? supportedSpell(choice.data.reference || choice.data.key) : null;
+  if (!effect?.custom) return null;
+  const spellDef = formRule(effect.definition, allowsWallRing(effect.definition) ? spellWallForm : undefined);
+  return spellDef && needsEndpoint(spellDef) ? spellDef : null;
 }
 
 function paintBoard() {
@@ -367,7 +416,10 @@ function paintBoard() {
   const effect = choice?.usable && choice.mode === "spell" ? supportedSpell(choice.data.reference || choice.data.key) : null;
   const firstRank = choice?.data?.level && Object.keys(actor.slots).find((rank) =>
     Number(rank) >= choice.data.level && actor.slots[rank].current > 0);
-  const footprint=spellSquare&&effect?.custom?customSpellCells(effect.definition,actor,spellSquare,map,{end:spellEnd,hotSide:spellHotSide}):spellSquare ? effect && (effect.area || effect.cone) && actor ?
+  const spellDef=effect?.custom?formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined):null;
+  const aimingWall = spellDef && needsEndpoint(spellDef) && spellSquare && !spellEnd;
+  const aimEnd = spellEnd ?? (aimingWall && cursor && Number.isFinite(cursor.x) ? {x: cursor.x, y: cursor.y} : undefined);
+  const footprint=spellSquare&&spellDef?customSpellCells(spellDef,actor,spellSquare,map,{end:aimEnd,hotSide:spellHotSide}):spellSquare ? effect && (effect.area || effect.cone) && actor ?
     spellCells(battle, actor, spellSquare, effect, map, slotRank(castSlot || firstRank || actor.resources?.pactMagic?.slotLevel || effect.level)) :
     new Set([keyAt(spellSquare.x, spellSquare.y)]) : null;
   const vision = context.game ? viewerVision(battle, map, table ? controller : null) : null;
@@ -379,8 +431,9 @@ function paintBoard() {
   paintTokenPreviews(tokenImages);
   const alignmentOpen = element.querySelector("#grid-settings")?.open;
   const drawingMap = alignmentOpen && gridDraft ? { ...map, ...gridGeometry(map, gridDraft) } : map;
+  const previewCursor=cursor?.movement && (tool!=="move" || !["move","interact"].includes(category) || bodyPlacement) ? null : cursor;
   const options = {
-    room: context.game && tool !== "room" ? null : room, selected: actor?.id, target: selectedTarget, cursor, art,
+    room: context.game && tool !== "room" ? null : room, selected: actor?.id, target: selectedTarget, hovered: context.game ? tokenHover.hovered : undefined, cursor:previewCursor, art,
     tokenPositions: context.game ? tokenMotion.positions : null, movementLabels: context.game ? tokenMotion.labels : null,
     path: pathPreview, visible, fog: fogActive() && sight ? { ...vision, memory: viewerMemory(battle, map, table ? controller : null), settings: fogSettings(battle) } : null,
     wallEditor: wallEditor.active ? wallEditor : null,
@@ -394,6 +447,13 @@ function paintBoard() {
   const frame = element.querySelector('.board-frame')?.parentElement;
   if (frame) { let bar = frame.querySelector('.wall-editor-host'); if (wallEditor.active) { if (!bar) { bar = document.createElement('div'); bar.className = 'wall-editor-host'; frame.append(bar); } bar.innerHTML = wallEditor.toolbar(); } else bar?.remove(); }
   tokenHover.sync({ map: drawingMap, battle: { ...battle, actors: battle.actors.map(actor => tokenMotion.positions.has(actor.id) && context.game ? { ...displayedActor(actor), ...tokenMotion.positions.get(actor.id) } : displayedActor(actor)) }, visible, surface: element.querySelector('#play-grid'), gesturing: () => camera?.gesturing() });
+  combatCues.aimPreview(aimingWall && aimEnd ? {
+    square: spellSquare,
+    end: aimEnd,
+    name: spellDef.name,
+    rule: spellDef,
+    cells: footprint ? [...footprint] : [],
+  } : null);
 }
 
 function setAlignment(alignment) {
@@ -431,8 +491,6 @@ function updateArtwork() {
   const note = root()?.querySelector("#map-art-note");
   const picker = root()?.querySelector('[data-play="art"]');
   if (note) note.textContent = artworkNote;
-  const gameNote = root()?.querySelector("#game-map-status");
-  if (gameNote && !status && !room?.entry?.name) gameNote.textContent = artworkNote;
   if (picker) picker.textContent = art ? "Change map image" : "Choose map image";
   paintBoard();
 }
@@ -519,6 +577,7 @@ function useMap(entry,{fresh=false}={}) {
   else if(!fresh && !previewState && battles[entry.key])saved=structuredClone(battles[entry.key]);
   else previewState=null;
   battle=saved ?? newBattle();battle.spellRules=loadSpellRules();
+  battle.actors.forEach(applyHestiasFury);
   const migrated = map.sourceGrid && saved && !saved.alignedGrid;
   if (map.sourceGrid) {
     Object.assign(map, gridGeometry(map));
@@ -659,13 +718,34 @@ function hotbarEntries(actor = selectedActor()) {
 function hotbarUtilities(actor) {
   const skills = Object.entries(actor?.skillBonuses ?? {}).filter(([, bonus]) => Number.isFinite(bonus));
   return `<div class="hotbar-utilities">
-    ${!battle.round ? '<div class="play-action-row">' + actionButton('Short rest · 1 hour', 'short-rest') + actionButton('Long rest · 8 hours', 'long-rest') + '</div>' : ''}
+    ${!battle.round ? '<div class="play-action-row">' + actionButton('Rest · '+shortRestsLeft(battle)+' short rests left', 'game-rest') + '</div>' : ''}
     ${skills.length ? `<form id="class-skill-form" class="play-form">${field('Skill check', 'class-skill', skills.map(([name]) => option(name, name)))}<button class="button outline small" type="submit">Roll check</button></form>` : ''}</div>`;
 }
 
+function restPanel(){
+ const choices=restTableChoices(map),policy=restPolicy(map,battle),actor=selectedActor(),permission=!actor||actor.side!=='party'||!canControl(actor)?'Select a party member you control.':'',waiting=choices.loading?'Loading dungeon encounter tables…':'',selection=choices.policies.length&&!policy?'Choose the applicable encounter table.':'',busy=table?.writing?'Saving the party action…':'';
+ const disabled=permission||waiting||selection||busy;
+ const progress=policy?battle.rest?.encounterProgress?.[policy.id]??0:0;
+ const checks=hours=>policy?Math.floor((progress+hours*3600)/(policy.intervalHours*3600)):0;
+ return `<header class="rest-panel-heading"><h2>Rest the party</h2><button type="button" class="game-button" data-play="game-rest" aria-label="Close rest panel">${icon('close',16)}</button></header><p>${shortRestsLeft(battle)} / 2 short rests remaining. A completed long rest restores both.</p>
+ ${choices.policies.length?field('Dungeon encounter table','rest-table',choices.policies.length>1?[option('','Choose a table',!policy),...choices.policies.map(p=>option(p.id,p.caption,p.id===policy?.id))]:choices.policies.map(p=>option(p.id,p.caption,true))):''}
+ <p class="rest-danger-note">${escape(waiting||restRiskSummary(policy))}</p>${policy?.minArea?`<p>Source restriction: areas ${policy.minArea} and beyond. Safe areas do not make checks.</p>`:''}${policy?.areaIds?'<p>This source table applies only in its authored room.</p>':''}
+ <div class="rest-choice"><h3>Short rest · 1 hour</h3><p>Recover half maximum HP and short-rest resources. Spell slots recover only when their class rules allow it.${policy?' Up to '+checks(1)+' encounter checks at this location.':''}</p>${actionButton('Short rest ('+shortRestsLeft(battle)+'/2 left)','short-rest',{disabled:Boolean(disabled||restBlocked(battle))})}</div>
+ <div class="rest-choice"><h3>Long rest · 8 hours</h3><p>Recover HP, spell slots and class resources.${policy?' Up to '+checks(8)+' encounter checks at this location.':''}</p>${actionButton('Long rest','long-rest',{disabled:Boolean(disabled||restBlocked(battle,true))})}</div>
+ <p role="status">${escape(disabled||restBlocked(battle,true)||status)}</p>`;
+}
+
 function gameOptions(actor) {
+  const dominateSelected = () => {
+    if (!(context.game && category === 'dominate' && actor && canControl(actor) && actorIsUp(actor) && !incapacitated(actor) && !battle.classReaction && !battle.movement)) return '';
+    const entry = hotbarEntries(actor).find(item => item.id === hotbarSelection);
+    if (entry?.mode !== 'dominate') return '';
+    return `<div class="hotbar-selected-heading"><span>${icon(entry.symbol, 23)}<strong>${escape(entry.name)}</strong></span>
+      <button type="button" class="game-button" data-play="hotbar-cancel" aria-label="Cancel selected action">${icon('close', 15)}</button></div>` +
+      dominateOptions(actor);
+  };
   if (!actor || !canControl(actor) || !actorIsUp(actor) || incapacitated(actor) || battle.classReaction || battle.movement ||
-    battle.round && !canTakeTurn(battle, actor)) return playOptions(actor);
+    battle.round && !canTakeTurn(battle, actor)) return dominateSelected() || playOptions(actor);
   if (hotbarTools) return '<div class="hotbar-selected-heading"><strong>Checks' + (!battle.round ? ' & resting' : '') + '</strong>' + actionButton('Close', 'hotbar-cancel') + '</div>' + hotbarUtilities(actor);
   const entry = hotbarEntries(actor).find(entry => entry.id === hotbarSelection);
   if (!entry || entry.mode === 'move') return pendingSquare ? '<div class="play-action-row">' + actionButton('Move here', 'commit-move', { primary: true }) + actionButton('Cancel', 'hotbar-cancel') + '</div>' : '';
@@ -699,6 +779,8 @@ function playOptions(actor) {
   </form>`;
   if (actor.side === "hostile") return "<p>The game is running " + escape(actor.name) + "’s turn.</p>";
   if (!canControl(actor)) return "<p>Waiting for " + escape(actor.name) + ".</p>";
+  // Telepathic Dominate commands are free and usable while conscious, including off-turn.
+  if (context.game && category === "dominate" && actorIsUp(actor) && !incapacitated(actor)) return dominateOptions(actor);
   if (battle.round && !canTakeTurn(battle, actor)) return '<div class="play-action-row">' +
     (pendingSquare ? actionButton("Move here", "commit-move", { primary: true }) : "") +
     "<p>Waiting for this character’s next turn.</p></div>";
@@ -712,13 +794,15 @@ function playOptions(actor) {
     return '<div class="item-action-choices">'+actionButton('Control sphere · Bonus action','sphere-control',{disabled:Boolean(controlReason)})+actionButton('Cast again · Action','sphere-recast',{disabled:Boolean(castReason)})+'</div><p>Control the active sphere without another spell slot, or cast a replacement.</p>';
   }
   if(context.game&&category==='spell-zone')return '<p>Choose a destination or creature to ram. Uses a bonus action, with no additional spell slot.</p>';
+  if(context.game&&category==='zone-beam')return '<p>Choose a creature you can see within 60 feet of the wall. Uses your action for a ranged spell attack.</p>';
   if (context.game && category === "feature") return featureOptions(actor);
+  if (context.game && category === "dominate") return dominateOptions(actor);
   const { list, index, choice, targets, target } = combatSelection(actor, visibleTokens());
   const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.reference || choice.data.key) : null;
   const pickArea = effect?.area || effect?.cone || effect?.teleport;
   const pickTarget = choice && (choice.mode !== "potion" || potionUse === 'throw') && !effect?.self && !pickArea;
   const asleep = battle.round && battle.actors.find((target) => occupies(target) && target.side === actor.side &&
-    condition(target, "Asleep") && distanceFt(actor, target) <= 5);
+    (condition(target, "Asleep") || condition(target, "Hypnotic Pattern")) && distanceFt(actor, target) <= 5);
   const moveActions = battle.round ? ["dash", "dodge", "disengage"].map((act) =>
     actionButton(act.charAt(0).toUpperCase() + act.slice(1), act, { disabled: Boolean(turnView(battle, actor).action) })).join("") +
     (actor.nimbleEscape || hasFeature(actor, "Cunning Action") ? actionButton("Disengage (bonus)", "bonus-disengage", { disabled: turnView(battle, actor).bonusUsed }) : "") +
@@ -734,26 +818,30 @@ function playOptions(actor) {
   const pact = actor.resources?.pactMagic;
   const slotOptions = choice?.mode === "spell" && choice.data.level
     ? [...(usage && (usage.atWill || featurePool?.current >= (usage.cost ?? 1)) ? [["0", { feature: true, current: featurePool?.current }]] : []),
-    ...Object.entries(actor.slots).filter(([level, pool]) => Number(level) >= choice.data.level && pool.current > 0),
-    ...(pact?.current > 0 && pact.slotLevel >= choice.data.level ? [["pact:" + pact.slotLevel, pact]] : [])]
+    ...(usage?.itemOnly ? [] : Object.entries(actor.slots).filter(([level, pool]) => Number(level) >= choice.data.level && pool.current > 0)),
+    ...(!usage?.itemOnly && pact?.current > 0 && pact.slotLevel >= choice.data.level ? [["pact:" + pact.slotLevel, pact]] : [])]
     : [];
   const selectedRank = slotRank(castSlot || slotOptions[0]?.[0] || 0);
   const rank = selectedRank || (usage ? choice.data.level : 0);
   const auxiliary = effect ? spellTargetCount(effect, actor.level, rank) - 1 : 0;
   const spellTargets = effect?.humanoid ? targets.filter((entry) => !entry.creatureType || entry.creatureType === "humanoid") :
     effect?.breath ? targets.filter((entry) => entry.side === actor.side) : targets;
+  const sneak=choice?.mode==='weapon'&&actor.classRules?.sneakDice&&target?sneakAttackStatus(battle,actor,target,choice.data,{mode:rollMode,map}):null;
   const missingWeaponTarget = context.game && category === "weapon" && pickTarget && !target;
   return `<form class="play-form" id="combat-form">
     ${choice?.mode === 'potion' ? `<div class="item-action-choices" role="group" aria-label="Potion use"><button type="button" data-play="potion-use" data-id="drink" aria-pressed="${potionUse === 'drink'}">Drink</button><button type="button" data-play="potion-use" data-id="throw" aria-pressed="${potionUse === 'throw'}">Throw · 30 ft</button></div>` : ''}
     ${context.game ? '' : field("Action", "combat-choice", [
     option("", "Choose " + (context.game ? { weapon: "a weapon", spell: "a spell", potion: "an item" }[category] : "an action"), index === ""),
     ...legalChoices.map(({ entry, index: position }) => option(String(position), entry.name + (entry.data?.prepared === false ? " · unprepared" : entry.usable ? "" : " · manual"), index === String(position)))])}
-    ${effect?.custom&&['line','ring'].includes(effect.definition.shape)?field('Damaging side','spell-hot-side',(effect.definition.shape==='ring'?[['inside','Inside'],['outside','Outside']]:[['left','Left of drawn wall'],['right','Right of drawn wall']]).map(([value,label])=>option(value,label,value===spellHotSide))):''}
-    ${pickArea ? `<p class="game-spell-note">${spellSquare ? "Selected square " + (spellSquare.x + 1) + ", " + (spellSquare.y + 1) :
-      effect.custom&&effect.definition.shape==='line'?'Choose a start point, then the wall endpoint.':effect.teleport ? "Choose an unoccupied destination on the map." : effect.cone ? "Choose the direction of the cone on the map." :
-        "Choose a point on the map."}</p>` : ""}
+    ${effect?.custom&&allowsWallRing(effect.definition)?field('Wall form','spell-wall-form',[['wall','Wall'],['ring','Ring']].map(([value,label])=>option(value,label,value===spellWallForm))):''}
+    ${effect?.custom&&['wall','ring'].includes(formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined).shape)?field('Damaging side','spell-hot-side',(formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined).shape==='ring'?[['inside','Inside'],['outside','Outside']]:[['left','Left of drawn wall'],['right','Right of drawn wall']]).map(([value,label])=>option(value,label,value===spellHotSide))):''}
+    ${effect?.custom&&effect.definition.weaponAttack?field('Melee weapon','spell-weapon',classWeapons(actor,battle).filter(weapon=>!weapon.normalRange&&Number.isFinite(weapon.bonus)).map((weapon,index)=>option(String(index),weapon.name,true))||[option('','No melee weapon')]):''}
+    ${pickArea ? `<p class="game-spell-note">${spellSquare ? "Selected square " + (spellSquare.x + 1) + ", " + (spellSquare.y + 1) + (spellEnd ? " → " + (spellEnd.x + 1) + ", " + (spellEnd.y + 1) : "") :
+      effect.custom&&needsEndpoint(formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined))?'Choose a start point, then the wall endpoint.':effect.custom&&directional(formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined))||effect.cone?'Choose the direction of the effect on the map.':effect.teleport ? "Choose an unoccupied destination on the map." :
+        "Choose a point on the map. The square can be empty."}</p>` : ""}
     ${pickTarget ? field("Target", "target-select", [option("", "Choose target", !target),
         ...spellTargets.map((entry) => option(entry.id, entry.name, entry.id === target?.id))]) : ""}
+    ${sneak?`<p class="game-spell-note">${sneak.eligible?'+'+sneak.dice+'d6 Sneak Attack on hit':'Sneak Attack: '+escape(sneak.reason)}</p>`:''}
     ${auxiliary ? `<div class="play-field-row">${Array.from({ length: auxiliary }, (_, index) =>
           field((effect.beams ? "Beam " : effect.missiles ? "Dart " : "Target ") + (index + 2), "extra-target-" + index,
             [option("", effect.beams || effect.missiles ? "Same as first target" : "Optional", !extraTargets.get(index)),
@@ -779,7 +867,7 @@ function playOptions(actor) {
     </div>${context.game ? '</details>' : ''}` : ""}
     ${effect?.temporary && actor.tempHp ? '<label class="game-spell-note"><input id="keep-temp" type="checkbox"> Keep current temporary HP</label>' : ""}
     ${choice?.mode === "spell" && choice.data.note ? `<p class="game-spell-note">${escape(choice.data.note)}</p>` : ""}
-    ${choice?.mode === "spell" && choice.data.reference ? `<button type="button" class="spell-link" data-action="spell" data-id="${escape(choice.data.reference)}">Spell rules</button>` : ""}
+    ${choice?.mode === "spell" && choice.data.reference ? `<button type="button" class="spell-link" data-action="spell" data-id="${escape(choice.data.reference)}">Spell library</button>` : ""}
     ${choice && !choice.usable ? `<p class="play-hint">${choice.data?.prepared === false ? "This spell is unprepared." :
       choice.data?.customUse ? "This spell uses a custom rule or item charge from the sheet." : "This spell’s effect needs a table ruling."}</p>` : ""}
     <div class="play-action-row">${choice?.usable || choice?.manual ? `<button class="button primary small" type="submit"
@@ -787,6 +875,29 @@ function playOptions(actor) {
         choice.mode === "spell" ? (choice.usable ? "Cast spell" : "Record manual cast") : choice.mode === "potion" ? "Use item" : "Roll attack"}</button>` : ""}
       ${!context.game ? moveActions : ""}
       ${actor.concentration?.bolt && battle.round && !turnView(battle, actor).action ? actionButton("Sustain Witch Bolt", "witch-bolt") : ""}
+    </div>
+  </form>`;
+}
+
+function dominateOptions(actor) {
+  const entry = hotbarEntries(actor).find((item) => item.id === hotbarSelection);
+  const thrall = battle.actors.find((creature) => creature.id === entry?.thrallId);
+  if (!thrall) return "<p>That creature is no longer dominated.</p>";
+  const targets = battle.actors.filter((creature) => occupies(creature) && actorIsUp(creature) && creature.id !== thrall.id)
+    .sort((a, b) => distanceFt(thrall, a) - distanceFt(thrall, b));
+  const order = thrall.dominateOrder;
+  const orderLabel = order ? (DOMINATE_ORDERS.find((item) => item.id === order.kind)?.label ?? order.kind) +
+    (order.targetId ? " " + (battle.actors.find((creature) => creature.id === order.targetId)?.name ?? "") : "") : "";
+  const actionUsed = battle.round && turnView(battle, actor).action;
+  const offTurn = battle.round && !canTakeTurn(battle, actor);
+  return `<form id="dominate-form" class="play-form">
+    <p>${escape(thrall.name)} is dominated.${thrall.dominateControl?.from === actor.id ? " Total control is active." : ""}${order ? " Standing order: " + escape(orderLabel.trim()) + "." : " No standing order."}</p>
+    ${field("Command", "dominate-order", DOMINATE_ORDERS.map((item) => option(item.id, item.label + (item.needsTarget ? "" : " · no target"), item.id === (order?.kind || "attack"))))}
+    ${field("Target", "dominate-target", [option("", "Choose target", true), ...targets.map((creature) => option(creature.id, creature.name))])}
+    <p class="game-spell-note">Telepathic commands are free and can be issued any time you are conscious. Total control spends your action and lasts until the end of your next turn.</p>
+    <div class="play-action-row">
+      <button class="button primary small" type="submit" name="dominate-intent" value="command">Issue command</button>
+      <button class="button outline small" type="submit" name="dominate-intent" value="control"${actionUsed || offTurn || !battle.round ? " disabled" : ""}>Total control</button>
     </div>
   </form>`;
 }
@@ -799,9 +910,13 @@ function featureOptions(actor) {
   const inspiration = actor.inspiration ? actionButton(actor.inspirationArmed ? "Cancel inspiration" : "Use inspiration on next roll", "arm-inspiration") : "";
   const cuttingWords = hasFeature(actor, "Cutting Words") ? actionButton(actor.cuttingWords ? "Cutting Words reactions on" : "Enable Cutting Words reactions", "cutting-words") : "";
   const freeHand = hasFeature(actor, "Deflect Missiles") ? actionButton("Free hand for catching missiles: " + (actor.freeHand ? "Yes" : "No"), "deflect-hand") : "";
+  const reactionArm = reactionSpells(actor, battle.spellRules).map(({spell, rule}) => {
+    const ref = rule.reference, armed = isArmed(actor, ref);
+    return actionButton((armed ? "Armed · " : "Arm · ") + rule.name, armed ? "disarm-reaction" : "arm-reaction", {id: ref});
+  }).join("");
   if (!battle.round) return '<div class="feature-resource-row">' + resources + '</div><div class="play-action-row">' +
-    actionButton("Short rest · 1 hour", "short-rest") + actionButton("Long rest · 8 hours", "long-rest") +
-    actionButton("Feature rules", "inspect", { id: actor.id }) + inspiration + cuttingWords + freeHand + "</div>" + checks;
+    actionButton("Rest · "+shortRestsLeft(battle)+" short rests left", "game-rest") +
+    actionButton("Feature rules", "inspect", { id: actor.id }) + inspiration + cuttingWords + freeHand + reactionArm + "</div>" + checks;
   const actions = classActions(actor, battle);
   const entry = actions.find((action) => action.id === featureChoice) ?? actions[0];
   const visible = visibleTokens();
@@ -822,7 +937,7 @@ function featureOptions(actor) {
       value="${escape(target.id)}"${target.side === "hostile" ? " checked" : ""}> ${escape(target.name)}</label>`).join("")}</fieldset>` : ""}
     <button class="button primary small" type="submit"${used || entry.attack && !enemies.length ? " disabled" : ""}>Use ability</button>
   </form>` : "<p>Open the character’s Actions tab to read its class features.</p>") +
-    '<details class="hotbar-utilities"><summary>More class controls</summary><div class="play-action-row">' + actionButton("Feature rules", "inspect", { id: actor.id }) + inspiration + cuttingWords + freeHand + "</div>" + checks + '</details>';
+    '<details class="hotbar-utilities"><summary>More class controls</summary><div class="play-action-row">' + actionButton("Feature rules", "inspect", { id: actor.id }) + inspiration + cuttingWords + freeHand + reactionArm + "</div>" + checks + '</details>';
 }
 
 function setupControls() {
@@ -854,6 +969,7 @@ function sceneMarkers(region) {
 
 function roomPanel() {
   const roster = room ? roomRoster(map, room) : [];
+  const homebrew = listHomebrew("monsters");
   const authored = map.module === "LMoP" && map.id === "1ab";
   const starting = battle.actors.filter((actor) => actor.origin === areaKey(room) && actor.side !== "party");
   const unavailable = battle.unplacedScene?.[areaKey(room)] ?? 0;
@@ -876,6 +992,10 @@ function roomPanel() {
          ${field("Creature reference", "room-creature", roster.map((entry, index) => option(index, entry.nickname ?? entry.name, index === selectedCreature)))}
          ${actionButton("Add token", "add-room-monster")}
        </div>` : ""}
+       ${!battle.round && !sceneJobs.has(battle) && homebrew.length ? `<div class="play-inline">
+         ${field("Homebrew creature", "homebrew-creature", homebrew.map((entry, index) => option(index, entry.name, index === selectedHomebrew)))}
+         ${actionButton("Add homebrew", "add-homebrew-monster")}
+       </div>` : !battle.round && !homebrew.length ? '<p class="play-hint">Save creatures under Homebrew to place custom tokens here.</p>' : ""}
        ${sceneMarkers(room)}
        ${room.entry ? `<details><summary>Room entry</summary><div class="room-text">${formatEntries(room.entry.entries)}</div></details>` : ""}
     </div>` : '<p>Pick an area from the list or select a highlighted room on the grid.</p>'}
@@ -1008,12 +1128,13 @@ function readAlignment() {
 }
 
 function playPage() {
-  const isTraining = map.module === "training";
-  const moduleOptions = [option("training", "Wayfarer practice yard", isTraining)];
-  if (hasArchive()) {
-    moduleOptions.push(...context.adventures.filter((entry) => entry.maps?.some((item) => item.grid === "square"))
-      .map((entry) => option(entry.id, entry.name, moduleId === entry.id)));
-  }
+  if(!context.newRoom)return roomList(rooms,{loading:roomsLoading,error:roomsError,deleting:deletingRoom})+joinPanel();
+  const isTraining=roomDraft.adventure==="training";
+  const ready=map.module===roomDraft.adventure && (isTraining||hasArchive());
+  const adventures=context.adventures.filter(entry=>entry.maps?.some(item=>item.grid==="square"));
+  const moduleOptions=[option("training","Wayfarer practice yard",isTraining),...adventures
+    .map(entry=>option(entry.id,entry.name,roomDraft.adventure===entry.id))];
+  if(!isTraining&&!adventures.some(entry=>entry.id===roomDraft.adventure))moduleOptions.push(option(roomDraft.adventure,roomDraft.adventure,true));
   const tools = [
     ["room", "Inspect room"],
     ["move", battle.round ? "Move token" : "Place token"],
@@ -1021,20 +1142,18 @@ function playPage() {
     ["difficult", "Difficult terrain"],
     ["clear", "Clear terrain"]
   ];
-  return `${roomList(rooms, { loading: roomsLoading, error: roomsError, deleting: deletingRoom })}
-    ${joinPanel()}
-    <details id="room-setup" class="room-setup" ${roomSetupOpen ? 'open' : ''}><summary>New adventure room</summary>
-    <header class="play-header"><div><h2>Set up your adventure</h2><p>Choose an adventure, map, and starting party.</p></div>
-      ${actionButton(pending || sceneJobs.has(battle) ? "Preparing…" : "Preview encounter", "enter-game", { disabled: pending || sceneJobs.has(battle) })}</header>
-    ${roomCreationForm()}
-    ${archivePanel()}
+  return `<section id="room-setup" class="room-setup">
+    <header class="play-header"><div><h1>New adventure room</h1><p>Choose where to start and who’s coming with you.</p></div><a class="text-link" href="#play">Back to rooms</a></header>
+    ${roomCreationForm(moduleOptions,ready)}
+    ${ready?`<details class="room-advanced"><summary>Advanced encounter setup</summary>
+    <div class="play-action-row">
+      ${actionButton(pending || sceneJobs.has(battle) ? "Preparing…" : "Preview encounter", "enter-game", { disabled: pending || sceneJobs.has(battle) })}
+    </div>
+    <label class="room-prepared"><input id="new-room-prepared" type="checkbox" ${roomDraft.prepared ? 'checked' : ''}> Use the prepared encounter, including its current party and progress</label>
+    ${hasArchive()?archivePanel():""}
     <div class="play-layout">
       <div class="play-main">
         <section class="play-panel play-board-panel">
-          <div class="play-map-select">
-            ${field("Adventure", "play-module", moduleOptions, pending ? "disabled" : "")}
-            ${!isTraining ? field("Map", "play-map", maps.map((entry) => option(entry.key, entry.title, map.key === entry.key)), pending ? "disabled" : "") : ""}
-          </div>
           <div class="play-heading board-title"><h2>${escape(map.title)}</h2>
             ${!isTraining ? actionButton(art ? "Change map image" : "Choose map image", "art") : ""}
           </div>
@@ -1063,15 +1182,15 @@ function playPage() {
         </section>
       </div>
       <div class="play-rail">${tokenPanel()}${roomPanel()}</div>
-    </div></details>`;
+    </div></details>`:""}</section>`;
 }
 
 function redraw() {
   const element = root();
   if (!element) return;
+  closeDistantInteraction();
   const active = document.activeElement?.id;
   if (context.game && table?.state) document.title = (table.state.room?.name || map.title) + ' · Wayfarer';
-  if (root().querySelector("#room-setup")) roomSetupOpen = root().querySelector("#room-setup").open;
   if (context.sessionRoute && !table?.state) {
     element.innerHTML = `<section class="session-entry play-panel"><h1>Enter adventure room</h1>
       ${table?.needsUsername ? `<form id="session-username-form" class="session-inline">
@@ -1086,6 +1205,7 @@ function redraw() {
   let cameraState = camera?.state();
   if (!context.game) focusedGameMap = null;
   camera?.destroy();
+  const advancedOpen = element.querySelector(".room-advanced")?.open;
   const archiveOpen = element.querySelector(".play-archive")?.open;
   const gridOpen = element.querySelector("#grid-settings")?.open;
   const previousHotbar = element.querySelector('.game-hotbar');
@@ -1097,26 +1217,28 @@ function redraw() {
   table?.chat?.rememberScroll();
   const hotbarActorNow = selectedActor();
   if (context.game && hotbarActor !== hotbarActorNow?.id) {
-    hotbarActor = hotbarActorNow?.id ?? ''; hotbarTab = 'all'; hotbarFilter = ''; hotbarSelection = ''; hotbarTools = false;
+    hotbarActor = hotbarActorNow?.id ?? ''; hotbarTab = 'all'; hotbarFilter = ''; hotbarSearch = ''; hotbarSelection = ''; hotbarTools = false;
   }
   const barEntries = context.game ? hotbarEntries(hotbarActorNow) : [];
   const selectedEntry = barEntries.find(entry => entry.id === hotbarSelection);
   if (selectedEntry?.index != null) { combatChoice=String(selectedEntry.index);if(!selectedEntry.controlZone||!['spell-zone-choice','spell-zone'].includes(category))category=selectedEntry.mode; }
   if (selectedEntry?.mode === 'feature') { featureChoice = selectedEntry.actionId; category = 'feature'; }
+  if (selectedEntry?.mode === 'dominate') category = 'dominate';
   if (hotbarSelection && !selectedEntry) { hotbarSelection = ''; category = 'move'; resetActionSelection(); }
   prepareHealth();
   element.innerHTML = context.game ? gameScreen({
     map, battle, roomName: table?.state?.room?.name, saveStatus: table?.writing ? 'Saving…' : table?.online ? 'Saved' : 'Offline', selected: displayedActor(selectedActor()), party: battle.actors.filter((actor) => actor.side === "party").map(actor => displayedActor(actor)),
     visibleInitiative: visibleTokens(),
-    category, actions: gameOptions(selectedActor()), tacticalTools: tableTools(), room, status, artworkNote,
-    hotbar: hotbarActorNow ? renderActionBar(barEntries, hotbarActorNow, { tab: hotbarTab, filter: hotbarFilter, selected: hotbarSelection, expanded: hotbarExpanded, utilitiesOpen: hotbarTools }) : '',
+    category, actions: gameOptions(selectedActor()), tacticalTools: tableTools(), status,
+    hotbar: hotbarActorNow ? renderActionBar(barEntries, hotbarActorNow, { tab: hotbarTab, filter: hotbarFilter, query: hotbarSearch, selected: hotbarSelection, expanded: hotbarExpanded, utilitiesOpen: hotbarTools }) : '',
     actionPanelOpen: Boolean(hotbarTools || selectedEntry && selectedEntry.mode !== 'move' || pendingSquare || battle.classReaction || battle.movement || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && canRescue(battle, map, hotbarActorNow)),
     resourceControls: renderActionResources(hotbarActorNow, battle, hotbarFilter),
     logOpen: eventLogPlacement !== 'hidden' && eventLogMode !== 'collapsed' && (eventLogPlacement !== 'chat' || !table || Boolean(table?.chat?.isOpen)), logHistory: table?.state?.battle.log ?? battle.log, eventLogMode, eventLogPlacement, toolsOpen, destination: previewMessage, cursor, hasToken: Boolean(cameraToken()),
     storyOpen, storyContent: storyOpen ? storyPanel(battle, map) : "",
     rescueAvailable: canControl(selectedActor()) && canRescue(battle, map, selectedActor()),
     canAct: canControl(selectedActor()), controllers: table ? battle.controllers ?? {} : null, controller,
-    partyOpen, partyContent: partyManagement(), chatOpen: table?.chat?.isOpen ?? false,
+    restOpen,restContent:restOpen?restPanel():'',
+    partyOpen, partyContent: partyManagement(), chatOpen: (table?.chat ?? localChat)?.isOpen ?? false,
     tableOpen, tableContent: tableOpen ? tablePanel(table, context.characters, battle, tableMessage, needsHostSignIn, controller) : "",
     shared: Boolean(table), players: table?.players, busy: Boolean(table?.writing),
     adventureName: context.adventures.find(({ id }) => id === map.module)?.name,
@@ -1141,6 +1263,7 @@ function redraw() {
   }
   floatingPanels.mount(element.querySelector(".game-screen"));
   if (context.game) void prepareMonsterRewards(battle).catch(() => { });
+  if (advancedOpen) element.querySelector(".room-advanced")?.setAttribute("open", "");
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open", "");
   if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open", "");
   const frame = element.querySelector(".board-frame");
@@ -1163,11 +1286,14 @@ function redraw() {
   if (context.game) tokenMotion.sync(table?.id ?? map.key, committedBattle);
   combatCues.sync(table?.id ?? battle, committedBattle.actionEvents ?? committedBattle.monsterEvents ?? [], cueLayer ? {
     onReveal: event => { healthPresentation.reveal(event); requestAnimationFrame(() => { if (root() && context?.game) redraw(); }); },
-    layer: cueLayer, frame, grid: frame.querySelector("#play-grid"), map, sight: viewerVision(committedBattle, map, table ? controller : null).visible, fogEnabled: fogActive(), feed: element.querySelector(".game-live-log"), motion: tokenMotion,
+    layer: cueLayer, frame, grid: frame.querySelector("#play-grid"), map, battle: committedBattle,
+    sight: viewerVision(committedBattle, map, table ? controller : null).visible,
+    memory: viewerMemory(committedBattle, map, table ? controller : null),
+    fogEnabled: fogActive(), feed: element.querySelector(".game-live-log"), motion: tokenMotion,
   } : null);
   restoreEventLogScroll();
-  camera = createCamera(frame, element.querySelector(".map-controls"), map, cameraState, () => { combatCues.place(); tokenHover.refresh(); });
-  paintBoard();
+  camera = frame ? createCamera(frame, element.querySelector(".map-controls"), map, cameraState, () => { combatCues.place(); tokenHover.refresh(); }) : null;
+  if(frame)paintBoard();
   if (active) element.querySelector("#" + CSS.escape(active))?.focus({ preventScroll: true });
   if (enemyTurnPending(battle) && scheduledEnemyBattle !== battle && (!table || table.online && !table.writing)) {
     const queued = battle;
@@ -1179,25 +1305,36 @@ function redraw() {
   }
 }
 
+function toolsSection(id, title, body, open = false) {
+  return `<details class="tools-section"${open ? " open" : ""} data-tools-section="${escape(id)}"><summary>${escape(title)}</summary><div class="tools-section-body">${body}</div></details>`;
+}
+
 function tableTools() {
   if (!toolsOpen) return "";
   const tools = [
     ["move", "Move token"],
     ["room", "Inspect room"],
-
     ["difficult", "Difficult terrain"],
     ["clear", "Clear terrain"]
   ];
-  return '<h2>Table tools</h2>' +
-    (table?field('Adventure map','room-map',maps.map(entry=>option(entry.key,entry.title,entry.key===map.key)),battle.round||table.writing?'disabled':''):'') +
-    actionButton("Dice animations: " + (combatCues.diceEnabled ? "On" : "Off"), "dice-effects") +
+  const display = actionButton("Dice animations: " + (combatCues.diceEnabled ? "On" : "Off"), "dice-effects") +
+    '<p class="party-help">Spell visuals by <a href="https://jb2a.com/" target="_blank" rel="noopener">JB2A — Jules &amp; Ben</a> · <a href="/assets/animations/credits.json" target="_blank" rel="noopener">CC BY-NC-SA 4.0 / credits</a></p>' +
     actionButton("Fog of War: " + ((battle.fogEnabled ?? fogOfWarEnabled) ? "On" : "Off"), "toggle-fog") +
     (map.playerAsset ? actionButton("Map artwork: " + (battle.showDmArtwork ? "DM notes" : "Player version"), "toggle-dm-artwork") : "") +
-    field('Activity log', 'activity-placement', [['separate', 'Separate panel on the right'], ['chat', 'Inside party chat'], ['hidden', 'Hidden']].map(([value, label]) => option(value, label, eventLogPlacement === value))) +
-    dynamicFogTools() +
+    `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` +
+    field('Chat & activity', 'activity-placement', [['chat', 'One panel (chat + log)'], ['separate', 'Stacked panels'], ['hidden', 'Hide activity log']].map(([value, label]) => option(value, label, eventLogPlacement === value)));
+  const mapBody = (table ? field('Adventure map', 'room-map', maps.map(entry => option(entry.key, entry.title, entry.key === map.key)), battle.round || table.writing ? 'disabled' : '') : '') +
     field("Grid tool", "grid-tool", tools.map(([value, label]) => option(value, label, tool === value))) +
-    (battle.round ? actionButton("End initiative", "end-initiative", { disabled: Boolean(battle.movement) }) : "") +
-    gridSettings() + manualHP() + (tool === "room" ? roomPanel() : "");
+    gridSettings() + (tool === "room" ? roomPanel() : "");
+  const encounter = (battle.round ? actionButton("End initiative", "end-initiative", { disabled: Boolean(battle.movement) }) : "") +
+    actionButton("Reset encounter / board", "reset", { disabled: Boolean(battle.movement || battle.classReaction || table?.writing) }) +
+    '<p class="party-help">Restore this map’s monsters and treasure, clear terrain and combat. Party progress and fog walls are kept.</p>' +
+    manualHP();
+  return '<h2>Table tools</h2>' +
+    toolsSection("display", "Display & activity", display, true) +
+    toolsSection("fog", "Dynamic fog & vision", dynamicFogTools()) +
+    toolsSection("map", "Map & grid", mapBody) +
+    toolsSection("encounter", "Encounter", encounter);
 }
 
 function partyManagement() {
@@ -1360,6 +1497,7 @@ function resetActionSelection() {
   combatChoice = ""; castSlot = ""; targetId = ""; spellSquare = null; extraTargets.clear();
   pathPreview = null; previewMessage = ""; pendingSquare = null;
   featureChoice = "";
+  combatCues.aimPreview(null);
 }
 
 function canRollInitiative() {
@@ -1398,11 +1536,19 @@ function detectNearby(actor) {
 function checkGameCell(x, y, region, token) {
   const actor = selectedActor();
   if(category==='spell-zone'&&controlledZone){requireControl(actor);moveCustomSphere(battle,actor,controlledZone,{x,y},map);status=battle.log.at(-1);return;}
+  if(category==='zone-beam'&&controlledZone){
+    if(!token){status='Choose a creature for the beam.';return;}
+    requireControl(actor);
+    fireZoneBeam(battle,actor,controlledZone,token,map);
+    status=battle.log.at(-1);
+    resetActionSelection();
+    return;
+  }
   if (category === 'interact' && bodyPlacement) { requireControl(actor); const body = battle.actors.find(body => body.id === actor.carrying); placeBody(battle, actor, body, { x, y }, map, { thrown: bodyPlacement === 'throw' }); bodyPlacement = ''; status = battle.log.at(-1); return; }
   if (category === 'move' || category === 'interact') {
     const corpse = token?.hp === 0 ? token : !token && battle.actors.find(body => body.dead && !body.carriedBy && body.x != null && containsCell(body, x, y));
     const treasure = !token && visibleMarkers().find(marker => marker.type === 'treasure' && !marker.looted && marker.x === x && marker.y === y);
-    if ((corpse || treasure) && (!fogActive() || displayVision().has(keyAt(x, y)))) { requireControl(actor); objectTarget = { type: corpse ? 'body' : 'treasure', id: (corpse ?? treasure).id }; bodyPlacement = ''; category = 'interact'; hotbarSelection = 'common:interact'; return; }
+    if ((corpse || treasure) && (!fogActive() || displayVision().has(keyAt(x, y)))) { requireControl(actor); interactionPosition = null; objectTarget = { type: corpse ? 'body' : 'treasure', id: (corpse ?? treasure).id }; bodyPlacement = ''; category = 'interact'; hotbarSelection = 'common:interact'; return; }
   }
   if (!battle.round && token?.side === "party" && category === "move" && canControl(token)) {
     selectedId = token.id;
@@ -1419,9 +1565,13 @@ function checkGameCell(x, y, region, token) {
   const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.reference || choice.data.key) : null;
   pathPreview = null;
   previewMessage = "";
-  if(category==='spell'&&effect?.custom&&effect.definition.shape==='line'){if(!spellSquare||spellEnd){spellSquare={x,y};spellEnd=null;status='Choose the wall endpoint.';}else{spellEnd={x,y};if(hotbarSelection)executeCombatSelection(root().querySelector('#combat-form'));}return;}
-  if (category === "spell" && (effect?.area || effect?.cone || effect?.teleport)) {
-    spellSquare = { x, y };
+  if(category==='spell'&&effect?.custom&&needsEndpoint(formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined))){
+    if(!spellSquare||spellEnd){spellSquare={x,y};spellEnd=null;status='Choose the wall endpoint.';}
+    else{spellEnd={x,y};if(hotbarSelection)executeCombatSelection(root().querySelector('#combat-form'));}
+    return;
+  }
+  if (category === "spell" && (effect?.area || effect?.cone || effect?.teleport || (effect?.custom && directional(effect.definition)))) {
+    spellSquare = { x, y }; spellEnd = null;
     if (hotbarSelection) executeCombatSelection(root().querySelector('#combat-form'));
     return;
   }
@@ -1435,7 +1585,7 @@ function checkGameCell(x, y, region, token) {
     }
     return;
   }
-  if (category !== "move") {
+  if (!["move", "interact"].includes(category)) {
     status = "Choose a token as the target, or switch to Move.";
     return;
   }
@@ -1512,7 +1662,7 @@ async function launchGame(hostOptions = null, characters = context.characters) {
 function refreshPartyToken(actor, character) {
   const sheet = partyActor(character);
   syncClassResources(actor, sheet);
-  for (const key of ["name", "ac", "speed", "darkvision", "initiative", "dex", "ability", "saves", "resist", "level", "spells", "spellDC", "spellAttack", "spellAbility"]) {
+  for (const key of ["name", "ac", "speed", "darkvision", "initiative", "dex", "ability", "saves", "resist", "level", "attacks", "spells", "spellDC", "spellAttack", "spellAbility"]) {
     actor[key] = sheet[key];
   }
   actor.maxHp = sheet.maxHp + (actor.aid ?? 0);
@@ -1601,7 +1751,7 @@ function canUseMapSquare(x, y) {
   const choice = combatChoice === "" ? null : choices(actor)[Number(combatChoice)];
   const effect = choice?.mode === "spell" && supportedSpell(choice.data.reference || choice.data.key);
   if (category === "spell" && (effect?.area || effect?.cone || effect?.teleport)) return true;
-  return tool === "move" && category === "move" && actor?.side === "party" && occupies(actor) &&
+  return tool === "move" && ["move", "interact"].includes(category) && actor?.side === "party" && occupies(actor) &&
     mapFloor(map, x, y, battle) && distanceFt(actor, { x, y }) <= 5;
 }
 
@@ -1612,7 +1762,7 @@ function checkCell(x, y, region) {
   }
   if (x < 0 || x >= map.cols || y < 0 || y >= map.rows) return;
   if (!canUseMapSquare(x, y)) { status = "Choose a square the party has seen."; return; }
-  cursor = { x, y };
+  cursor = {x,y,movement:context.game&&tool==="move"&&["move","interact"].includes(category)};
   if (tool === "room") {
     selectRoom(region);
     const marker = visibleMarkers().find((entry) => entry.x === x && entry.y === y);
@@ -1647,8 +1797,10 @@ async function loadFile(file, name) {
   try {
     const result = await attachArchive(file, name);
     lastAdventure = context.activeAdventure;
-    await selectModule(context.activeAdventure || "LMoP");
-    if (!result.saved) status = "Archive loaded for this session. Browser storage is unavailable.";
+    await selectModule(context.newRoom ? roomDraft.adventure : context.activeAdventure || "LMoP");
+    status = result.saved
+      ? "5etools archive ready — spell tips can load full text from this ZIP."
+      : "Archive loaded for this session. Browser storage is unavailable.";
   } catch (failure) {
     status = failure.message;
   } finally {
@@ -1675,7 +1827,9 @@ function sharedSheet(record) {
   return sheet;
 }
 
-const tableState=()=>commitRoomState(table?.state ?? previewState,map,battle,map.printedGrid ?? null);
+const tableState=()=>upgradeRoomState(
+  commitRoomState(table?.state ?? previewState,map,battle,map.printedGrid ?? null),map
+);
 
 async function hostTable({ roomName, username } = {}) {
   const route = location.hash;
@@ -1751,7 +1905,10 @@ function applyTableState(connection, snapshot) {
       syncClassResources(actor, source);
     } catch { }
   }
-  for (const actor of battle.actors.filter(actor => actor.side === "party")) migratePactResources(actor);
+  for (const actor of battle.actors.filter(actor => actor.side === "party")) {
+    migratePactResources(actor);
+    applyHestiasFury(actor);
+  }
   if (geometryChanged && map.sourceGrid) {
     setAlignment(snapshot.state.alignment ?? map.sourceGrid);
     gridDraft = null;
@@ -1759,9 +1916,8 @@ function applyTableState(connection, snapshot) {
   }
   repairWallPlacement(map, battle);
   const owned = battle.actors.find(({ id }) => battle.controllers?.[id] === controller);
-  if (owned) selectedId = owned.id;
-  else if (!battle.actors.some((actor) => actor.id === selectedId && canControl(actor))) {
-    selectedId = battle.actors.find((actor) => actorIsUp(actor) && canControl(actor))?.id ?? "";
+  if (!battle.actors.some(actor => actor.id === selectedId && canControl(actor))) {
+    selectedId = owned?.id ?? battle.actors.find(actor => actorIsUp(actor) && canControl(actor))?.id ?? "";
   }
   if (storyBefore > 0 || !showInvitation) revealStory(storyBefore);
   if (turn !== selectedActor()?.id || round !== battle.round) {
@@ -1838,7 +1994,11 @@ async function connectTable(connection, username) {
     connection.players = entry.players;
     connection.needsUsername = false;
     rememberedUsername(entry.player);
-    const snapshot = await readSession(connection.id);
+    const original = await readSession(connection.id);
+    if (table !== connection) return;
+    const snapshot = await upgradeOpenedRoom(original,
+      (revision, state) => writeSession(connection.id, revision, state),
+      () => table === connection);
     if (table !== connection) return;
     map=snapshot.state.currentMap ?? snapshot.map;maps=[map];if(snapshot.hasArtwork && !snapshot.state.artworkMapKey)snapshot.state.artworkMapKey=map.key;
     detectedGrid = map.detectedGrid;
@@ -1875,7 +2035,7 @@ function leaveTable() {
   artworkRequest?.abort();
   ({ map, battle, maps,moduleId,art, artworkNote, customArtwork, detectedGrid, room, selectedId, tool } = table.solo);
   table = null;
-  roomSetupOpen = false;
+  lastPortraitClick = null;
   tableOpen = false;
   tableMessage = "";
   status = "";
@@ -1885,6 +2045,7 @@ function leaveTable() {
 }
 
 export function showPlay(data) {
+  const previousContext=context;
   context = data; document.title = defaultPageTitle;
   if (!data?.game) { tokenMotion.reset(); queuedMove = null; }
   if (!data?.game) focusedGameMap = null;
@@ -1909,6 +2070,15 @@ export function showPlay(data) {
     else { tableMessage = "Check the session link and try again."; redraw(); }
     return;
   }
+  if(data.newRoom){
+    if(!previousContext?.newRoom||previousContext.roomAdventure!==data.roomAdventure){
+      Object.assign(roomDraft,{name:'',prepared:false,party:null,adventure:data.roomAdventure??data.activeAdventure??'training'});
+      status='';
+      if(roomDraft.adventure==='training'||hasArchive())void selectModule(roomDraft.adventure);
+    }
+    redraw();
+    return;
+  }
   if (!data.game) { rooms = knownRooms(); refreshRooms(); }
   redraw();
   if (hasArchive() && lastAdventure !== context.activeAdventure) {
@@ -1918,9 +2088,14 @@ export function showPlay(data) {
   }
 }
 
+document.addEventListener("wayfarer:spell-entries", () => {
+  if (context?.game && element?.isConnected) redraw();
+});
 document.addEventListener("wayfarer:archive", () => {
+  if (context?.game && element?.isConnected) redraw();
   if (root() && !pending && context && !table) {
     const preferred = context.game ? preferredGame : null;
+    if(context.newRoom){void selectModule(roomDraft.adventure);return;}
     lastAdventure = context.activeAdventure;
     selectModule(preferred?.module || context.activeAdventure || "LMoP", preferred?.map);
   }
@@ -2037,7 +2212,7 @@ async function interact(run, { cosmetic = false, retryMove, remaining = 6 } = {}
   if (connection === table && queuedMove) {
     const move = queuedMove; queuedMove = null;
     if (succeeded) setTimeout(() => {
-      if (context?.game && table === connection && map.key === move.map && battle.round === move.round && category === 'move' && selectedActor()?.id === move.actor) interactCell(move.x, move.y, regionAt(map, ...cellCenter(map, move)), { step: move.step });
+      if (context?.game && table === connection && map.key === move.map && battle.round === move.round && ['move', 'interact'].includes(category) && selectedActor()?.id === move.actor) interactCell(move.x, move.y, regionAt(map, ...cellCenter(map, move)), { step: move.step });
     }, 0);
   }
   return succeeded;
@@ -2045,15 +2220,16 @@ async function interact(run, { cosmetic = false, retryMove, remaining = 6 } = {}
 
 function interactCell(x, y, region, { step = false } = {}) {
   const selectedSpell=combatChoice===''?null:choices(selectedActor())[Number(combatChoice)];
-  const lineRule=context?.game&&category==='spell'&&selectedSpell?.mode==='spell'?customSpellRule(selectedSpell.data.reference||selectedSpell.data.key):null;
-  if(lineRule?.shape==='line'){
+  const aimedRule=context?.game&&category==='spell'&&selectedSpell?.mode==='spell'?customSpellRule(selectedSpell.data.reference||selectedSpell.data.key):null;
+  const aimedWall=aimedRule?formRule(aimedRule,allowsWallRing(aimedRule)?spellWallForm:undefined):null;
+  if(aimedWall&&needsEndpoint(aimedWall)){
     if(table?.writing)return;
     if(x<0||y<0||x>=map.cols||y>=map.rows||!canUseMapSquare(x,y)){status='Choose a visible map square.';redraw();return;}
     try{requireControl(selectedActor());}catch(error){status=error.message;redraw();return;}
     if(!spellSquare||spellEnd){spellSquare={x,y};spellEnd=null;status='Choose the wall endpoint.';redraw();return;}
     spellEnd={x,y};return interact(()=>executeCombatSelection(root().querySelector('#combat-form')));
   }
-  const mover = context.game && category === "move" && tool === "move" ? selectedActor() : null;
+  const mover = context.game && ["move", "interact"].includes(category) && tool === "move" ? selectedActor() : null;
   if (table?.writing && mover && canControl(mover) && (!battle.round || movementGroup(battle).includes(mover))) { queuedMove = { x, y, actor: mover.id, map: map.key, round: battle.round, step }; return; }
   const { round } = battle;
   const destinationFree = () => !battle.actors.some((actor) => occupies(actor) && containsCell(actor, x, y));
@@ -2085,6 +2261,25 @@ export async function setGameTokenImage(id, image, session) {
     if (sheet) { if (image) sheet.tokenImage = image; else delete sheet.tokenImage; }
   }, { cosmetic: true });
   if (!success) throw new Error(status || "The token could not be updated. Try again.");
+}
+
+function inspectActor(id) {
+  const actor=battle.actors.find(entry=>entry.id===id);
+  if(!actor)return;
+  document.dispatchEvent(new CustomEvent("wayfarer:inspect",{
+    detail:structuredClone({...actor,tokenImage:partyTokenImage(actor),tokenSession:table?.id,
+      ac:armorClass(actor),sharedSheet:table?battle.sheets?.[id]:undefined}),
+  }));
+}
+
+function canSelectPartyMember(actor) {
+  return actorIsUp(actor) && canControl(actor) && (!battle.round || movementGroup(battle).includes(actor));
+}
+
+function selectPartyMember(actor) {
+  if(!canSelectPartyMember(actor))return;
+  selectedId=actor.id;tool="move";category="move";resetActionSelection();
+  if(!battle.round)detectNearby(actor);
 }
 
 document.addEventListener("click", (event) => {
@@ -2153,7 +2348,7 @@ document.addEventListener("click", (event) => {
         return;
       }
     }
-    if (context.game && battle.round && category === "move" && tool === "move" && matchMedia("(pointer: coarse)").matches &&
+    if (context.game && battle.round && ["move", "interact"].includes(category) && tool === "move" && matchMedia("(pointer: coarse)").matches &&
       !battle.actors.some((actor) => occupies(actor) && containsCell(actor, x, y))) {
       pendingSquare = movePreview(x, y) ? { x, y, region } : null;
       redraw();
@@ -2163,9 +2358,26 @@ document.addEventListener("click", (event) => {
     return;
   }
   const button = event.target.closest("[data-play]");
-  if (button?.dataset.play === 'new-room') { roomSetupOpen = true; root().querySelector('#room-setup')?.setAttribute('open', ''); root().querySelector('#new-room-name')?.focus(); return; }
+  if (button?.dataset.play === 'new-room') { location.hash = '#play/new'; return; }
   if (!button || pending) return;
   const { play, id } = button.dataset;
+  if(play==="party-portrait"){
+    const previous=lastPortraitClick;
+    const pointerClick=event.detail>0;
+    // The first click can rebuild the roster, so a second click can land on a new button node.
+    const consecutive=pointerClick && previous?.id===id && previous.scope===table &&
+      event.timeStamp-previous.time<=430 && Math.hypot(event.clientX-previous.x,event.clientY-previous.y)<=8;
+    if(consecutive||event.detail===2){
+      lastPortraitClick=null;
+      inspectActor(id);
+    }else{
+      lastPortraitClick=pointerClick?{id,scope:table,time:event.timeStamp,x:event.clientX,y:event.clientY}:null;
+      const actor=battle.actors.find(entry=>entry.id===id);
+      if(actor?.id!==selectedId && canSelectPartyMember(actor))void interact(()=>selectPartyMember(actor));
+    }
+    return;
+  }
+  lastPortraitClick=null;
   if (play === 'delete-room') {
     if (deletingRoom) return;
     const roomId = id; ++roomListRequest; roomsLoading = false; deletingRoom = roomId; roomsError = ''; redraw();
@@ -2179,8 +2391,14 @@ document.addEventListener("click", (event) => {
     })(); return;
   }
   if (play === 'game-log') { partyOpen = false; toolsOpen = false; tableOpen = false; storyOpen = false; }
-  if (play === 'game-log' && eventLogPlacement === 'hidden') { setEventLogMode('compact'); setActivityPlacement('separate'); return; }
-  if (play === 'game-log' && eventLogPlacement === 'chat' && table?.chat && (!table.chat.isOpen || eventLogMode === 'collapsed')) { setEventLogMode('compact'); table?.chat?.show(); redraw(); return; }
+  if (play === 'game-log' && eventLogPlacement === 'hidden') { setEventLogMode('compact'); setActivityPlacement('chat'); return; }
+  if (play === 'game-log' && eventLogPlacement === 'chat') {
+    setEventLogMode('compact');
+    const chat = table?.chat ?? localChat;
+    if (chat && !chat.isOpen) chat.show();
+    redraw();
+    return;
+  }
   if (['game-log', 'event-log-expand', 'event-log-toggle'].includes(play)) {
     const next = play === 'event-log-expand' ? eventLogMode === 'expanded' ? 'compact' : 'expanded' : eventLogMode === 'collapsed' ? 'compact' : 'collapsed';
     setEventLogMode(next);
@@ -2198,7 +2416,10 @@ document.addEventListener("click", (event) => {
   if (play === 'hotbar-tab' || play === 'hotbar-filter') {
     resetActionSelection(); category = 'move'; tool = 'move';
     if (play === 'hotbar-tab') { hotbarTab = id; hotbarFilter = ''; }
-    else { hotbarFilter = hotbarFilter === id ? '' : id; hotbarTab = /^(slot|pact):/.test(hotbarFilter) ? 'spell' : 'all'; }
+    else {
+      hotbarFilter = toggleHotbarFilter(hotbarFilter, id);
+      hotbarTab = parseHotbarFilters(hotbarFilter).some(part => /^(slot|pact):/.test(part)) ? 'spell' : 'all';
+    }
     if (play === 'hotbar-tab' && id === 'weapon') {
       const first = hotbarEntries().find(entry => entry.mode === 'weapon' && entry.usable);
       if (first) { hotbarSelection = first.id; combatChoice = String(first.index); category = 'weapon'; }
@@ -2227,6 +2448,8 @@ document.addEventListener("click", (event) => {
           if (entry.actionId === 'cutting-words') actor.cuttingWords = !actor.cuttingWords;
           if (entry.actionId === 'arm-inspiration') actor.inspirationArmed = !actor.inspirationArmed;
           if (entry.actionId === 'arm-stun') actor.stunArmed = !actor.stunArmed;
+          if (entry.actionId === 'arm-reaction' && entry.reactionRef) armReaction(actor, entry.reactionRef);
+          if (entry.actionId === 'disarm-reaction' && entry.reactionRef) disarmReaction(actor, entry.reactionRef);
         } else if (entry.actionId === 'help-up') helpUp(battle, actor, battle.actors.find(target => target.id === entry.targetId), map);
         else if (entry.actionId === 'wake') wakeCreature(battle, actor, battle.actors.find(target => target.id === entry.targetId));
         else if (entry.actionId === 'witch-bolt') sustainWitchBolt(battle, actor, map);
@@ -2237,20 +2460,34 @@ document.addEventListener("click", (event) => {
       hotbarSelection = entry.id;
       if (entry.index != null) { combatChoice = String(entry.index); category = entry.mode; }
       if (entry.mode === 'feature') { featureChoice = entry.actionId; category = 'feature'; }
+      if (entry.mode === 'dominate') category = 'dominate';
       if(entry.actionId==='control-spell-zone'){controlledZone=entry.zoneId;category='spell-zone';}
-      if(entry.mode==='spell'){spellSquare=null;spellEnd=null;spellHotSide=customSpellRule(entry.data.reference||entry.data.key)?.shape==='ring'?'inside':'left';}
+      if(entry.actionId==='zone-beam'){controlledZone=entry.zoneId;category='zone-beam';}
+      if(entry.mode==='spell'){spellSquare=null;spellEnd=null;spellWallForm='wall';const rule=customSpellRule(entry.data.reference||entry.data.key);spellHotSide=rule?.shape==='ring'||spellWallForm==='ring'?'inside':'left';}
       if(entry.controlZone){controlledZone=entry.controlZone;category='spell-zone-choice';}
       if (entry.actionId === 'interact') { category = 'interact'; objectTarget = null; bodyPlacement = ''; }
       if (entry.mode === 'potion') potionUse = 'drink';
-      if (entry.mode === 'spell' && /^(slot|pact):/.test(hotbarFilter)) castSlot = hotbarFilter.startsWith('pact:') ? hotbarFilter : hotbarFilter.slice(5);
+      if (entry.mode === 'spell') {
+        const levelFilters = parseHotbarFilters(hotbarFilter).filter(part => /^(slot|pact):/.test(part));
+        const exact = levelFilters.find(part => part.startsWith('slot:') && Number(part.slice(5)) === entry.level)
+          || levelFilters.find(part => part.startsWith('pact:') && Number(part.slice(5)) >= entry.level);
+        if (exact) castSlot = exact.startsWith('pact:') ? exact : exact.slice(5);
+      }
       redraw();
     }
     return;
   }
   if (play === "dice-effects") { combatCues.toggleDice(); redraw(); return; }
-  if (play === 'game-chat') { partyOpen = false; toolsOpen = false; tableOpen = false; storyOpen = false; (table?.chat ?? localChat)?.toggle(); redraw(); return; }
-  if (play === 'game-party') { partyOpen = !partyOpen; toolsOpen = false; tableOpen = false; storyOpen = false; redraw(); return; }
-  if (play === 'game-tools') { partyOpen = false; toolsOpen = !toolsOpen; tableOpen = false; storyOpen = false; if (!toolsOpen) { tool = 'move'; gridDraft = null; } redraw(); return; }
+  if(play==='game-rest'){restOpen=!restOpen;partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;if(restOpen&&map.module!=='training')void loadRestEncounters().then(()=>{if(root())redraw();}).catch(error=>{status=error.message;if(root())redraw();});redraw();return;}
+  if (play === 'game-chat') {
+    restOpen = false; partyOpen = false; toolsOpen = false; tableOpen = false; storyOpen = false;
+    if (eventLogPlacement === 'hidden') setActivityPlacement('chat');
+    (table?.chat ?? localChat)?.toggle();
+    redraw();
+    return;
+  }
+  if (play === 'game-party') { restOpen=false; partyOpen = !partyOpen; toolsOpen = false; tableOpen = false; storyOpen = false; redraw(); return; }
+  if (play === 'game-tools') { restOpen=false; partyOpen = false; toolsOpen = !toolsOpen; tableOpen = false; storyOpen = false; if (!toolsOpen) { tool = 'move'; gridDraft = null; } redraw(); return; }
   if (play === 'edit-walls') { toolsOpen = false; tool = 'move'; resetActionSelection(); wallEditor.setMode('draw'); redraw(); return; }
   if(play==='sphere-control'){category='spell-zone';redraw();return;}
   if(play==='sphere-recast'){category='spell';controlledZone=null;spellSquare=null;redraw();return;}
@@ -2276,14 +2513,14 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (play === "retry-session") { if (table?.error) connectTable(table); return; }
-  if (play === "game-table") {
+  if (play === "game-table") { restOpen=false;
     partyOpen = false;
     tableOpen = !tableOpen;
     if (tableOpen) { toolsOpen = false; storyOpen = false; tool = "move"; gridDraft = null; }
     redraw();
     return;
   }
-  if (play === "game-story") {
+  if (play === "game-story") { restOpen=false;
     partyOpen = false;
     storyOpen = !storyOpen;
     if (storyOpen) { toolsOpen = false; tableOpen = false; tool = "move"; gridDraft = null; }
@@ -2307,7 +2544,7 @@ document.addEventListener("click", (event) => {
   if (play === "archive-picker") { root().querySelector("#play-archive-file").click(); return; }
   if (play === "art") { root().querySelector("#play-art").click(); return; }
   if (play === 'potion-use') { potionUse = id === 'throw' ? 'throw' : 'drink'; redraw(); return; }
-  if (play === 'world-select') { objectTarget = { type: button.dataset.type, id }; bodyPlacement = ''; redraw(); return; }
+  if (play === 'world-select') { interactionPosition = null; objectTarget = { type: button.dataset.type, id }; bodyPlacement = ''; redraw(); return; }
   if (['world-loot', 'world-carry', 'world-place', 'world-throw', 'world-help'].includes(play)) {
     if (play === 'world-place' || play === 'world-throw') { bodyPlacement = play === 'world-throw' ? 'throw' : 'place'; status = 'Choose an open map square ' + (bodyPlacement === 'throw' ? 'within 20 feet.' : 'within 5 feet.'); redraw(); return; }
     void interact(() => { const actor = selectedActor(); requireControl(actor); const source = worldObject(); if (play === 'world-loot') takeLoot(battle, actor, source, map); if (play === 'world-carry') carryBody(battle, actor, source, map); if (play === 'world-help') helpUp(battle, actor, source, map); status = battle.log.at(-1); }); return;
@@ -2317,17 +2554,7 @@ document.addEventListener("click", (event) => {
     if (marker) document.dispatchEvent(new CustomEvent("wayfarer:marker", { detail: marker }));
     return;
   }
-  if (play === "inspect") {
-    const actor = battle.actors.find((entry) => entry.id === id);
-    if (actor) document.dispatchEvent(new CustomEvent("wayfarer:inspect", {
-      detail: structuredClone({
-        ...actor, tokenImage: partyTokenImage(actor), tokenSession: table?.id,
-        ac: armorClass(actor),
-        sharedSheet: table ? battle.sheets?.[id] : undefined
-      }),
-    }));
-    return;
-  }
+  if (play === "inspect") { inspectActor(id); return; }
   if (play === "enter-game") {
     pending = true;
     redraw();
@@ -2357,14 +2584,9 @@ document.addEventListener("click", (event) => {
           if (context.game) battle.actors.filter((actor) => actor.side === "party").some(detectNearby);
         }
         break;
-      case "control-party": {
-        const actor = battle.actors.find((entry) => entry.id === id);
-        if (actorIsUp(actor) && canControl(actor) && (!battle.round || movementGroup(battle).includes(actor))) {
-          selectedId = id; tool = "move"; category = "move"; resetActionSelection();
-          if (!battle.round) detectNearby(actor);
-        }
+      case "control-party":
+        selectPartyMember(battle.actors.find(entry=>entry.id===id));
         break;
-      }
       case "claim-party": {
         if (!table || !battle.actors.some((actor) => actor.id === id && actor.side === "party")) break;
         const controllers = battle.controllers ??= {};
@@ -2419,6 +2641,22 @@ document.addEventListener("click", (event) => {
         status = plural(count, "token") + " placed.";
         break;
       }
+      case "add-homebrew-monster": {
+        if (battle.round || !room) return;
+        const entry = listHomebrew("monsters")[selectedHomebrew];
+        if (!entry) throw new Error("Choose a homebrew creature.");
+        const data = monsterStatBlock(entry);
+        const actor = await creatureActor({
+          name: entry.name,
+          source: "HB",
+          side: entry.side ?? "hostile",
+          data,
+        });
+        add(actor, room);
+        tool = "room";
+        status = entry.name + " placed.";
+        break;
+      }
       case "remove-token":
         if (!battle.round) battle.actors = battle.actors.filter((actor) => actor.id !== selectedId);
         selectedId = "";
@@ -2442,25 +2680,40 @@ document.addEventListener("click", (event) => {
         if (hasFeature(actor, "Cutting Words")) actor.cuttingWords = !actor.cuttingWords;
         break;
       }
+      case "arm-reaction": {
+        const actor = selectedActor(); requireControl(actor);
+        if (!id || !customSpellRule(id, battle.spellRules)) throw new Error("Choose a reaction spell to arm.");
+        armReaction(actor, id); status = actor.name + " arms " + (customSpellRule(id, battle.spellRules)?.name || id) + ".";
+        break;
+      }
+      case "disarm-reaction": {
+        const actor = selectedActor(); requireControl(actor);
+        disarmReaction(actor, id); status = actor.name + " stops holding " + (customSpellRule(id, battle.spellRules)?.name || id) + ".";
+        break;
+      }
       case "deflect-hand": {
         const actor = selectedActor(); requireControl(actor);
         if (hasFeature(actor, "Deflect Missiles")) actor.freeHand = !actor.freeHand;
         break;
       }
       case "finish-deflect": requireControl(selectedActor()); resolveDeflection(battle, selectedActor(), null); break;
-      case "short-rest": case "long-rest": restParty(battle, play === "long-rest"); break;
+      case "short-rest": case "long-rest": {const actor=selectedActor();requireControl(actor);if(actor?.side!=='party')throw Error('Select a party member to rest.');await takeDungeonRest(battle,map,play==='long-rest',{leaderId:actor.id});status=battle.log.at(-1);break;}
       case "witch-bolt": requireControl(selectedActor()); sustainWitchBolt(battle, selectedActor(), map); break;
       case "wake": requireControl(selectedActor()); wakeCreature(battle, selectedActor(), battle.actors.find((actor) => actor.id === id)); break;
       case "pass-reaction": requireControl(opportunity(battle)?.foe); resolveOpportunity(battle, null, undefined, map); break;
       case "dash": case "dodge": case "disengage": case "bonus-disengage": case "stand":
         requireControl(selectedActor()); turnAction(battle, selectedActor(), play); break;
       case "reset":
-        if (window.confirm("Reset all tokens, terrain, and rolls on this map?")) {
-          previewState=null;battle=newBattle();useMap(map,{fresh:true});
+        if (window.confirm("Reset this map’s encounter and board? Monsters and treasure will be restored, terrain and combat cleared. Party HP, inventory, XP, character sheets, fog walls, and other maps will be kept.")) {
+          requireControl(selectedActor());
+          battle = await resetSceneBoard(battle, map, { populate: populateScene, training: trainingActors });
+          tokenMotion.reset(); queuedMove = null; objectTarget = null; bodyPlacement = '';
+          resetActionSelection(); category = 'move'; tool = 'move';
+          status = 'Encounter and board reset.'; log(battle, status);
         }
         break;
     }
-  });
+  }, {remaining: ["short-rest", "long-rest", "reset"].includes(play) ? 0 : 6});
 });
 
 let lastMovementKeyAt = 0;
@@ -2478,13 +2731,29 @@ function moveWithKey(event) {
   lastMovementKeyAt = now;
   const [dx, dy] = direction, x = actor.x + dx, y = actor.y + dy;
   if (previewMovement(battle, actor, x, y, map)?.path.length !== 1) return true;
-  selectedId = actor.id; resetActionSelection(); category = 'move'; tool = 'move';
+  selectedId = actor.id;
+  if (category !== 'interact') { resetActionSelection(); category = 'move'; }
+  tool = 'move';
   camera?.reveal(mapPoint({ x, y }));
   interactCell(x, y, regionAt(map, ...cellCenter(map, { x, y })), { step: true });
   return true;
 }
 
 document.addEventListener("keydown", (event) => {
+  const portrait=event.target.closest?.('[data-play="party-portrait"]');
+  if(portrait && root()?.contains(portrait) && event.key==="Enter" && event.shiftKey && !event.repeat){
+    event.preventDefault();
+    inspectActor(portrait.dataset.id);
+    return;
+  }
+  if (event.key === " " && context?.game && battle?.round && !event.defaultPrevented &&
+      !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey &&
+      !document.querySelector('dialog[open]') &&
+      !event.target.closest?.('input,select,textarea,button,a,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="menu"],[role="listbox"],.game-chat,.game-flyout,.game-event-slot,.dice-theatre')) {
+    event.preventDefault();
+    if (!event.repeat && !pending && !table?.writing) root()?.querySelector('.game-hud [data-play="end"]:enabled')?.click();
+    return;
+  }
   if (moveWithKey(event)) return;
   if (event.defaultPrevented || event.target.id !== "play-grid") return;
   const keys = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -2504,26 +2773,66 @@ document.addEventListener("keydown", (event) => {
     cursor.x = Math.max(0, Math.min(map.cols - 1, cursor.x + dx));
     cursor.y = Math.max(0, Math.min(map.rows - 1, cursor.y + dy));
     camera?.reveal(mapPoint(cursor));
-    if (context.game && battle.round && category === "move" && tool === "move") movePreview(cursor.x, cursor.y);
+    if (context.game && ["move", "interact"].includes(category) && tool === "move") movePreview(cursor.x, cursor.y);
     else paintBoard();
     event.target.setAttribute("aria-label", "Square " + (cursor.x + 1) + ", " + (cursor.y + 1));
   } else interactCell(cursor.x, cursor.y, regionAt(map, ...cellCenter(map, cursor)));
 });
 
-function movePreview(x, y) {
-  const actor = selectedActor();
-  if (!canControl(actor)) return null;
-  cursor = { x, y };
-  const known = canUseMapSquare(x, y);
-  const route = battle.round && known ? previewMovement(battle, actor, x, y, map) : null;
-  pathPreview = route?.path.length ? [actor, ...route.path] : null;
-  previewMessage = !known ? "Unexplored square." : battle.round
-    ? route ? "Move " + route.cost + " ft · " + (moveLeft(battle, actor) - route.cost) + " ft remaining" : "Outside remaining movement or blocked."
-    : "Click a square to move freely.";
-  const line = root()?.querySelector("#game-move-preview");
-  if (line) line.textContent = previewMessage;
-  paintBoard();
-  return route;
+function paintMovementPreview(){
+  if(animatedBoard?.camera===camera && camera && context?.game){
+    animatedBoard.options.cursor=cursor;
+    animatedBoard.options.path=pathPreview;
+    paintAnimationFrame();
+  }else paintBoard();
+}
+
+function updateMovementPreviewMessage(){
+  const line=root()?.querySelector("#game-move-preview");
+  if(line)line.textContent=previewMessage;
+}
+
+let explorationPreview;
+function movePreview(x,y,{pointer=false}={}){
+  clearTimeout(explorationPreview);
+  const actor=selectedActor();
+  if(!canControl(actor))return null;
+  const known=canUseMapSquare(x,y);
+  const sameSquare=actor.x===x&&actor.y===y;
+  const size=creatureSize(actor), name=actor.name.trim().split(/\s+/)[0];
+  const mode=Boolean(battle.round);
+  const request={x,y,creatureSize:size,movement:true,known,blocked:false,pointer,label:''};
+  cursor=request;
+  pathPreview=null;
+  const show=route=>{
+    request.blocked=!route;
+    request.label=route?.cost?'Move '+name+' · '+route.cost+' ft':'Move '+name;
+    pathPreview=route?.path.length?[actor,...route.path.map(cell=>({...cell,creatureSize:size}))]:null;
+    previewMessage=route?'Move '+actor.name+' · '+route.cost+' ft'+(mode?' · '+(moveLeft(battle,actor)-route.cost)+' ft remaining':''):
+      "Can't move "+actor.name+" here · "+(mode?'blocked or beyond remaining movement':'blocked or unreachable');
+    updateMovementPreviewMessage();
+    paintMovementPreview();
+    return route;
+  };
+  if(!known || sameSquare){
+    previewMessage=!known?"Choose a seen square for "+actor.name+".":"Choose a destination for "+actor.name+".";
+    updateMovementPreviewMessage();
+    paintMovementPreview();
+    return null;
+  }
+  if(mode||!pointer||!canStand(battle,actor,x,y,map))return show(previewMovement(battle,actor,x,y,map));
+  // Exploration routes can span large maps. Wait for the pointer to settle.
+  const board=map,state=battle,fromX=actor.x,fromY=actor.y;
+  request.label="Checking route…";
+  previewMessage="Finding a route for "+actor.name+"…";
+  updateMovementPreviewMessage();
+  paintMovementPreview();
+  explorationPreview=setTimeout(()=>{
+    if(cursor===request&&battle===state&&map===board&&selectedActor()===actor&&actor.x===fromX&&actor.y===fromY){
+      show(previewMovement(state,actor,x,y,board));
+    }
+  },90);
+  return null;
 }
 
 document.addEventListener("pointermove", (event) => {
@@ -2534,9 +2843,27 @@ document.addEventListener("pointermove", (event) => {
     paintBoard();
     return;
   }
-  if (tool !== "move" || category !== "move") return;
   const { x, y } = gridPosition(map, event.target, event);
-  if (cursor?.x !== x || cursor?.y !== y) movePreview(x, y);
+  if (wallAimRule()) {
+    if (!cursor?.aim || cursor.x !== x || cursor.y !== y) {
+      cursor = { x, y, aim: true };
+      paintBoard();
+    }
+    return;
+  }
+  if (tool !== "move" || !["move","interact"].includes(category) || bodyPlacement ||
+      event.pointerType==="touch" || event.buttons) return;
+  if (!cursor?.movement || cursor.x !== x || cursor.y !== y) movePreview(x,y,{pointer:true});
+});
+
+document.addEventListener('pointerout',event=>{
+  if(event.target.id!=='play-grid'||!cursor?.pointer||pendingSquare)return;
+  clearTimeout(explorationPreview);
+  cursor=null;
+  pathPreview=null;
+  previewMessage='';
+  updateMovementPreviewMessage();
+  paintMovementPreview();
 });
 
 function positionHotbarTooltip(event) {
@@ -2558,7 +2885,7 @@ document.addEventListener('keydown', event => {
   if (tile && tile.getAttribute('aria-disabled') !== 'true') { event.preventDefault(); tile.click(); }
 });
 document.addEventListener('wheel', event => {
-  const grid = event.target.closest?.('.game-hotbar:not(.expanded) .hotbar-grid');
+  const grid = event.target.closest?.('.game-hotbar:not(.expanded) .hotbar-grid, .hotbar-resources');
   if (!grid || event.ctrlKey || event.metaKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || grid.scrollWidth <= grid.clientWidth) return;
   event.preventDefault();
   grid.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? grid.clientWidth : 1);
@@ -2566,6 +2893,14 @@ document.addEventListener('wheel', event => {
 
 document.addEventListener("input", (event) => {
   if (!root()?.contains(event.target)) return;
+  if (event.target.id === 'hotbar-search' || event.target.dataset.play === 'hotbar-search') {
+    hotbarSearch = event.target.value;
+    const start = event.target.selectionStart, end = event.target.selectionEnd;
+    redraw();
+    const field = root()?.querySelector('#hotbar-search');
+    if (field) { field.focus({ preventScroll: true }); try { field.setSelectionRange(start, end); } catch {} }
+    return;
+  }
   if (event.target.id === 'new-room-name') { roomDraft.name = event.target.value; return; }
   if (event.target.id === 'new-room-username') { roomDraft.username = event.target.value; return; }
   if (event.target.id === 'new-room-prepared') { roomDraft.prepared = event.target.checked; redraw(); return; }
@@ -2602,16 +2937,24 @@ document.addEventListener("change", (event) => {
   }
   switch (id) {
     case "play-archive-file": loadFile(event.target.files[0], event.target.files[0]?.name); return;
-    case "play-module": selectModule(value); return;
+    case "play-module":
+      roomDraft.adventure=value;
+      roomDraft.prepared=false;
+      status="";
+      if(value==="training"||hasArchive())void selectModule(value);else redraw();
+      return;
     case 'room-map':{const entry=maps.find(entry=>entry.key===value);if(entry)void changeRoomMap(entry);return;}
     case "play-map": { const entry = maps.find(({ key }) => key === value); if (entry) useMap(entry); break; }
     case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
+    case 'rest-table': {if(!restTableChoices(map).policies.some(p=>p.id===value))return;void interact(()=>{battle.rest??={};(battle.rest.tableChoices??={})[map.key]=value;},{cosmetic:true});return;}
     case "activity-placement": if (value !== "hidden") setEventLogMode("compact"); setActivityPlacement(value); return;
     case "grid-tool": tool = value; break;
     case "grid-overlay": interact(() => { battle.gridOverlay = value; }); return;
     case "room-creature": selectedCreature = Number(value); break;
+    case "homebrew-creature": selectedHomebrew = Number(value); break;
     case "play-party": selectedParty = value; break;
     case 'spell-hot-side':spellHotSide=value;break;
+    case 'spell-wall-form':spellWallForm=value==='ring'?'ring':'wall';spellEnd=null;spellHotSide=spellWallForm==='ring'?'inside':'left';break;
     case "combat-choice": combatChoice = value; spellSquare = null; castSlot = ""; extraTargets.clear(); break;
     case "cast-slot": castSlot = value; break;
     case "breath-type": breathType = value; return;
@@ -2639,14 +2982,19 @@ function executeCombatSelection(form) {
 
   const actor = selectedActor();
   requireControl(actor);
-  const { choice, target } = combatSelection(actor, visibleTokens());
+  const { choice, target: creatureTarget } = combatSelection(actor, visibleTokens());
   const effect = choice?.mode === "spell" && choice.usable ? supportedSpell(choice.data.reference || choice.data.key) : null;
+  const target = effect?.area || effect?.cone || effect?.teleport ? null : creatureTarget;
+  const meleeWeapons = classWeapons(actor, battle).filter(weapon => !weapon.normalRange && Number.isFinite(weapon.bonus));
+  const weaponPick = Number(value("spell-weapon"));
   const options = {
     mode: rollMode, cover, square: spellSquare, map, damageType: breathType,end:spellEnd,hotSide:spellHotSide,
+    form: effect?.custom&&allowsWallRing(effect.definition)?spellWallForm:undefined,
     slotPool: (value("cast-slot") ?? "").startsWith("pact:") ? "pact" : slotRank(value("cast-slot")) > 0 ? "spellcasting" : undefined,
     focusedAim: Number(value("focused-aim")) || 0,
     stun: form.querySelector("#stunning-strike")?.checked,
     keepTemp: form.querySelector("#keep-temp")?.checked,
+    weapon: effect?.definition?.weaponAttack ? meleeWeapons[Number.isFinite(weaponPick) ? weaponPick : 0] : undefined,
     targets: [...form.querySelectorAll('[id^="extra-target-"]')].map((field) =>
       battle.actors.find((entry) => entry.id === field.value))
   };
@@ -2664,10 +3012,10 @@ function executeCombatSelection(form) {
     if (!beginCombat(actor, enemy, false)) throw new Error("Choose an enemy to start combat.");
     return;
   }
-  if(choice.mode==='spell'&&effect?.custom&&!battle.round&&effect.definition.effects.some(block=>block.kind!=='healing'&&(block.damage.length||block.condition))){const cells=spellSquare?customSpellCells(effect.definition,actor,spellSquare,map,{end:spellEnd,hotSide:spellHotSide}):null;const enemy=battle.actors.find(enemy=>enemy.side==='hostile'&&actorIsUp(enemy)&&(target?.id===enemy.id||cells?.has(keyAt(enemy.x,enemy.y))));if(enemy){beginCombat(actor,enemy,false);if(!canTakeTurn(battle,actor))return;}}
+  if(choice.mode==='spell'&&effect?.custom&&!effect.area&&!battle.round&&effect.definition.effects.some(block=>block.kind!=='healing'&&(block.damage.length||block.condition||block.save))){const enemy=battle.actors.find(enemy=>enemy.side==='hostile'&&actorIsUp(enemy)&&(target?.id===enemy.id||options.targets?.some(target=>target.id===enemy.id)));if(enemy){beginCombat(actor,enemy,false);if(!canTakeTurn(battle,actor))return;}}
   if (choice.mode === "spell") {
     castSpell(battle, actor, target, choice.data, slotRank(value("cast-slot")), options);
-    if(effect?.custom&&effect.definition.shape==='sphere'){const zone=battle.spellZones?.find(zone=>zone.custom&&zone.caster===actor.id&&zone.rule.reference===choice.data.reference);if(zone){controlledZone=zone.id;hotbarSelection='spell:'+(choice.data.reference||choice.data.key);category='spell-zone-choice';}}
+    if(effect?.custom&&['sphere','movable'].includes(effect.definition.shape)){const zone=battle.spellZones?.find(zone=>zone.custom&&zone.caster===actor.id&&zone.rule.reference===choice.data.reference);if(zone){controlledZone=zone.id;hotbarSelection='spell:'+(choice.data.reference||choice.data.key);category='spell-zone-choice';}}
     status = battle.log.at(-1);
     if (!battle.round && !effect?.teleport) {
       const hitIds = new Set((battle.actionEvents?.at(-1)?.impacts ?? []).map(impact => impact.actor));
@@ -2744,6 +3092,21 @@ document.addEventListener("submit", (event) => {
         break;
       }
       case "class-action-form": executeClassSelection(event.target); break;
+      case "dominate-form": {
+        const actor = selectedActor();
+        requireControl(actor);
+        const entry = hotbarEntries(actor).find((item) => item.id === hotbarSelection);
+        const thrall = battle.actors.find((creature) => creature.id === entry?.thrallId);
+        const order = value("dominate-order");
+        const targetId = value("dominate-target") || null;
+        const intent = event.submitter?.value || event.target.querySelector('[name="dominate-intent"]')?.value || "command";
+        if (intent === "control") seizeDominateControl(battle, actor, thrall, order, targetId);
+        else issueDominateCommand(battle, actor, thrall, order, targetId);
+        status = battle.log.at(-1) ?? "";
+        resetActionSelection();
+        category = "move";
+        break;
+      }
       case "session-party-form":
       case "game-party-form": {
         const character = context.characters.find(({ id }) => id === value("session-character"));
@@ -2823,8 +3186,10 @@ document.addEventListener("submit", (event) => {
         if (value("manual-effect") === "heal") log(battle, target.name + " regains " + heal(target, amount) + " HP by manual ruling.");
         else {
           const type = value("manual-type");
-          const result = applyDamage(battle, target, amount, type);
-          log(battle, target.name + " takes " + result.damage + " " + type + " damage by manual ruling.");
+          withActionEvent(battle,target,{action:"Manual damage",kind:"damage"},()=>{
+            const result=applyDamage(battle,target,amount,type);
+            log(battle,target.name+" takes "+result.damage+" "+type+" damage by manual ruling.");
+          });
         }
         break;
       }
@@ -2891,6 +3256,16 @@ export function syncLocalCharacterToken(characterId, image) {
 }
 
 
+function closeDistantInteraction() {
+  if (category !== 'interact' || !objectTarget || bodyPlacement) { interactionPosition = null; return; }
+  const actor = selectedActor(), source = worldObject();
+  const position = actor && `${actor.id}:${actor.x}:${actor.y}`;
+  if (interactionPosition === null) { interactionPosition = position; return; }
+  if (position === interactionPosition && source) return;
+  interactionPosition = position;
+  if (actor && source && (source.carriedBy === actor.id || withinReach(battle, actor, source, map))) return;
+  objectTarget = null; bodyPlacement = ''; resetActionSelection(); category = 'move'; tool = 'move';
+}
 function worldObject() { return objectTarget?.type === 'body' ? battle.actors.find(body => body.id === objectTarget.id) : battle.markers?.find(marker => marker.id === objectTarget?.id); }
 function worldInteractionPanel(actor) {
   const source = worldObject(), carrying = actor.carrying && battle.actors.find(body => body.id === actor.carrying);
@@ -2905,6 +3280,6 @@ function worldInteractionPanel(actor) {
 }
 
 async function loadRoomMaps(connection){try{const available=map.module==='training'?[trainingMap]:await moduleMaps(map.module);if(table!==connection)return;const fresh=available.find(m=>m.key===map.key);if(fresh?.playerAsset&&!map.playerAsset){map.playerAsset=fresh.playerAsset;if(!customArtwork&&!battle.showDmArtwork)loadArtwork(map);}maps=roomMapChoices(connection.state,available);if(toolsOpen)redraw();}catch{if(table===connection)maps=roomMapChoices(connection.state);}}
-async function changeRoomMap(entry){const connection=table;if(!connection?.state||connection.writing)return;connection.writing=true;status='Changing map…';redraw();try{const previous=tableState(),next=travelRoom(previous,entry),destination=next.currentMap,active=roomBattle(next,destination);if(!active.sceneReady&&destination.module!=='training')await populateScene(destination,active);for(const actor of active.actors.filter(actor=>actor.side==='party'))discoverStory(active,destination,actor);rememberVision(active,destination);for(const actor of active.actors.filter(actor=>actor.side==='party')){const enemy=enemyInSight(active,destination,actor);if(enemy){engageEnemy(active,destination,actor,enemy,true);break;}}const state=commitRoomState(next,destination,active,next.alignment),result=await writeSession(connection.id,connection.revision,state);if(table!==connection)return;if(result.state){applyTableState(connection,result);status='Another player acted first. Review the room before changing maps.';}else{applyTableState(connection,{state,revision:result.revision});rooms=rememberRoom(connection.id,map,state);status='Party arrived at '+map.title+'.';}}catch(error){status=error.message;}finally{connection.writing=false;if(table===connection)redraw();}}
+async function changeRoomMap(entry){const connection=table;if(!connection?.state||connection.writing)return;connection.writing=true;status='Changing map…';redraw();try{const previous=tableState(),next=travelRoom(previous,entry),destination=next.currentMap,active=roomBattle(next,destination);if(!active.sceneReady&&destination.module!=='training')await populateScene(destination,active);await applyBakedWalls(destination,active);for(const actor of active.actors.filter(actor=>actor.side==='party'))discoverStory(active,destination,actor);rememberVision(active,destination);for(const actor of active.actors.filter(actor=>actor.side==='party')){const enemy=enemyInSight(active,destination,actor);if(enemy){engageEnemy(active,destination,actor,enemy,true);break;}}const state=commitRoomState(next,destination,active,next.alignment),result=await writeSession(connection.id,connection.revision,state);if(table!==connection)return;if(result.state){applyTableState(connection,result);status='Another player acted first. Review the room before changing maps.';}else{applyTableState(connection,{state,revision:result.revision});rooms=rememberRoom(connection.id,map,state);status='Party arrived at '+map.title+'.';}}catch(error){status=error.message;}finally{connection.writing=false;if(table===connection)redraw();}}
 
 export function syncAccountCharacters(characters){if(context)context.characters=characters;}

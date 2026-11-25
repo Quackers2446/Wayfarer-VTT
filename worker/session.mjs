@@ -44,6 +44,7 @@ function validRoom(room) {
 }
 
 const optionalRange=(o,k,min,max)=>o[k]==null || Number.isFinite(o[k]) && o[k]>=min && o[k]<=max;
+function validRest(rest){return rest==null||record(rest)&&(rest.shortUsed==null||Number.isInteger(rest.shortUsed)&&rest.shortUsed>=0&&rest.shortUsed<=2)&&(rest.encounterProgress==null||record(rest.encounterProgress)&&Object.keys(rest.encounterProgress).length<=200&&Object.values(rest.encounterProgress).every(n=>Number.isFinite(n)&&n>=0&&n<1e9))&&(rest.tableChoices==null||record(rest.tableChoices)&&Object.keys(rest.tableChoices).length<=200&&Object.values(rest.tableChoices).every(id=>typeof id==='string'&&id.length<=300));}
 function validVision(v){return v==null || record(v) && (v.enabled==null || typeof v.enabled==='boolean') && optionalRange(v,'range',0,300) && optionalRange(v,'angle',1,360) && optionalRange(v,'facing',0,360);}
 function validWalls(v){return v==null || record(v) && ['walls','doors'].every(type=>v[type]==null || Array.isArray(v[type]) && v[type].length<=2000 && v[type].every(s=>record(s) && ['x1','y1','x2','y2'].every(k=>Number.isFinite(s[k]) && Math.abs(s[k])<=90000) && (type!=='doors' || typeof s.id==='string' && ['open','closed','locked','secret'].includes(s.state))));}
 function validFogSettings(v){return v==null || record(v) && ['sharedVision','remember','blockMovement'].every(k=>v[k]==null || typeof v[k]==='boolean') && optionalRange(v,'opacity',0,1) && optionalRange(v,'exploredOpacity',0,1) && optionalRange(v,'softness',0,5);}
@@ -52,7 +53,7 @@ const sceneKeys=new Set(['terrain','markers','wallData','wallRevision','fogMemor
 function validState(state) {
   const battle = state?.battle;
   const alignment = state?.alignment;
-  return record(state) && validRoom(state?.room) && (battle?.spellRules==null || validRuleSet(battle.spellRules)) && (state.currentMap==null || validMap(state.currentMap)) &&
+  return record(state) && validRoom(state?.room) && validRest(battle?.rest) && (battle?.spellRules==null || validRuleSet(battle.spellRules)) && (state.currentMap==null || validMap(state.currentMap)) &&
     (state.world==null || state.currentMap && record(state.world) && state.world.version===1 && record(state.world.maps) && Object.keys(state.world.maps).length<=128 && Object.values(state.world.maps).every(scene=>record(scene) && scene.battle==null && scene.actors==null && (scene.map==null || validMap(scene.map)) && (scene.environment==null || record(scene.environment) && Object.keys(scene.environment).every(key=>sceneKeys.has(key)) && validWalls(scene.environment.wallData)))) && record(battle) && Array.isArray(battle.actors) && battle.actors.length <= 500 &&
     battle.actors.every((actor) => record(actor) && typeof actor.id === "string" && typeof actor.name === "string" &&
       validVision(actor.vision) && [actor.hp,actor.maxHp,actor.ac,actor.speed].every(Number.isFinite) && ["party","hostile","neutral"].includes(actor.side) &&
@@ -299,10 +300,11 @@ async function sessionPlayers(request, env, id) {
     if (choosingName) return fail(409,"That username is already taken in this session.");
     return reply({player:null,players:[]});
   }
-  const {results} = await env.DB.prepare(`SELECT controller AS id, username, last_seen FROM session_players
-    WHERE session_id=? ORDER BY joined_at, controller`).bind(id).all();
+  const {results} = await env.DB.prepare(`SELECT s.controller AS id, s.username, s.last_seen, p.image_id AS photo FROM session_players s
+    LEFT JOIN account_photos p ON p.user_id=s.controller
+    WHERE s.session_id=? ORDER BY s.joined_at, s.controller`).bind(id).all();
   if(account)await accounts.addRoom(env,account,id);
-  const players = results.map(({id,username,last_seen}) => ({id,username,online:now - last_seen < 60000}));
+  const players = results.map(({id,username,last_seen,photo}) => ({id,username,online:now - last_seen < 60000,...(photo?{photo}:{})}));
   return reply({player:player.username,players});
 }
 
@@ -312,14 +314,16 @@ async function sessionChat(request, env, id, after) {
       return fail(400,"The chat position was invalid.");
     }
     const {results} = await env.DB.prepare(`
-      SELECT sequence AS id, author, body, sent_at AS time FROM session_chat
-      WHERE session_id=? AND sequence>? ORDER BY sequence DESC LIMIT ?
+      SELECT c.sequence AS id, c.author, c.body, c.sent_at AS time,
+        c.profile_id AS profileId, p.image_id AS photo FROM session_chat c
+      LEFT JOIN account_photos p ON p.user_id=c.profile_id
+      WHERE c.session_id=? AND c.sequence>? ORDER BY c.sequence DESC LIMIT ?
     `).bind(id,Number(after),chatHistory).all();
     if (!results.length && after !== null) return new Response(null,{status:204,headers});
     if (!results.length && !await env.DB.prepare("SELECT id FROM game_sessions WHERE id=?").bind(id).first()) {
       return fail(404,"This session could not be found.");
     }
-    return reply({messages:results.reverse()});
+    return reply({messages:results.reverse().map(({profileId,photo,...message})=>photo?{...message,profileId,photo}:message)});
   }
   if (request.method !== "POST") return fail(405,"This action is unavailable.");
   const raw = await boundedBody(request,8192);
@@ -342,8 +346,8 @@ async function sessionChat(request, env, id, after) {
     .bind(id,input.sender).first();
   const author = character?.name.slice(0,80) || player?.username || alias || "Guest " + input.sender.slice(0,4).toUpperCase();
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO session_chat (session_id,message_id,author,body,sent_at)
-      VALUES (?,?,?,?,?) ON CONFLICT (session_id,message_id) DO NOTHING`).bind(id,input.messageId,author,message,Date.now()),
+    env.DB.prepare(`INSERT INTO session_chat (session_id,message_id,author,body,sent_at,profile_id)
+      VALUES (?,?,?,?,?,?) ON CONFLICT (session_id,message_id) DO NOTHING`).bind(id,input.messageId,author,message,Date.now(),character?null:account?.id??null),
     env.DB.prepare(`DELETE FROM session_chat WHERE session_id=? AND sequence <= (
       SELECT sequence FROM session_chat WHERE session_id=? ORDER BY sequence DESC LIMIT 1 OFFSET ?
     )`).bind(id,id,chatHistory),
@@ -411,7 +415,7 @@ async function listRooms(request,env,url) {
 
 export async function sessionRequest(request, env) {
   const url = new URL(request.url);
-  if(url.pathname.startsWith("/api/auth/")||url.pathname.startsWith("/api/account"))return accounts.route(request,env,{ownerHash,ownsRoom,validToken});
+  if(url.pathname.startsWith("/api/auth/")||url.pathname.startsWith("/api/account"))return accounts.route(request,env,{ownerHash,ownsRoom,validToken,boundedBody});
   const match = sessionPath.exec(url.pathname);
   if (url.pathname !== api && url.pathname !== "/api/rooms" && url.pathname !== "/api/ai/forecast" && !match) return fail(404,"Session endpoint not found.");
   if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) return fail(403,"Open Wayfarer to update this session.");

@@ -4,7 +4,7 @@ import {keyAt, occupies} from "./combat.mjs";
 import {regionAt} from "./encounters.mjs";
 import {hasExplored} from "./fog-memory.mjs";
 import {cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
-import {tokenSize,tokenRadius,containsCell} from './actor-space.mjs';
+import {actorCells,tokenSize,tokenRadius,containsCell} from './actor-space.mjs';
 import {getWallData} from "./map-walls.mjs";
 
 const maxRasterEdge = 4096;
@@ -102,39 +102,108 @@ function drawFog(context,map,options) {
   context.restore();
 }
 
-function drawToken(c,map,actor,portrait,highlight) {
+const tokenOutlines=new WeakMap();
+
+function drawTokenOutline(c,portrait,x,y,size,color,stroke) {
+  // Dilate the artwork’s alpha mask and keep only the rim. Cache it per image
+  // so token movement and hover do not rebuild the mask every frame.
+  const edge=256,pad=12;
+  const width=Math.max(1,Math.min(pad,Math.round(stroke*edge/size)));
+  let variants=tokenOutlines.get(portrait.image);
+  if(!variants)tokenOutlines.set(portrait.image,variants=new Map());
+  const key=color+':'+width;
+  let rim=variants.get(key);
+  if(!rim){
+    rim=document.createElement('canvas');rim.width=rim.height=edge+2*pad;
+    const ctx=rim.getContext('2d');
+    const center=edge/2+pad;
+    for(let step=0;step<12;step++){
+      const angle=step*Math.PI/6;
+      drawMonsterArtwork(ctx,portrait,center+Math.cos(angle)*width,center+Math.sin(angle)*width,edge,{contain:true});
+    }
+    ctx.globalCompositeOperation='source-in';
+    ctx.fillStyle=color;ctx.fillRect(0,0,rim.width,rim.height);
+    ctx.globalCompositeOperation='destination-out';
+    drawMonsterArtwork(ctx,portrait,center,center,edge,{contain:true});
+    if(variants.size>=12)variants.delete(variants.keys().next().value);
+    variants.set(key,rim);
+  }
+  const full=size*(edge+2*pad)/edge;
+  c.drawImage(rim,x-full/2,y-full/2,full,full);
+}
+
+function drawMovement(c,map,cursor,path,scale,fog) {
+  const known=cell=>!fog||fog.visible.has(keyAt(cell.x,cell.y))||hasExplored(fog.memory,cell.x,cell.y);
+  const unit=Math.min(map.cellWidth??map.size,map.cellHeight??map.size);
+  const px=1/Math.max(.01,scale);
+  function tile(cell,fill,stroke){
+    const [x,y,w,h]=cellBounds(map,cell);
+    const inset=Math.min(w,h)*.07;
+    c.beginPath();c.roundRect(x+inset,y+inset,w-2*inset,h-2*inset,unit*.09);
+    c.fillStyle=fill;c.fill();
+    if(stroke){c.strokeStyle=stroke;c.lineWidth=Math.min(unit*.045,1.5*px);c.stroke();}
+  }
+  c.save();
+  const last=path?.at(-1);
+  const painted=new Set(path?.length?[...actorCells(path[0]),...actorCells(last)].map(cell=>keyAt(cell.x,cell.y)):[]);
+  for(const cell of path?.slice(1,-1)??[]){
+    for(const square of actorCells(cell)){
+      const key=keyAt(square.x,square.y);
+      if(painted.has(key)||!known(square))continue;
+      painted.add(key);
+      tile(square,'#8ce2bc47');
+    }
+  }
+  const destination=last??cursor;
+  if(destination&&cursor?.known!==false&&known(destination)){
+    const blocked=!last&&cursor?.blocked;
+    const squares=blocked?[destination]:actorCells(destination);
+    for(const square of squares)if(known(square)){
+      tile(square,blocked?'#bf74564d':'#a6efc579',blocked?'#edb196':'#bdf7d7');
+    }
+    const label=blocked?"Can't move here":cursor?.label;
+    if(label){
+      const [x,y]=cellCenter(map,destination);
+      const font=Math.min(unit*.36,Math.max(unit*.18,12*px));
+      const h=font*1.55,pad=font*.55;
+      c.font='650 '+font+'px system-ui';
+      const width=c.measureText(label).width+2*pad;
+      c.textBaseline='middle';c.textAlign='center';
+      const cy=y+unit*.28;
+      c.beginPath();c.roundRect(x-width/2,cy-h/2,width,h,h*.36);
+      c.fillStyle='#14251fec';c.fill();c.strokeStyle=blocked?'#af775f':'#62ae8c';c.lineWidth=px;c.stroke();
+      c.fillStyle=blocked?'#ffdccb':'#ddfbea';c.fillText(label,x,cy);
+    }
+  }
+  c.restore();
+}
+
+function drawToken(c,map,actor,portrait,highlight,scale) {
   const [x,y] = cellCenter(map,actor);
   const radius = tokenRadius(map,actor);
-  if(tokenSize(actor)>1) {
-    const [left,top,width,height]=cellBounds(map,actor),n=tokenSize(actor);
-    c.fillStyle=actor.dead ? '#9aa29c18' : actor.side==='hostile' ? '#bd66552a' : '#83b5a52a';c.fillRect(left,top,width*n,height*n);
-    c.strokeStyle=actor.dead ? '#9aa29c' : highlight || '#dccca1';c.lineWidth=map.size*.02;c.strokeRect(left+1,top+1,width*n-2,height*n-2);
-  }
-  c.beginPath();
-  c.arc(x,y,radius,0,Math.PI*2);
-  c.fillStyle = actor.dead ? "#565c59" : actor.hp === 0 ? "#828584" :
-    actor.side === "party" ? "#356b61" : actor.side === "neutral" ? "#6e6653" : "#9a453a";
-  c.strokeStyle = actor.dead ? "#a6aea7" : highlight || "#f6f4de";
-  c.lineWidth = map.size * (highlight ? .075 : .031);
-  c.fill();
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  c.save();
+  const stroke=Math.min(map.size*.075,1.7/Math.max(.01,scale));
   if (portrait) {
-    c.save();
-    c.clip();
-    if (actor.dead) {
+    if(highlight)drawTokenOutline(c,portrait,x,y,2*radius,highlight,stroke);
+    if (actor.dead || actor.hp === 0) {
       c.filter = "grayscale(1)";
       c.globalAlpha = .58;
     }
-    drawMonsterArtwork(c,portrait,x,y,2*radius);
-    c.restore();
-  }
-  c.stroke();
-  c.textAlign = "center";
-  c.textBaseline = "middle";
-  if (!portrait) {
+    drawMonsterArtwork(c,portrait,x,y,2*radius,{contain:true});
+  } else {
     c.font = "700 " + map.size*.42*tokenSize(actor) + "px system-ui";
     c.fillStyle = actor.dead ? "#c4c9c4" : "#fff9e8";
-    c.fillText(actor.marker || actor.name.charAt(0).toUpperCase(),x,y);
+    c.shadowColor = "#142019";
+    c.shadowBlur = 4;
+    const letter=actor.marker||actor.name.charAt(0).toUpperCase();
+    if(highlight){
+      c.strokeStyle=highlight;c.lineWidth=2*stroke;c.lineJoin='round';c.strokeText(letter,x,y);
+    }
+    c.fillText(letter,x,y);
   }
+  c.restore();
   if (actor.dead || portrait && actor.marker) {
     const bx = x+radius*.72, by = y+radius*.72;
     c.beginPath();
@@ -155,7 +224,7 @@ function drawToken(c,map,actor,portrait,highlight) {
 }
 
 const backgroundFrames=new WeakMap();
-export function drawGrid(canvas, view, map, battle, {room, selected, target, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, tokenPositions, movementLabels, overlay = "artwork", wallEditor,backgroundKey}) {
+export function drawGrid(canvas, view, map, battle, {room, selected, target, hovered, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, tokenPositions, movementLabels, overlay = "artwork", wallEditor,backgroundKey}) {
   // Match the display density while keeping the backing buffer bounded by the visible area.
   const ratio = rasterPixelRatio(view.width,view.height,view.ratio);
   const pixelsWide = Math.max(1,Math.floor(view.width*ratio));
@@ -234,20 +303,6 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
     }
   }
 
-  if (path?.length) {
-    c.beginPath();
-    for (const [index, cell] of path.entries()) {
-      const [x,y] = cellCenter(map,cell);
-      if (index) c.lineTo(x,y);
-      else c.moveTo(x,y);
-    }
-    c.strokeStyle = "#ffdc8a";
-    c.lineCap = "round";
-    c.lineJoin = "round";
-    c.lineWidth = map.size * .10;
-    c.stroke();
-  }
-
   if (wallEditor) drawWallsAndDoors(c, map, battle, fog);
 
   if (fog) drawFog(c,map,fog);
@@ -288,10 +343,13 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
   }else if(cached){cached.overlay?.remove();backgroundFrames.delete(canvas);}
   c.save();c.setTransform(rasterScaleX*mapScaleX,0,0,rasterScaleY*mapScaleY,-view.x*rasterScaleX,-view.y*rasterScaleY);
   const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).filter(actor=>!actor.carriedBy).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
+  const scale=Math.min(mapScaleX,mapScaleY);
+  const overToken=cursor&&tokens.some(actor=>(occupies(actor)||defeatedCreature(actor))&&containsCell(actor,cursor.x,cursor.y));
+  if(path?.length || cursor?.movement&&!hovered&&!overToken)drawMovement(c,map,cursor,path,scale,fog);
+  const highlight=actor=>actor.id===selected?'#ffe7a6':actor.id===target?'#ffb6a6':actor.id===hovered?'#fff7dc':'';
   // Living tokens appear on top when they move through a defeated creature's square.
-  for (const actor of tokens.filter(defeatedCreature)) drawToken(c,map,actor,tokenImages?.get(actor.id));
-  for (const actor of tokens.filter(occupies)) drawToken(c,map,actor,tokenImages?.get(actor.id),
-    actor.id === selected ? "#ffeead" : actor.id === target ? "#ffd3c8" : "");
+  for (const actor of tokens.filter(defeatedCreature)) drawToken(c,map,actor,tokenImages?.get(actor.id),highlight(actor),scale);
+  for (const actor of tokens.filter(occupies)) drawToken(c,map,actor,tokenImages?.get(actor.id),highlight(actor),scale);
   for(const actor of tokens.filter(actor=>occupies(actor)||defeatedCreature(actor)))drawTokenHealth(c,map,actor,mapScaleX,mapScaleY,{selected:actor.id===selected});
   for(const actor of tokens) {
     const label=movementLabels?.get(actor.id);if(!label) continue;
@@ -318,7 +376,7 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, cur
       c.lineTo(p2x, p2y);
       c.stroke();
       c.restore();
-    } else {
+    } else if (!cursor.movement && !overToken && !hovered) {
       c.strokeStyle = "#ffedaa";
       c.lineWidth = map.size * .055;
       const [x,y,width,height]=cellBounds(map,cursor);

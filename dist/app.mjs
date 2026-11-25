@@ -2,12 +2,16 @@ import {prepareAccountWorkspace,startAccounts,accountLibraryChanged,accountState
 import {accountBadge,mountAccountProfile} from './account-view.mjs';
 import {dismissOnBackdrop} from './modal-dismiss.mjs';
 import './site-search.mjs';
+import './custom-select.mjs';
 import {registerSuggestions} from './search-suggestions.mjs';
 import {mountSpellRuleEditor} from './spell-rule-editor.mjs';
+import {mountHomebrewDesk} from './homebrew-desk.mjs';
+import {listHomebrew} from './homebrew-store.mjs';
+import {itemToSheetEntry, itemToAttack, featureToSheetEntry} from './homebrew-schema.mjs';
 import {mountCharacterBuilder} from './character-builder.mjs';
 import {syncCharacterTokenRooms} from "./token-room-sync.mjs";
 import {setGameTokenImage, syncLocalCharacterToken, showPlay, syncAccountCharacters} from "./play.mjs";
-import {archiveName, formatEntries, fullSpell, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
+import {archiveName, attachArchive, formatEntries, fullSpell, hasArchive, loadRules, restoreArchive, spellByKey, spellFacts} from "./rules-library.mjs";
 import {characterPage, characterProfile, fillSheetResults, initials, sheetPath} from "./character-view.mjs";
 import {localTokenBlob, paintCharacterPortraits, saveTokenImage, tokenPortrait} from "./character-token.mjs";
 import {openTokenMaker} from "./token-maker.mjs";
@@ -35,9 +39,9 @@ const navItems = [
   ["overview", "Overview", "home"],
   ["characters", "Character sheets", "users"],
   ["library", "Adventure library", "book"],
-  ["spell-rules", "Spell rules", "sparkles"],
+  ["spell-library", "Spell library", "sparkles"],
+  ["homebrew", "Homebrew", "flame"],
   ["play", "Rooms", "dice"],
-  ["profile", "Profile", "users"],
 ];
 const featured = [
   {id:"LMoP", image:"lmop-cover.webp", detail:"Follow the trail from Phandalin into the wilds of the Sword Coast."},
@@ -52,12 +56,14 @@ const groupNames = {
 const byId = (id) => [...catalog.adventures, ...catalog.books].find((entry) => entry.id === id);
 
 function currentRoute(hash = location.hash) {
-  const [requested, characterId, section = "overview"] = hash.slice(1).split("/");
-  const page = requested === "game" || navItems.some(([id]) => id === requested) ? requested : "overview";
+  const [raw, characterId, section = "overview"] = hash.slice(1).split("/");
+  const requested = raw === "spell-rules" ? "spell-library" : raw;
+  const page = ["game","profile"].includes(requested) || navItems.some(([id]) => id === requested) ? requested : "overview";
   const character = page === "characters" && characterId
     ? state.characters.find((entry) => encodeURIComponent(entry.id) === characterId)
     : null;
-  return {page, character:character ? enrichCharacter(character) : null, section};
+  const newRoom = page === "play" && characterId === "new";
+  return {page, character:character ? enrichCharacter(character) : null, section, newRoom, roomAdventure:newRoom && /^[a-z0-9-]+$/i.test(section) && section !== "overview" ? section : null};
 }
 
 prepareAccountWorkspace();
@@ -98,6 +104,39 @@ function notice(message) {
   notification.hidden = false;
   clearTimeout(notificationTimer);
   notificationTimer = setTimeout(() => {notification.hidden = true;}, 4600);
+}
+
+function openHomebrewPicker({kind, title, onPick}) {
+  const entries = listHomebrew(kind);
+  if (!entries.length) {
+    notice("No homebrew " + kind + " yet. Create one under Homebrew.");
+    location.hash = "#homebrew";
+    return;
+  }
+  openDialog(title, "Choose a saved homebrew entry for this sheet.", `
+    <form id="homebrew-pick-form" class="import-form">
+      <label>Entry
+        <select name="id" required>
+          ${entries.map((entry) => `<option value="${escape(entry.id)}">${escape(entry.name)}</option>`).join("")}
+        </select>
+      </label>
+      <div class="dialog-actions">
+        <button class="button outline" type="button" data-action="close">Cancel</button>
+        <button class="button primary" type="submit">Add to sheet</button>
+      </div>
+    </form>`);
+  dialog.querySelector("#homebrew-pick-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const id = new FormData(event.target).get("id");
+    const entry = entries.find((item) => item.id === id);
+    if (!entry) return;
+    try {
+      onPick(entry);
+      dialog.close();
+    } catch (error) {
+      notice(error.message);
+    }
+  });
 }
 
 function levels(entry) {
@@ -178,6 +217,27 @@ function activeAdventure() {
   </div>`;
 }
 
+function archiveDeskPanel() {
+  const ready = hasArchive();
+  return `<section aria-labelledby="archive-heading" class="panel archive-desk-panel">
+    <div class="panel-heading">
+      <div>
+        <h2 id="archive-heading">5etools ZIP</h2>
+        <p>${ready
+          ? "Loaded · full spell text and adventure maps use this archive."
+          : "Attach your 5etools ZIP for full spell descriptions, maps, and monster blocks."}</p>
+      </div>
+      ${icon("database", 20)}
+    </div>
+    <p class="archive-desk-status" role="status">${ready ? escape(archiveName() || "Archive ready") : "No archive in this browser yet."}</p>
+    <div class="archive-desk-actions">
+      <button type="button" class="button ${ready ? "outline" : "primary"} small" data-action="desk-archive">${ready ? "Change ZIP" : "Choose 5etools ZIP"}</button>
+      ${ready ? '<a class="text-link" href="#play">Open Rooms</a>' : ""}
+    </div>
+    <input type="file" id="desk-archive-file" accept=".zip,application/zip" hidden>
+  </section>`;
+}
+
 function overview() {
   const picks = featured.map((feature) => [byId(feature.id), feature]).filter(([entry]) => entry);
   return `<section class="hero" aria-labelledby="hero-title">
@@ -188,14 +248,13 @@ function overview() {
     </div>
   </section>
   <div class="dashboard-grid">
-    <section aria-labelledby="party-heading" class="panel">
+    <section aria-labelledby="party-heading" class="panel dashboard-party">
       <div class="panel-heading">
         <div><h2 id="party-heading">Your party</h2><p>${state.characters.length ? plural(state.characters.length, "character") : "Add character sheets to assemble your party."}</p></div>
-        <div class="panel-heading-actions">
-          <button type="button" class="button outline small" data-action="upload">Add characters</button>${state.characters.length ? '<a class="text-link" href="#characters">View all</a>' : ""}
-        </div>
+        ${state.characters.length ? button("Add characters", "upload", "plus", "outline small") : ""}
       </div>
-      ${state.characters.length ? partyCards(state.characters.slice(0, 2)) : emptyParty()}
+      ${state.characters.length ? partyCards(state.characters.slice(0, 2)) + `
+        <a class="party-directory" href="#characters">View all characters ${icon("chevron", 16)}</a>` : emptyParty()}
     </section>
     <section aria-labelledby="active-heading" class="panel active-panel">
       <div class="panel-heading">
@@ -204,6 +263,7 @@ function overview() {
       </div>
       ${activeAdventure()}
     </section>
+    ${archiveDeskPanel()}
   </div>
   <section class="featured" aria-labelledby="featured-heading">
     <div class="section-heading"><div><h2 id="featured-heading">Featured adventures</h2>
@@ -280,7 +340,7 @@ function renderResults() {
 }
 
 function render() {
-  const {page, character, section} = currentRoute();
+  const {page, character, section, newRoom, roomAdventure} = currentRoute();
   if (page === "game") {
     app.innerHTML = '<main id="main" tabindex="-1" class="game-main"><div id="play-mount"></div></main>';
     showPlay({characters:state.characters, adventures:catalog.adventures, activeAdventure:state.active, localArchive, game:true,
@@ -288,7 +348,7 @@ function render() {
     return;
   }
   if (page !== "play") showPlay(null);
-  const pageLabel = navItems.find(([id]) => id === page)[1];
+  const pageLabel = newRoom ? "New room" : page === "profile" ? "Profile" : navItems.find(([id]) => id === page)[1];
   app.innerHTML = `<div class="shell">
     <aside class="sidebar">
       <a class="brand" href="#overview">
@@ -310,22 +370,23 @@ function render() {
     <div class="work-area">
       <div class="topbar${character ? " topbar-sheet" : ""}">
         <span class="crumb"><span>Workspace</span> ${icon("chevron", 13)} <strong>${pageLabel}</strong></span>
-        ${accountBadge()}${character ? '<a class="button outline" href="#characters">Back to party</a>' :
-          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : page==='spell-rules'||page==='profile' ? '' : button("Import character", "upload", "plus")}
+        <div class="account-topbar-actions">${character ? '<a class="button outline" href="#characters">Back to party</a>' :
+          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : page==='spell-library'||page==='homebrew'||page==='profile' ? '' : button("Import character", "upload", "plus")} ${accountBadge()}</div>
       </div>
-      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : page === "profile" ? '<div id="account-profile-mount"></div>' : page === "spell-rules" ? '<div id="spell-rules-mount"></div>' : '<div id="play-mount"></div>'}</main>
+      <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : page === "profile" ? '<div id="account-profile-mount"></div>' : page === "spell-library" ? '<div id="spell-library-mount"></div>' : page === "homebrew" ? '<div id="homebrew-mount"></div>' : '<div id="play-mount"></div>'}</main>
     </div>
   </div>`;
   if(page==='profile')mountAccountProfile(document.querySelector('#account-profile-mount'));
   if (page === "library") renderResults();
-  if(page==='spell-rules')void mountSpellRuleEditor(document.querySelector('#spell-rules-mount'));
+  if(page==='spell-library')void mountSpellRuleEditor(document.querySelector('#spell-library-mount'));
+  if(page==='homebrew')mountHomebrewDesk(document.querySelector('#homebrew-mount'));
   if(page==='characters' && !character && builderOpen){
     mountCharacterBuilder(document.querySelector('#character-builder'),{close:()=>{builderOpen=false;render();},create:record=>{
       const previous=state.characters;state.characters=[...previous,record];if(!save()){state.characters=previous;return false;}builderOpen=false;location.hash=sheetPath(record);notice('Character created. Use Party → Add in an adventure room.');return true;
     }});
   }
   if (page === "play") showPlay({characters:state.characters, adventures:catalog.adventures,
-    activeAdventure:state.active, localArchive});
+    activeAdventure:state.active, localArchive, newRoom, roomAdventure});
   if (character) fillSheetResults(character, section);
   paintCharacterPortraits(app);
 }
@@ -482,7 +543,7 @@ async function spellDialog(key) {
   const material = typeof spell.components?.m === "string" ? spell.components.m : spell.components?.m?.text;
   const content = spell.entries
     ? formatEntries(spell.entries) + formatEntries(spell.entriesHigherLevel)
-    : '<p>Attach your 5etools archive to read this spell’s full entry. <a href="#play" data-action="close">Open archive controls</a></p>';
+    : '<p>Attach your 5etools ZIP on the Overview page (or in Rooms) to read this spell’s full entry. <a href="#overview" data-action="close">Go to Overview</a></p>';
   openDialog(spell.name, spell.source + " · " + spell.edition + " rules" + (spell.page ? " · p. " + spell.page : ""), `
     <dl class="spell-reference-facts">${facts.map(([label,value]) => `<div><dt>${label}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>
     ${material ? '<p class="spell-material"><strong>Materials</strong> ' + escape(material) + '</p>' : ""}
@@ -495,7 +556,6 @@ async function spellDialog(key) {
 function adventureDialog(entry) {
   if (!entry) return;
   const isAdventure = Boolean(entry.maps);
-  const active = state.active === entry.id && isAdventure;
   const feature = featured.find(({id}) => id === entry.id);
   const facts = [levels(entry), entry.storyline, (entry.published ?? "").slice(0,4), entry.author].filter(Boolean);
   const grids = {square:"Square grid", hexColsOdd:"Hex grid", hexColsEven:"Hex grid", hexRowsOdd:"Hex grid", hexRowsEven:"Hex grid"};
@@ -512,8 +572,7 @@ function adventureDialog(entry) {
       ])) : '<p>This module has no map entries in the archive.</p>'}
     </details>` : ""}
     <footer class="dialog-footer"><span>5etools · ${escape(entry.source ?? entry.id)}</span>
-      ${isAdventure ? (active ? '<span class="active-pill">' + icon("check", 17) + ' Active adventure</span>' + button("Clear selection", "clear", "", "outline small", entry.id) :
-          button("Set as active adventure", "select", "flag", "primary", entry.id)) : ""}
+      ${isAdventure ? button("Create room with this adventure", "select", "flag", "primary", entry.id) : ""}
     </footer>`, isAdventure ? "compass" : "book", true);
 }
 
@@ -769,8 +828,67 @@ document.addEventListener("click", async (event) => {
           updateActiveCharacter(control, (char) => {
             char.items = char.items || [];
             char.items.push(itemData);
+            if (itemData.addAttack && itemData.attack) {
+              char.attacks = char.attacks || [];
+              char.attacks.push(itemData.attack);
+            }
           });
         }
+      });
+      break;
+    }
+    case "add-homebrew-item": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openHomebrewPicker({
+        kind: "items",
+        title: "Add homebrew item",
+        onPick: (entry) => {
+          const itemData = itemToSheetEntry(entry);
+          const attack = itemToAttack(entry);
+          updateActiveCharacter(control, (char) => {
+            char.items = char.items || [];
+            char.items.push(itemData);
+            if (attack && window.confirm("Also add " + entry.name + " as an attack on this sheet?")) {
+              char.attacks = char.attacks || [];
+              char.attacks.push(attack);
+            }
+          });
+          notice(entry.name + " added to inventory.");
+        },
+      });
+      break;
+    }
+    case "add-homebrew-feature": {
+      const active = getActiveCharacterView(control);
+      if (!active) break;
+      openHomebrewPicker({
+        kind: "features",
+        title: "Add homebrew feature",
+        onPick: (entry) => {
+          const feature = featureToSheetEntry(entry);
+          updateActiveCharacter(control, (char) => {
+            char.homebrewFeatures = char.homebrewFeatures || [];
+            if (char.homebrewFeatures.some((item) => item.id === feature.id)) {
+              throw new Error(feature.name + " is already on this sheet.");
+            }
+            char.homebrewFeatures.push(feature);
+            if (feature.resource) {
+              char.resources = char.resources || {};
+              const key = "homebrew:" + feature.id;
+              char.resources[key] = {...feature.resource};
+            }
+          });
+          notice(feature.name + " added. Effects need a table ruling unless a resource pool was included.");
+        },
+      });
+      break;
+    }
+    case "remove-homebrew-feature": {
+      const featureId = id;
+      updateActiveCharacter(control, (char) => {
+        char.homebrewFeatures = (char.homebrewFeatures || []).filter((entry) => entry.id !== featureId);
+        if (char.resources) delete char.resources["homebrew:" + featureId];
       });
       break;
     }
@@ -934,6 +1052,7 @@ document.addEventListener("click", async (event) => {
       break;
     }
     case "build-character": builderOpen=true;if(currentRoute().page!=="characters")location.hash="#characters";else render();break;
+    case "desk-archive": document.querySelector("#desk-archive-file")?.click(); break;
     case "upload": importDialog(); break;
     case "pick": document.querySelector("#workbooks").click(); break;
     case "pick-token": if (!changingToken) control.closest(".character-sheet").querySelector("#character-token-file").click(); break;
@@ -973,11 +1092,9 @@ document.addEventListener("click", async (event) => {
     case "game-sheet-section": if (gameSheet) showGameSheet(gameSheet.character,id); break;
     case "game-sheet-back": if (gameSheet) showGameSheet(gameSheet.character,gameSheet.section); break;
     case "select": {
-      state.active = id;
-      const saved = save();
+      if(!byId(id))break;
       dialog.close();
-      render();
-      notice(byId(id).name + " is now active." + (saved ? "" : " Browser storage is unavailable."));
+      location.hash = "#play/new/" + encodeURIComponent(id);
       break;
     }
     case "clear": {
@@ -1098,6 +1215,24 @@ if (local) {
   requests.push(fetch("local-archive", {method:"HEAD"}).then((response) => response.ok ? response.headers.get("X-Archive-Name") : ""));
 }
 restoreArchive();
+document.addEventListener("wayfarer:archive", () => {
+  if (["overview", "library", "spell-library"].includes(currentRoute().page) && !dialog.open && !builderOpen) render();
+});
+document.addEventListener("change", async (event) => {
+  const input = event.target.closest?.("#desk-archive-file");
+  if (!input?.files?.[0]) return;
+  const file = input.files[0];
+  input.value = "";
+  try {
+    const result = await attachArchive(file, file.name);
+    notice(result.saved
+      ? "5etools archive saved in this browser. Spell tips and adventure maps can use it."
+      : "Archive loaded for this session. Browser storage is unavailable.");
+    render();
+  } catch (error) {
+    notice(error instanceof Error ? error.message : "Could not read that ZIP.");
+  }
+});
 Promise.allSettled(requests).then(([index, , samples, archive]) => {
   if (index.status === "fulfilled") {
     catalog = index.value;
@@ -1108,7 +1243,8 @@ Promise.allSettled(requests).then(([index, , samples, archive]) => {
   if (samples?.status === "fulfilled" && Array.isArray(samples.value)) localSamples = samples.value;
   if (archive?.status === "fulfilled" && archive.value) localArchive = archive.value;
   // Background catalog loading must not replace an editor the user has already opened.
-  if (currentRoute().page === "spell-rules" && document.querySelector(".spell-rule-desk")) return;
+  if (currentRoute().page === "spell-library" && document.querySelector(".spell-rule-desk")) return;
+  if (currentRoute().page === "homebrew" && document.querySelector(".homebrew-desk")) return;
   const searchHasFocus = document.activeElement?.id === "catalog-search";
   render();
   if (searchHasFocus) document.querySelector("#catalog-search")?.focus();
@@ -1118,5 +1254,23 @@ registerSuggestions('#catalog-search',{options:()=>catalog[catalogKind].filter(e
 registerSuggestions('#sheet-search',{options:()=>{const route=gameSheet??currentRoute(),character=route.character;if(!character)return [];const inventory=route.section==='inventory',prepared=document.querySelector('#prepared-only')?.checked;return (inventory?character.items:character.spells).filter(record=>inventory||!prepared||record.prepared).map(record=>({label:record.name.split(' (')[0],search:record.name,detail:inventory?'Inventory · '+(record.quantity??1)+' owned':(record.level?'Level '+record.level:'Cantrip')+(record.source?' · '+record.source:'')}));}});
 
 document.addEventListener('wayfarer:cloud-workspace',event=>{state={characters:[],active:null,...event.detail};if(currentRoute().page==='game'){syncAccountCharacters(state.characters);return;}if(!dialog.open&&!builderOpen&&!document.activeElement?.matches('input,textarea,select'))render();});
-document.addEventListener('wayfarer:account-status',()=>{const host=document.querySelector('#account-profile-mount');if(host)mountAccountProfile(host);for(const badge of document.querySelectorAll('.account-badge'))badge.textContent=accountState().user?.displayName??'Sign in';});
+document.addEventListener('wayfarer:pending-characters',event=>{
+  const characters=event.detail?.characters??[];
+  if(!characters.length)return;
+  state={...state,characters:readDeskCharacters()};
+  const focus=characters[0];
+  if(focus?.id)location.hash=sheetPath(focus);
+  notice(focus?.name ? focus.name+' added to your party.' : 'Test character added.');
+  render();
+});
+function readDeskCharacters(){
+  try{return JSON.parse(localStorage.getItem(storageKey))?.characters??state.characters;}catch{return state.characters;}
+}
+document.addEventListener('wayfarer:account-status',()=>{const host=document.querySelector('#account-profile-mount');if(host)mountAccountProfile(host);for(const badge of document.querySelectorAll('.account-badge')){
+ const markup=accountBadge();
+ if(badge.outerHTML===markup)continue;
+ const focused=document.activeElement===badge,parent=badge.parentElement;
+ badge.outerHTML=markup;
+ if(focused)parent.querySelector('.account-badge')?.focus({preventScroll:true});
+}});
 void startAccounts();

@@ -4,3 +4,14 @@ dist/client/
 dist/server/
 .wrangler/
 manifest.json
+scripts/map-bake/node_modules/
+scripts/map-bake/cache/
+
+# Downloaded third-party media (BLFX / packs) — keep out of git
+vendor/
+
+# Animation binary assets (JB2A / BLFX WebMs, opaque backups, keying workdirs).
+# Keep credits.json (text hashes / license metadata) tracked.
+**/assets/animations/**
+!**/assets/animations/credits.json
+*.opaque.bak

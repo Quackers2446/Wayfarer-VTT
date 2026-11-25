@@ -37,14 +37,14 @@ export async function decodeImage(blob) {
   } finally {URL.revokeObjectURL(url);}
 }
 
-export async function saveTokenImage(file) {
+export async function prepareTokenImage(file, maxEdge = tokenSize) {
   if (!imageTypes.has(file.type) || file.size > maxFileSize) {
     throw new Error("Choose a PNG, JPEG, or WebP image up to 16 MB.");
   }
   const image = await decodeImage(file).catch(() => null);
   if (!image?.naturalWidth || !image.naturalHeight) throw new Error("This image could not be opened.");
   const edge = Math.min(image.naturalWidth,image.naturalHeight);
-  const size = Math.min(tokenSize,edge);
+  const size = Math.min(maxEdge,edge);
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext("2d");
@@ -54,15 +54,53 @@ export async function saveTokenImage(file) {
   if (!blob) throw new Error("This image could not be converted into a token.");
   const digest = await crypto.subtle.digest("SHA-256",await blob.arrayBuffer());
   const id = Array.from(new Uint8Array(digest),(byte) => byte.toString(16).padStart(2,"0")).join("");
+  return {id, blob};
+}
+
+export async function saveTokenImage(file) {
+  const {id, blob} = await prepareTokenImage(file);
   await storedImage(id,blob);
   return id;
 }
 
 const tokenURL = (session,id) => `/api/sessions/${session}/tokens/${id}`;
 
+async function removeImage(id) {
+  const db = await database();
+  return new Promise((resolve,reject) => {
+    const tx = db.transaction("images","readwrite");
+    tx.objectStore("images").delete(id);
+    tx.oncomplete = () => {db.close(); resolve();};
+    tx.onabort = tx.onerror = () => {db.close(); reject(tx.error);};
+  });
+}
+
+async function matchesId(id, blob) {
+  if (!(blob instanceof Blob) || !blob.size) return false;
+  const digest = await crypto.subtle.digest("SHA-256",await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest),(byte) => byte.toString(16).padStart(2,"0")).join("") === id;
+}
+
+// A stored image is only trusted when its bytes still hash to its id; damaged copies are discarded.
+async function verifiedImage(id) {
+  const blob = await storedImage(id).catch(() => null);
+  if (!blob) return null;
+  if (await matchesId(id,blob)) return blob;
+  await removeImage(id).catch(() => null);
+  return null;
+}
+
+async function accountTokenImage(id, signal) {
+  const response = await fetch("/api/account/tokens/"+id,{signal});
+  if (!response.ok) return null;
+  const blob = await response.blob();
+  if (!imageTypes.has(blob.type) || !await matchesId(id,blob)) return null;
+  await storedImage(id,blob).catch(() => null);
+  return blob;
+}
+
 export async function localTokenBlob(id) {
-  let blob = await storedImage(id);
-  if(!blob){const response=await fetch('/api/account/tokens/'+id);if(response.ok){blob=await response.blob();await storedImage(id,blob);}}
+  const blob = await verifiedImage(id) ?? await accountTokenImage(id).catch(() => null);
   if (!blob) throw new Error("Choose the character’s token image again to share it.");
   return blob;
 }
@@ -85,12 +123,12 @@ function portraitEntry(id, session) {
   entry = {waiting:new Set()};
   portraits.set(key,entry);
   entry.promise = (async () => {
-    let blob = await storedImage(id).catch(() => null);
+    let blob = await verifiedImage(id);
     if (!blob && session) {
       const response = await fetch(tokenURL(session,id),{signal:AbortSignal.timeout(12000)});
       if (response.ok) blob = await response.blob();
     }
-    if(!blob){const response=await fetch('/api/account/tokens/'+id,{signal:AbortSignal.timeout(12000)});if(response.ok){blob=await response.blob();await storedImage(id,blob);}}
+    if (!blob) blob = await accountTokenImage(id,AbortSignal.timeout(12000));
     if (blob) entry.artwork = {image:await decodeImage(blob),path:id,type:"character"};
     return entry.artwork;
   })().catch(() => undefined).then((artwork) => {

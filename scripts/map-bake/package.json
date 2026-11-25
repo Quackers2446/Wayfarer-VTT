@@ -1,0 +1,9 @@
+{
+  "name": "wayfarer-map-bake",
+  "private": true,
+  "type": "module",
+  "description": "Offline tooling that decodes 5etools map art for scripts/build-map-walls.mjs",
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}

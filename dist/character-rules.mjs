@@ -1,3 +1,4 @@
+import {hestiaSpells} from './hestias-fury.mjs';
 import {sheetOverrides, wornArmorClass} from "./sheet-editor.mjs";
 import {applySpellChoices, buildClassFeatures, classChosenSpells, classKey, loadFeatureData, selectedFeatNames, subclassKey} from "./class-features.mjs";
 import {ruleKey} from "./rules-library.mjs";
@@ -365,5 +366,6 @@ export function enrichCharacter(record) {
       if (grant.castUsage && (!grant.castUsage.ritual || existing.grantedBy)) Object.assign(existing,{castUsage:grant.castUsage,castingAbility:grant.castingAbility,grantedBy:grant.grantedBy});
     }
   }
+  character.spells = hestiaSpells(character);
   return character;
 }

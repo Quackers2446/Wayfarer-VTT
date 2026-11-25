@@ -126,3 +126,13 @@
 
 .room-card-heading .tag{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .room-party-guidance{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.room-party-guidance p{font-size:.83rem;color:var(--muted)}
+
+.room-setup{max-width:1040px;margin:0 auto;padding:clamp(14px,3vw,24px)}
+.room-setup .play-header{align-items:flex-start;flex-wrap:wrap;margin-bottom:16px}
+.room-setup .play-header h1{font-size:clamp(1.65rem,3vw,2.2rem)}
+.room-setup .room-create-form{margin-bottom:0}
+.room-advanced{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}
+.room-advanced>summary{cursor:pointer;font-weight:600}
+.room-advanced[open]>summary{margin-bottom:12px}
+.room-advanced .room-prepared{margin:10px 0}
+.room-create-form .play-archive{margin:0}

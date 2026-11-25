@@ -1,0 +1,16 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Add Merlin test sheet</title>
+<p>Queuing Merlin for your Wayfarer party…</p>
+<script type="module">
+const merlin = await (await fetch('./merlin-all-spells.json')).json();
+merlin.id = crypto.randomUUID();
+merlin.sourceKey = 'test:merlin-all-spells';
+const pendingKey = 'wayfarer-pending-characters-v1';
+let pending = [];
+try { pending = JSON.parse(localStorage.getItem(pendingKey)) || []; } catch {}
+pending = pending.filter((entry) => entry?.sourceKey !== 'test:merlin-all-spells' && String(entry?.name || '').toLowerCase() !== 'merlin');
+pending.push(merlin);
+localStorage.setItem(pendingKey, JSON.stringify(pending));
+location.replace('/#characters');
+</script>

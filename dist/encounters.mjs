@@ -1,4 +1,6 @@
+import {applyHestiasFury} from './hestias-fury.mjs';
 import {xpForCR,itemFromReference} from "./encounter-rewards.mjs";
+import {weaponProperties} from './weapon-properties.mjs';
 import {cellAt, cellCenter, gridGeometry, legacyGeometry, sourceGrid, validGeometry} from "./map-grid.mjs";
 import {diceTerms, makeActor, modifier} from "./combat.mjs";
 import {enrichCharacter} from "./character-rules.mjs";
@@ -243,7 +245,7 @@ function attackFromSheet(item) {
   if (weapon?.property?.includes("T") && range[0]) {
     result.thrown = {normalRange:range[0], longRange:range[1]};
   }
-  return result;
+  return weaponProperties({...result,...Object.fromEntries(['finesse','rangedWeapon','weaponPropertiesEdited','baseWeapon','note','reach','normalRange','longRange'].filter(key=>item[key]!=null).map(key=>[key,item[key]]))});
 }
 
 function healingItems(items) {
@@ -253,9 +255,12 @@ function healingItems(items) {
     "potion of superior healing":"8d4+8", "superior healing potion":"8d4+8",
     "potion of supreme healing":"10d4+20", "supreme healing potion":"10d4+20",
   };
-  return items.flatMap(({name, quantity}) => {
+  return items.flatMap((item) => {
+    const {name, quantity} = item;
     const override = /^healing potions?\s*\(([^)]+)\)$/i.exec(name)?.[1];
-    const formula = override && diceTerms(override) ? override : strengths[ruleKey(name)];
+    const formula = (item.formula && diceTerms(item.formula) ? item.formula : null)
+      ?? (override && diceTerms(override) ? override : null)
+      ?? strengths[ruleKey(name)];
     return formula && quantity > 0 ? [{name, quantity, formula}] : [];
   });
 }
@@ -267,18 +272,32 @@ export function partyActor(record) {
     throw new Error(character.name + " needs maximum HP, AC, and walking speed in the character sheet.");
   }
   const resources = structuredClone(character.resources);
+  for (const feature of character.homebrewFeatures ?? []) {
+    if (feature.resource) {
+      const key = "homebrew:" + feature.id;
+      if (!resources[key]) resources[key] = structuredClone(feature.resource);
+    }
+  }
   const spells = character.spells.map(({name,level,prepared,source,castUsage,castingAbility,grantedBy}) => {
-    const spell = (source && spellByKey(source.toLowerCase()+"|"+ruleKey(name.split(" (")[0]))) || matchSpell(name);
+    const bare = name.split(" (")[0];
+    const sourceCode = source == null ? "" : String(source);
+    const homebrewSource = /^HB$/i.test(sourceCode) || /^hb\|/i.test(sourceCode);
+    const homebrewRef = homebrewSource
+      ? (/^hb\|/i.test(sourceCode) ? sourceCode.toLowerCase() : "hb|" + ruleKey(bare))
+      : "";
+    // Explicit HB (or hb|…) must not fall back to a same-name PHB/catalog spell.
+    const keyed = sourceCode && spellByKey((homebrewSource ? homebrewRef : sourceCode.toLowerCase()+"|"+ruleKey(bare)));
+    const spell = keyed || (homebrewSource ? null : matchSpell(name));
     const note = spell && ruleKey(name) !== ruleKey(spell.name) ? name : "";
-    const customUse = !spell || !castUsage && /without rolling|no spell slot|charges|unlimited|on snakes|infinite cast/i.test(note);
-    const resource = castUsage?.resourceKey ? Object.keys(resources).find(key=>ruleKey(resources[key].name)===castUsage.resourceKey) ?? "missing:"+castUsage.resourceKey :
-      castUsage?.maximum ? "spell:"+(castUsage.poolKey ? castUsage.poolKey+(castUsage.each ? ":"+spellKey(spell) : "") : spellKey(spell)) : null;
-    if (resource && castUsage.maximum && !resources[resource]) resources[resource] = {
+    const customUse = (!spell && !homebrewRef) || Boolean(!castUsage && /without rolling|no spell slot|charges|unlimited|on snakes|infinite cast/i.test(note));
+    const resource = castUsage?.resource ?? (castUsage?.resourceKey ? Object.keys(resources).find(key=>ruleKey(resources[key].name)===castUsage.resourceKey) ?? "missing:"+castUsage.resourceKey :
+      castUsage?.maximum ? "spell:"+(castUsage.poolKey ? castUsage.poolKey+(castUsage.each ? ":"+spellKey(spell) : "") : spellKey(spell)) : null);
+    if (resource && castUsage.maximum && !castUsage.itemOnly && !resources[resource]) resources[resource] = {
       name:castUsage.poolKey && !castUsage.each ? grantedBy ?? spell.name : spell.name,
       maximum:castUsage.maximum,current:castUsage.maximum,rest:castUsage.rest};
-    return {name:spell?.name ?? name.split(" (")[0], key:ruleKey(spell?.name ?? name),
-      edition:spell?.edition, level:spell?.level ?? level, note, customUse:customUse || Boolean(castUsage?.ritual), prepared,
-      reference:spell ? spellKey(spell) : "", timing:spell?.time?.[0]?.unit,castUsage:castUsage ? {...castUsage,resource} : undefined,
+    return {name:spell?.name ?? bare, key:ruleKey(spell?.name ?? bare),
+      edition:spell?.edition ?? "2014", level:spell?.level ?? level, note, customUse:customUse || Boolean(castUsage?.ritual), prepared,
+      reference:spell ? spellKey(spell) : homebrewRef, timing:spell?.time?.[0]?.unit,castUsage:castUsage ? {...castUsage,resource} : undefined,
       castingAbility,grantedBy};
   });
   const scores = Object.fromEntries(character.abilities.map(({abbr, score, modifier:mod}) => [abbr.toLowerCase(),mod ?? modifier(score)]));
@@ -298,7 +317,7 @@ export function partyActor(record) {
       name:"Unarmed Strike",bonus:ability+character.proficiency,damage,type:"bludgeoning",reach:5,unarmed:true,monkWeapon:true,
     });
   }
-  return makeActor({
+  return applyHestiasFury(makeActor({
     strength:character.abilities.find(ability=>ability.abbr==='STR')?.score,items:structuredClone(character.items ?? []),currency:structuredClone(character.currency ?? {}),xp:character.xp ?? 0,
     id:"party:" + character.id, creatureSize:character.creation?.size, side:"party", resolveDeath:true, name:character.name, ac:character.ac, tokenImage:character.tokenImage,
     hp:character.hp ?? character.maxHp, maxHp:character.maxHp, tempHp:character.tempHp ?? 0,
@@ -313,10 +332,10 @@ export function partyActor(record) {
     slots:{...Object.fromEntries(spells.filter((spell) => spell.level).map((spell) =>
       [spell.level,{current:null,maximum:null}])), ...structuredClone(character.spellSlots ?? {})},
     spellAbility, spellDC:character.spellDC, spellAttack:character.spellAttack, level:character.level,
-  });
+  }));
 }
 
-function monsterAttack(action) {
+export function monsterAttack(action) {
   const body = action.entries?.filter((entry) => typeof entry === "string").join(" ") ?? "";
   const bonus = body.match(/\{@hit ([+-]?\d+)\}/)?.[1];
   if (bonus == null) return [];
@@ -337,7 +356,7 @@ function monsterAttack(action) {
   return [base];
 }
 
-function repeatedAttacks(actions, attacks) {
+export function repeatedAttacks(actions, attacks) {
   const entry = actions?.find(({name}) => name === "Multiattack")?.entries?.[0];
   if (typeof entry !== "string") return null;
   const match = entry.match(/^[^.]+? makes (two|three) attacks with its ([\w ]+)\.(?: The second attack has disadvantage\.)?$/i);
@@ -349,21 +368,21 @@ function repeatedAttacks(actions, attacks) {
   }));
 }
 
-export async function creatureActor({name, source, nickname, hp, side, currentHp, disarmed, named}) {
-  const data = await monsterRecord(name, source);
+export async function creatureActor({name, source, nickname, hp, side, currentHp, disarmed, named,data:providedData}) {
+  const data = providedData ?? await monsterRecord(name, source);
   if (!data || !data.hp?.average || !data.ac?.[0]) throw new Error("A full stat block is unavailable for " + name + " (" + source + ").");
   const baseAC = data.ac[0];
   const maxHp = hp ?? data.hp.average;
   const speed = data.speed?.walk;
   const tokenArt = data.tokenHref?.type === "internal" ? data.tokenHref.path :
     data.hasToken || data.token ? bestiaryTokenPath(data.token ?? data) : null;
-  const attacks = disarmed ? [] : data.action?.flatMap(monsterAttack) ?? [];
-  const multiattack = repeatedAttacks(data.action,attacks);
+  const attacks = disarmed ? [] : data.attacks ?? data.action?.flatMap(monsterAttack) ?? [];
+  const multiattack = disarmed ? null : data.multiattack ?? repeatedAttacks(data.action,attacks);
   return makeActor({
     name:nickname || data.name, ac:typeof baseAC === "number" ? baseAC : baseAC.ac,
     hp:currentHp ?? maxHp, maxHp,
     side:side ?? (named && data.isNpc ? "neutral" : "hostile"),
-    cr:data.cr,rewardXp:xpForCR(data.cr),loot:disarmed ? [] : (data.attachedItems ?? []).filter(item=>typeof item==='string').map(itemFromReference),lootInitialized:true,rewardsPrepared:true,
+    cr:data.cr,rewardXp:Math.floor(xpForCR(data.cr)*(data.restXpMultiplier??1)),loot:disarmed ? [] : (data.attachedItems ?? []).filter(item=>typeof item==='string').map(itemFromReference),lootInitialized:true,rewardsPrepared:true,
     statName:data.name, source:data.source, tokenArt,creatureSize:data.size?.[0],
     speed:typeof speed === "number" ? speed : speed?.number ?? 0,
     strength:data.str,dex:data.dex, initiative:modifier(data.dex) ?? 0, level:null,

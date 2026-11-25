@@ -1,19 +1,47 @@
 import {emptyWorkspace,mergeWorkspaces,importGuestWorkspace} from './account-merge.mjs';
-import {storedImage} from './character-token.mjs';
+import {storedImage,prepareTokenImage} from './character-token.mjs';
 import {knownRooms,rememberRooms} from './adventure-rooms.mjs';
-const deskKey='wayfarer-desk-v1',rulesKey='wayfarer-spell-rules-v1',guestKey='wayfarer-guest-workspace-v1',ownerKey='wayfarer-active-account-v1',guestPlayer='wayfarer-guest-player-v1',cacheKey=id=>'wayfarer-account-cache-v1:'+id;
+const deskKey='wayfarer-desk-v1',rulesKey='wayfarer-spell-rules-v1',guestKey='wayfarer-guest-workspace-v1',ownerKey='wayfarer-active-account-v1',guestPlayer='wayfarer-guest-player-v1',pendingKey='wayfarer-pending-characters-v1',cacheKey=id=>'wayfarer-account-cache-v1:'+id;
 const read=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))??fallback;}catch{return fallback;}};
 const store=(key,value)=>{const encoded=JSON.stringify(value);try{localStorage.setItem(key,encoded);}catch(error){for(const candidate of Object.keys(localStorage)){if(candidate.startsWith('wayfarer-account-cache-v1:')&&candidate!==key&&!read(candidate,{}).dirty)localStorage.removeItem(candidate);}localStorage.setItem(key,encoded);}};
 const stashDrafts=scope=>store('wayfarer-device-drafts-v1:'+scope,{builder:read('wayfarer-character-builder-v1',null),spells:read('wayfarer-spell-rule-drafts-v1',{}),preview:read('wayfarer-preview-room-v2',null),activeMap:read('wayfarer-active-map-v1',null)});
 const restoreDrafts=scope=>{const drafts=read('wayfarer-device-drafts-v1:'+scope,{builder:null,spells:{}});if(drafts.builder)store('wayfarer-character-builder-v1',drafts.builder);else localStorage.removeItem('wayfarer-character-builder-v1');store('wayfarer-spell-rule-drafts-v1',drafts.spells);if(drafts.preview)store('wayfarer-preview-room-v2',drafts.preview);else localStorage.removeItem('wayfarer-preview-room-v2');if(drafts.activeMap)store('wayfarer-active-map-v1',drafts.activeMap);else localStorage.removeItem('wayfarer-active-map-v1');};
 const currentWorkspace=()=>{const state=read(deskKey,{});return {characters:state.characters??[],active:state.active??null,spellRules:read(rulesKey,{})};};
 const writeWorkspace=workspace=>{const state={...read(deskKey,{}),characters:workspace.characters??[],active:workspace.active??null};store(deskKey,state);store(rulesKey,workspace.spellRules??{});document.dispatchEvent(new CustomEvent('wayfarer:cloud-workspace',{detail:state}));};
+/** Queue characters to merge after account/guest workspace settles (survives cloud apply). */
+export function queuePendingCharacters(characters){
+  const list=Array.isArray(characters)?characters:[characters];
+  store(pendingKey,[...read(pendingKey,[]),...list.filter(Boolean)]);
+}
+function consumePendingCharacters(){
+  const pending=read(pendingKey,[]);
+  if(!pending.length)return [];
+  localStorage.removeItem(pendingKey);
+  const workspace=currentWorkspace();
+  const added=[];
+  for(const character of pending){
+    if(!character?.id||!character?.name)continue;
+    workspace.characters=(workspace.characters??[]).filter(existing=>
+      existing.id!==character.id &&
+      existing.sourceKey!==character.sourceKey &&
+      !(character.sourceKey==='test:merlin-all-spells' && String(existing.name||'').toLowerCase()==='merlin')
+    );
+    workspace.characters.push(character);
+    added.push(character);
+  }
+  if(!added.length)return [];
+  apply(workspace);
+  if(user&&cache){cache.local=currentWorkspace();cache.dirty=true;try{persist();}catch{}void syncAccount();}
+  else store(guestKey,currentWorkspace());
+  document.dispatchEvent(new CustomEvent('wayfarer:pending-characters',{detail:{characters:added}}));
+  return added;
+}
 // Do not display cached private account data before this browser's login session is checked.
 export function prepareAccountWorkspace(){try{const previous=localStorage.getItem(ownerKey);if(previous){stashDrafts(previous);restoreDrafts('guest');rememberRooms(read('wayfarer-guest-rooms-v1',[]),{authoritative:true});const guest=read(guestKey,emptyWorkspace());store(deskKey,{characters:guest.characters,active:guest.active});store(rulesKey,guest.spellRules);}}catch{}}
-let user=null,googleClientId=null,status='Checking sign-in…',cache=null,conflicts=[],remote=null,ready=false,busy=false,timer,poll,appState,callback,uploaded=new Set(),nonce=null,googleLoading;
+let user=null,googleClientId=null,status='Checking sign-in…',cache=null,conflicts=[],remote=null,ready=false,busy=false,timer,uploaded=new Set(),googleLoading;
 const notify=()=>document.dispatchEvent(new Event('wayfarer:account-status'));
 export const accountState=()=>({user,googleClientId,status,ready,busy,conflicts});
-async function request(path,{method='GET',body,headers}={}){const response=await fetch(path,{method,credentials:'same-origin',headers:{...(body&&!(body instanceof Blob)?{'Content-Type':'application/json'}:{}),...headers},body:body instanceof Blob?body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(20000)});const data=await response.json().catch(()=>({}));if(!response.ok){const error=Error(data.message??'Account storage could not be reached.');error.status=response.status;error.data=data;throw error;}return data;}
+async function request(path,{method='GET',body,headers}={}){const response=await fetch(path,{method,credentials:'same-origin',headers:{...(body&&!(body instanceof Blob)?{'Content-Type':'application/json'}:{}),...(user&&path.startsWith('/api/account/')?{'X-Wayfarer-Account':user.id}:{}),...headers},body:body instanceof Blob?body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(20000)});const data=await response.json().catch(()=>({}));if(!response.ok){const error=Error(data.message??'Account storage could not be reached.');error.status=response.status;error.data=data;throw error;}return data;}
 function persist(){if(!user||!cache)return;store(cacheKey(user.id),cache);}
 export function accountLibraryChanged(){
  try{
@@ -22,7 +50,7 @@ export function accountLibraryChanged(){
  cache.local=currentWorkspace();for(const conflict of conflicts)conflict.local=conflict.kind==='character'?cache.local.characters.find(c=>c.id===conflict.id):cache.local.spellRules[conflict.id];cache.dirty=true;try{persist();}catch{status='Browser storage is full. Keep this tab open and sync before signing out.';notify();return;}status=conflicts.length?'Resolve changes from another device.':'Changes saved on this device; syncing…';notify();clearTimeout(timer);timer=setTimeout(()=>void syncAccount(),650);
  }catch{status='Browser storage is full. Your changes remain in the open tab; free space before closing it.';notify();}
 }
-function apply(workspace){writeWorkspace(structuredClone(workspace));callback?.();}
+function apply(workspace){writeWorkspace(structuredClone(workspace));}
 async function uploadTokens(workspace){for(const hash of new Set(workspace.characters.map(c=>c.tokenImage).filter(Boolean))){if(uploaded.has(hash))continue;let blob=await storedImage(hash).catch(()=>null);if(!blob){for(const room of knownRooms()){const result=await fetch(`/api/sessions/${room.id}/tokens/${hash}`);if(result.ok){blob=await result.blob();break;}}}if(!blob)throw Error('A character token is missing from this browser. Choose its image again to finish syncing.');await request('/api/account/tokens/'+hash,{method:'PUT',body:blob,headers:{'Content-Type':blob.type}});uploaded.add(hash);}}
 export async function syncAccount(){
  if(!user||!cache||busy||conflicts.length)return;busy=true;notify();
@@ -31,12 +59,12 @@ export async function syncAccount(){
    if(!cache.dirty){const cloud=await request('/api/account/workspace');uploaded=new Set(cloud.tokens);if(cloud.revision!==cache.revision){const merge=mergeWorkspaces(cache.base,currentWorkspace(),cloud.workspace);remote=cloud;conflicts=merge.conflicts;if(conflicts.length){cache.local=merge.workspace;cache.conflicts=conflicts;cache.remote=remote;persist();apply(merge.workspace);status='Both devices changed the same items. Choose which changes to keep.';return;}cache={base:cloud.workspace,local:merge.workspace,revision:cloud.revision,dirty:JSON.stringify(merge.workspace)!==JSON.stringify(cloud.workspace)};persist();apply(merge.workspace);if(cache.dirty)continue;}if(cache.dirty)continue;status='Everything is synced.';return;}
    status='Saving your library…';notify();await uploadTokens(local);const snapshot=structuredClone(local);
    try{const result=await request('/api/account/workspace',{method:'PUT',body:{revision:cache.revision,workspace:snapshot}});const latest=currentWorkspace();cache={base:snapshot,local:latest,revision:result.revision,dirty:JSON.stringify(latest)!==JSON.stringify(snapshot)};persist();if(cache.dirty)continue;status='Everything is synced.';return;}
-   catch(error){if(error.status!==409)throw error;const cloud=error.data,merge=mergeWorkspaces(cache.base,currentWorkspace(),cloud.workspace);remote=cloud;conflicts=merge.conflicts;if(conflicts.length){cache.local=merge.workspace;cache.conflicts=conflicts;cache.remote=remote;persist();apply(merge.workspace);status='Both devices changed the same items. Choose which changes to keep.';return;}cache={base:cloud.workspace,local:merge.workspace,revision:cloud.revision,dirty:true};persist();apply(merge.workspace);}
+   catch(error){if(error.status!==409)throw error;const cloud=error.data;uploaded=new Set(cloud.tokens);const merge=mergeWorkspaces(cache.base,currentWorkspace(),cloud.workspace);remote=cloud;conflicts=merge.conflicts;if(conflicts.length){cache.local=merge.workspace;cache.conflicts=conflicts;cache.remote=remote;persist();apply(merge.workspace);status='Both devices changed the same items. Choose which changes to keep.';return;}cache={base:cloud.workspace,local:merge.workspace,revision:cloud.revision,dirty:true};persist();apply(merge.workspace);}
   }status='Your account is busy. Changes remain saved on this device and will retry.';
  }catch(error){status=error.status===401?'Your login expired. Sign in again to sync these saved changes.':'Saved on this device. '+error.message;}
  finally{busy=false;notify();}
 }
-export async function resolveAccountConflict(index,choice){const conflict=conflicts[index];if(!conflict)return;const workspace=structuredClone(cache.local),value=choice==='local'?conflict.local:conflict.cloud;if(conflict.kind==='character'){workspace.characters=workspace.characters.filter(c=>c.id!==conflict.id);if(value)workspace.characters.push(value);}else{delete workspace.spellRules[conflict.id];if(value)workspace.spellRules[conflict.id]=value;}conflicts.splice(index,1);cache.local=workspace;cache.conflicts=conflicts;persist();if(conflicts.length){notify();return;}cache.base=remote.workspace;cache.revision=remote.revision;cache.dirty=true;delete cache.conflicts;delete cache.remote;persist();apply(workspace);await syncAccount();}
+export async function resolveAccountConflict(index,choice){const conflict=conflicts[index];if(!conflict)return;const workspace=structuredClone(cache.local),value=choice==='local'?conflict.local:conflict.cloud;if(conflict.kind==='character'){workspace.characters=workspace.characters.filter(c=>c.id!==conflict.id);if(value)workspace.characters.push(value);}else{delete workspace.spellRules[conflict.id];if(value)workspace.spellRules[conflict.id]=value;}conflicts.splice(index,1);cache.local=workspace;cache.conflicts=conflicts;persist();if(conflicts.length){apply(workspace);notify();return;}cache.base=remote.workspace;cache.revision=remote.revision;cache.dirty=true;delete cache.conflicts;delete cache.remote;persist();apply(workspace);await syncAccount();}
 async function adopt(signedIn){
  const guest=read(guestKey,currentWorkspace()),guestRooms=knownRooms(),previousController=localStorage.getItem('wayfarer-player-v1'),old=read(cacheKey(signedIn.id),null);const cloud=await request('/api/account/workspace');user=signedIn;uploaded=new Set(cloud.tokens);
  const merged=old?.dirty?mergeWorkspaces(old.base,old.local,cloud.workspace):{workspace:cloud.workspace,conflicts:[]};cache={base:cloud.workspace,local:merged.workspace,revision:cloud.revision,dirty:Boolean(old?.dirty)};conflicts=merged.conflicts;remote=cloud;
@@ -48,14 +76,25 @@ async function adopt(signedIn){
  if(!conflicts.length)await syncAccount();else{status='Choose which versions to keep before syncing.';notify();}
  return previousController!==user.id;
 }
-export async function startAccounts({onWorkspace}={}){callback=onWorkspace;
- try{const session=await request('/api/auth/session');googleClientId=session.googleClientId;if(session.user){const changed=await adopt(session.user);if(changed){location.reload();return;}}else{const previous=localStorage.getItem(ownerKey);user=null;ready=true;status='Guest mode · saved in this browser.';if(previous){localStorage.removeItem(ownerKey);const player=localStorage.getItem(guestPlayer)??crypto.randomUUID();localStorage.setItem('wayfarer-player-v1',player);apply(read(guestKey,emptyWorkspace()));location.reload();return;}store(guestKey,currentWorkspace());store('wayfarer-guest-rooms-v1',knownRooms());}}
- catch(error){ready=true;status='Account connection unavailable. Guest data remains on this device.';}
- notify();poll=setInterval(()=>{if(document.visibilityState==='visible'&&!document.querySelector('dialog[open]')&&!document.activeElement?.matches('input,textarea,select'))void syncAccount();},20000);window.addEventListener('online',()=>void syncAccount());window.addEventListener('focus',()=>{if(ready)void syncAccount();});document.addEventListener('wayfarer:library-saved',accountLibraryChanged);
+export async function startAccounts(){
+ try{const session=await request('/api/auth/session');googleClientId=session.googleClientId;if(session.user){const changed=await adopt(session.user);if(changed){location.reload();return;}consumePendingCharacters();}else{const previous=localStorage.getItem(ownerKey);user=null;ready=true;status='Guest mode · saved in this browser.';if(previous){localStorage.removeItem(ownerKey);const player=localStorage.getItem(guestPlayer)??crypto.randomUUID();localStorage.setItem('wayfarer-player-v1',player);apply(read(guestKey,emptyWorkspace()));location.reload();return;}store(guestKey,currentWorkspace());store('wayfarer-guest-rooms-v1',knownRooms());consumePendingCharacters();}}
+ catch(error){ready=true;status='Account connection unavailable. Guest data remains on this device.';consumePendingCharacters();}
+ notify();setInterval(()=>{if(document.visibilityState==='visible'&&!document.querySelector('dialog[open]')&&!document.activeElement?.matches('input,textarea,select'))void syncAccount();},20000);window.addEventListener('online',()=>void syncAccount());window.addEventListener('focus',()=>{if(ready)void syncAccount();});document.addEventListener('wayfarer:library-saved',accountLibraryChanged);
 }
 async function googleScript(){if(window.google?.accounts?.id)return;googleLoading??=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;script.onload=resolve;script.onerror=()=>{googleLoading=null;reject(Error('Google sign-in could not load. Check your connection or content blocker.'));};document.head.append(script);});await googleLoading;}
-export async function mountGoogleButton(host){if(!host||!googleClientId||user)return;try{await googleScript();if(!host.isConnected)return;const challenge=await request('/api/auth/nonce',{method:'POST'});nonce=challenge.nonce;window.google.accounts.id.initialize({client_id:googleClientId,nonce,auto_select:false,callback:async({credential})=>{try{status='Signing in…';notify();const result=await request('/api/auth/google',{method:'POST',body:{credential}});store(guestKey,currentWorkspace());await adopt(result.user);const back=sessionStorage.getItem('wayfarer-auth-return-v1');sessionStorage.removeItem('wayfarer-auth-return-v1');if(back?.startsWith('#game/'))location.hash=back;location.reload();}catch(error){const reset=!localStorage.getItem(ownerKey);if(reset){user=null;cache=null;}status=error.message;notify();if(reset&&host.isConnected){host.innerHTML='';void mountGoogleButton(host);}}}});window.google.accounts.id.renderButton(host,{theme:'outline',size:'large',text:'signin_with',shape:'rectangular',width:Math.min(320,host.clientWidth||320)});}catch(error){host.textContent=error.message;}}
+export async function mountGoogleButton(host){if(!host||!googleClientId||user)return;try{await googleScript();if(!host.isConnected)return;const challenge=await request('/api/auth/nonce',{method:'POST'});if(!host.isConnected)return;window.google.accounts.id.initialize({client_id:googleClientId,nonce:challenge.nonce,auto_select:false,callback:async({credential})=>{try{status='Signing in…';notify();const result=await request('/api/auth/google',{method:'POST',body:{credential}});store(guestKey,currentWorkspace());await adopt(result.user);const back=sessionStorage.getItem('wayfarer-auth-return-v1');sessionStorage.removeItem('wayfarer-auth-return-v1');if(back?.startsWith('#game/'))location.hash=back;location.reload();}catch(error){const reset=!localStorage.getItem(ownerKey);if(reset){user=null;cache=null;}status=error.message;notify();if(reset&&host.isConnected){host.innerHTML='';void mountGoogleButton(host);}}}});window.google.accounts.id.renderButton(host,{theme:'outline',size:'large',text:'signin_with',shape:'rectangular',width:Math.min(320,host.clientWidth||320)});}catch(error){host.textContent=error.message;}}
 export async function signOutAccount(){if(busy)throw Error('Wait for the current sync to finish.');await syncAccount();persist();stashDrafts(user.id);await request('/api/auth/logout',{method:'POST'});window.google?.accounts?.id.disableAutoSelect();user=null;cache=null;conflicts=[];restoreDrafts('guest');rememberRooms(read('wayfarer-guest-rooms-v1',[]),{authoritative:true});localStorage.removeItem(ownerKey);localStorage.setItem('wayfarer-player-v1',localStorage.getItem(guestPlayer)??crypto.randomUUID());apply(read(guestKey,emptyWorkspace()));location.reload();}
 export async function saveAccountProfile(displayName,bio){const result=await request('/api/account/profile',{method:'PUT',body:{displayName,bio}});user=result.user;localStorage.setItem('wayfarer-username-v1',user.displayName);notify();}
 
 document.addEventListener('click',event=>{const link=event.target.closest?.('[data-account-return]');if(link)sessionStorage.setItem('wayfarer-auth-return-v1',link.dataset.accountReturn);});
+
+export async function saveAccountPhoto(file) {
+ const accountId=user?.id;
+ if(!accountId)throw Error('Sign in to save a profile photo.');
+ const image=file?await prepareTokenImage(file,256):null;
+ if(user?.id!==accountId)throw Error('Your account changed. Choose the photo again.');
+ const result=await request('/api/account/photo',image?{
+  method:'PUT',body:image.blob,headers:{'Content-Type':image.blob.type,'X-Photo-Id':image.id}
+ }:{method:'DELETE'});
+ if(user?.id===accountId){user=result.user;notify();}
+}

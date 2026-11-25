@@ -1,3 +1,4 @@
+import {profilePortrait} from "./profile-photo.mjs";
 import {escape} from "./format.mjs";
 
 const api = "/api/sessions";
@@ -89,8 +90,8 @@ function sessionPlayers(players, battle, controller) {
   return `<section class="session-players" aria-label="Players">
     <h3>Players <span>${online} online</span></h3>
     <ul>${players.map((player) => `<li>
-      <div><strong>${escape(player.username)}${player.id === controller ? " (you)" : ""}</strong>
-        <small>${escape(claims.get(player.id) ?? "No character claimed")}</small></div>
+      <div class="session-player-name">${!claims.has(player.id)?profilePortrait(player,"room-profile-avatar"):""}<span><strong>${escape(player.username)}${player.id === controller ? " (you)" : ""}</strong>
+        <small>${escape(claims.get(player.id) ?? "No character claimed")}</small></span></div>
       <span class="session-presence${player.online ? " online" : ""}">${player.online ? "Online" : "Away"}</span>
     </li>`).join("")}</ul>
   </section>`;

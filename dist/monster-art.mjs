@@ -161,9 +161,9 @@ export function monsterArtwork(actor,map,onReady) {
   return null;
 }
 
-export function drawMonsterArtwork(context, artwork, centerX,centerY,size) {
+export function drawMonsterArtwork(context, artwork, centerX,centerY,size,{contain=false}={}) {
   const {image,type}=artwork;
-  const bound=type==="illustration" ? Math.min(image.naturalWidth,image.naturalHeight) :
+  const bound=!contain && type==="illustration" ? Math.min(image.naturalWidth,image.naturalHeight) :
     Math.max(image.naturalWidth,image.naturalHeight);
   const ratio=size/bound;
   const width=image.naturalWidth*ratio, height=image.naturalHeight*ratio;

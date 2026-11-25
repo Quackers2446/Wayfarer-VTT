@@ -1,10 +1,13 @@
 import {turnView, canTakeTurn, actorIsUp, condition, currentActor, distanceFt, hasFeature, incapacitated, moveLeft, movementGroup, speedOf, supportedSpell} from "./combat.mjs";
+import {thrallsOf} from "./dominate.mjs";
 import {classActions} from "./class-actions.mjs";
 import {escape} from "./format.mjs";
 import {icon} from "./icons.mjs";
-import {spellByKey} from "./rules-library.mjs";
+import {cachedSpell, primeSpells, spellByKey} from "./rules-library.mjs";
+import {isArmed, reactionSpells} from "./reactions.mjs";
 
 const timingNames={action:"Action",bonus:"Bonus action",free:"Free",move:"Movement",flurry:"Follow-up",reaction:"Reaction",hit:"On hit"};
+const schoolNames={A:"Abjuration",C:"Conjuration",D:"Divination",E:"Enchantment",V:"Evocation",I:"Illusion",N:"Necromancy",T:"Transmutation"};
 export const hotbarTabs=[["all","All"],["weapon","Weapons"],["spell","Spells"],["feature","Abilities"],["potion","Items"],["common","Common"],["passive","Passives"]];
 
 function plain(entries) {
@@ -12,10 +15,88 @@ function plain(entries) {
   const walk=node=>{
     if(typeof node==="string" && !node.startsWith("{@i ")) strings.push(node);
     else if(Array.isArray(node)) node.forEach(walk);
-    else if(node && typeof node==="object") walk(node.entries ?? node.items);
+    else if(node && typeof node==="object") walk(node.entries ?? node.items ?? node.entry);
   };
   walk(entries);
-  return (strings[0] ?? "").replace(/\{@\w+ ([^}]+)\}/g,(_,body)=>body.split('|')[0]).slice(0,320);
+  return strings.join(" ").replace(/\{@\w+ ([^}]+)\}/g,(_,body)=>body.split('|')[0]).replace(/\s+/g," ").trim().slice(0,420);
+}
+
+function catalogRange(range) {
+  if (!range) return "";
+  if (range.type === "special") return "Special";
+  const distance = range.distance;
+  if (!distance) return range.type || "";
+  if (distance.type === "self") return "Self";
+  if (distance.type === "touch") return "Touch";
+  if (distance.type === "sight") return "Sight";
+  if (distance.type === "unlimited") return "Unlimited";
+  if (Number.isFinite(distance.amount)) return distance.amount + " ft";
+  return distance.type || "";
+}
+
+function titleCase(value) {
+  return String(value || "").replace(/(^|[\s_-])([a-z])/g, (_, gap, letter) => gap.replace("_", " ") + letter.toUpperCase());
+}
+
+function castEffect(definition) {
+  return definition?.effects?.find((effect) => (effect.trigger ?? "cast") === "cast") ?? definition?.effects?.[0];
+}
+
+/** Mechanical hotbar facts for every catalog spell — not full proprietary spell text. */
+function spellHotbarFacts(data, source, definition) {
+  const stats = [data.level ? "Level " + data.level + " spell" : "Cantrip"];
+  const school = schoolNames[source?.school] || (source?.school?.length > 1 ? source.school : "");
+  if (school) stats.push(school);
+  const rangeFt = Number.isFinite(definition?.range) && definition.range > 0 ? definition.range + " ft"
+    : catalogRange(source?.range);
+  if (rangeFt) stats.push("Range " + rangeFt);
+  if (definition?.shape && !["creature", "target", "self"].includes(definition.shape)) {
+    const size = definition.side || definition.radius || definition.length;
+    stats.push(titleCase(definition.shape) + (size ? " " + size + " ft" : ""));
+  }
+  if (definition?.attack) stats.push((definition.attack === "ranged" ? "Ranged" : "Melee") + " spell attack");
+  const effect = castEffect(definition);
+  if (effect?.save) {
+    stats.push(effect.save.toUpperCase() + " save" + (effect.onSave === "half" ? " (half)" : effect.onSave === "none" ? " (negates)" : ""));
+  }
+  for (const damage of effect?.damage ?? []) {
+    if (!damage?.formula) continue;
+    stats.push(damage.formula + (damage.scaleWithCaster ? "+" : "") + " " + damage.type);
+  }
+  if (effect?.damage?.some((damage) => damage.scaleWithCaster)) stats.push("Scales with level");
+  if (definition?.concentration || source?.duration?.some?.((entry) => entry.concentration)) stats.push("Concentration");
+  return stats;
+}
+
+function spellHotbarDescription(source, definition) {
+  const prose = plain(source?.entries);
+  if (prose) return prose;
+  const effect = castEffect(definition);
+  const parts = [];
+  if (definition?.attack) parts.push((definition.attack === "ranged" ? "Ranged" : "Melee") + " spell attack");
+  if (effect?.save) parts.push(effect.save.toUpperCase() + " saving throw");
+  for (const damage of effect?.damage ?? []) {
+    if (damage?.formula) parts.push(damage.formula + " " + damage.type + " damage" + (damage.scaleWithCaster ? " (scales)" : ""));
+  }
+  if (effect?.push?.distance) {
+    parts.push((effect.push.mode === "toward" ? "Pull" : "Push") + " " + effect.push.distance + " ft");
+  }
+  if (definition?.shape && !["creature", "target", "self"].includes(definition.shape)) {
+    const size = definition.side || definition.radius || definition.length;
+    parts.push(titleCase(definition.shape) + (size ? " " + size + " ft" : ""));
+  }
+  if (parts.length) return parts.join(" · ");
+  const range = catalogRange(source?.range);
+  const school = schoolNames[source?.school] || "";
+  return [school, range && ("Range " + range)].filter(Boolean).join(" · ")
+    || "Attach your 5etools ZIP in Rooms to load this spell’s full entry.";
+}
+
+function resolveSpellSource(data) {
+  const catalog = data.reference ? spellByKey(data.reference) : null;
+  const archived = cachedSpell(data.reference || catalog || {name: data.name, source: data.source || "PHB"});
+  if (archived) return {...(catalog ?? {name: data.name, source: data.source, level: data.level}), ...archived};
+  return catalog;
 }
 
 function featureText(features,name) {
@@ -53,13 +134,21 @@ export function entryReason(actor,battle,entry,canAct=true) {
   battle=turnView(battle,actor);
   if(entry.controlZone){const cast=entryReason(actor,battle,{...entry,controlZone:null},canAct),control=entryReason(actor,battle,{mode:'common',timing:'bonus',actionId:'control-spell-zone'},canAct);return cast&&control?cast:'';}
   if(entry.inspect) return "";
+  if(entry.mode==='dominate') {
+    if(!canAct) return "This character is controlled by another player.";
+    if(!actorIsUp(actor)) return "This character is unconscious or defeated.";
+    if(incapacitated(actor)) return "This character is incapacitated.";
+    if(battle.classReaction || battle.movement) return "Resolve the pending reaction first.";
+    if(!thrallsOf(battle,actor).some((thrall) => thrall.id === entry.thrallId)) return "That creature is no longer dominated.";
+    return "";
+  }
   if(entry.mode==='move' && canAct && actorIsUp(actor) && !incapacitated(actor) && !battle.classReaction && !battle.movement && (!battle.round || movementGroup(battle).includes(actor))) return battle.round && moveLeft(battle,actor)<=0 ? 'No movement remains.' : '';
   const blocked=baseReason(actor,battle,canAct);
   if(blocked) return blocked;
   if(entry.mode==="move") return battle.round && moveLeft(battle,actor)<=0 ? "No movement remains." : "";
   if(entry.mode==="passive") return entry.resource && !entry.toggled && !(actor.resources?.[entry.resource]?.current>=entry.cost) ? "Not enough "+(actor.resources?.[entry.resource]?.name ?? entry.resource)+" remaining." : "";
   if(!battle.round) {
-    if(entry.mode==="common" && !["help-up","interact","control-spell-zone"].includes(entry.actionId)) return "No turn budget is needed while exploring.";
+    if(entry.mode==="common" && !["help-up","interact","control-spell-zone","zone-beam"].includes(entry.actionId)) return "No turn budget is needed while exploring.";
     if(entry.mode==="feature") return "Use this class ability during combat.";
   }
   if(entry.mode==="weapon" && battle.round) {
@@ -88,7 +177,7 @@ export function entryReason(actor,battle,entry,canAct=true) {
       const feature=usage && (usage.atWill || usage.resource && actor.resources?.[usage.resource]?.current >= (usage.cost ?? 1));
       const ordinary=Object.entries(actor.slots).some(([rank,pool])=>Number(rank)>=spell.level && pool.current>0);
       const pact=actor.resources?.pactMagic;
-      if(!feature && !ordinary && !(pact?.current>0 && pact.slotLevel>=spell.level)) return "No spell slot or feature use remains for this spell.";
+      if(!feature && (usage?.itemOnly || !ordinary && !(pact?.current>0 && pact.slotLevel>=spell.level))) return "No spell slot or feature use remains for this spell.";
     }
   }
   if(entry.mode==="potion" && !entry.usable) return "This item has no uses left.";
@@ -107,20 +196,35 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
     const data=entry.data;
     const timing=entry.mode==="spell" ? data.timing ?? (supportedSpell(data.reference || data.key)?.bonus ? "bonus" : "action") : "action";
     const id=entry.mode+":"+(entry.mode==="spell" ? data.reference || data.key : data.name+(entry.thrown ? ":throw" : ""));
+    const source=entry.mode==="spell" ? resolveSpellSource(data) : null;
+    const definition=entry.mode==="spell" ? supportedSpell(data.reference || data.key)?.definition : null;
     const stats=entry.mode==="weapon" ? [data.damage+(data.type ? " "+data.type : "")+" damage",
       "Attack "+(data.bonus>=0 ? "+" : "")+data.bonus,data.normalRange ? "Range "+data.normalRange+"/"+(data.longRange || data.normalRange)+" ft" : "Reach "+(data.reach || 5)+" ft"] :
-      entry.mode==="potion" ? [data.formula+" healing",...(entry.thrown ? ["Range 30 ft"] : []),data.quantity+" remaining"] : [data.level ? "Level "+data.level+" spell" : "Cantrip"];
-    const source=data.reference && spellByKey(data.reference);
+      entry.mode==="potion" ? [data.formula+" healing",...(entry.thrown ? ["Range 30 ft"] : []),data.quantity+" remaining"] :
+      entry.mode==="spell" ? spellHotbarFacts(data, source, definition) : [];
     entries.push({...entry,id,index,name:entry.thrown ? "Throw "+data.name : data.name,tab:entry.mode,timing,symbol:symbol(data.name,entry.mode),stats,
-      description:entry.mode==="spell" ? plain(source?.entries) : entry.mode==="potion" ? entry.thrown ? "Use your action to throw this potion to a creature within 30 feet along a clear path. Consumes one potion and rolls its normal healing." : "Restore hit points with this item." : "Select this attack, then choose a target on the map.",
+      description:entry.mode==="spell" ? spellHotbarDescription(source, definition) : entry.mode==="potion" ? entry.thrown ? "Use your action to throw this potion to a creature within 30 feet along a clear path. Consumes one potion and rolls its normal healing." : "Restore hit points with this item." : "Select this attack, then choose a target on the map.",
       resource:data.castUsage?.resource,cost:data.castUsage?.cost ?? (data.castUsage?.maximum ? 1 : undefined),
       level:data.level ?? 0});
   }
+  const toPrime = entries.filter((entry) => entry.mode === "spell" && (entry.data?.reference || entry.data?.name) && !cachedSpell(entry.data.reference)?.entries?.length)
+    .map((entry) => {
+      const fromCatalog = entry.data.reference && spellByKey(entry.data.reference);
+      if (fromCatalog) return fromCatalog;
+      const source = String(entry.data.reference || "").split("|")[0]?.toUpperCase() || entry.data.source || "PHB";
+      return {name: entry.data.name, source};
+    });
+  if (toPrime.length) void primeSpells(toPrime);
   entries.push({id:'common:interact',actionId:'interact',name:actor.carrying?'Carrying body':'Interact',mode:'common',tab:'common',timing:'free',instant:false,symbol:'fist',description:'Select a body or treasure. Loot, carry, place, throw, or help from one contextual menu.'});
-  for(const zone of battle.spellZones??[])if(zone.custom&&zone.caster===actor.id&&zone.rule.shape==='sphere'){
+  for(const zone of battle.spellZones??[])if(zone.custom&&zone.caster===actor.id&&['sphere','movable'].includes(zone.rule.shape)){
     const spell=entries.find(entry=>entry.mode==='spell'&&entry.data.reference===zone.rule.reference);
     if(spell){spell.controlZone=zone.id;spell.stats=[...(spell.stats??[]),'Active sphere · control with a bonus action'];}
     else entries.push({id:'zone:'+zone.id,actionId:'control-spell-zone',zoneId:zone.id,name:zone.name+' · Control',mode:'common',tab:'spell',timing:'bonus',instant:false,symbol:'flame',description:'Move up to '+zone.rule.move+' ft or ram a creature. Uses a bonus action, without another spell slot.'});
+  }
+  for(const zone of battle.spellZones??[]){
+    if(!zone.custom||zone.caster!==actor.id||!zone.rule?.effects?.some(block=>(block.trigger??'cast')==='beam'))continue;
+    entries.push({id:'zone-beam:'+zone.id,actionId:'zone-beam',zoneId:zone.id,name:zone.name+' · Beam',mode:'common',tab:'spell',timing:'action',instant:false,symbol:'sparkles',
+      description:'Launch a beam of radiance from the wall at a creature you can see within 60 feet of it. Uses your action; ranged spell attack.'});
   }
   for(const action of classActions(actor,battle)) entries.push({id:"feature:"+action.id,name:action.name,actionId:action.id,mode:"feature",tab:"feature",
     timing:action.timing,resource:action.resource,cost:action.cost,symbol:symbol(action.name,"feature"),data:action,
@@ -134,38 +238,73 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
   for(const target of battle.actors.filter(target=>target.side===actor.side && target.x!=null && target.y!=null && !target.dead && target.hp===0 && Math.max(Math.abs(target.x-actor.x),Math.abs(target.y-actor.y))<=1)) {
     entries.push({id:"common:help-up:"+target.id,actionId:"help-up",targetId:target.id,name:"Help Up "+target.name,mode:"common",tab:"common",timing:"action",instant:true,symbol:"heart",description:"Use your action to restore this adjacent unconscious ally to 1 HP."});
   }
-  for(const target of battle.actors.filter(target=>target.side===actor.side && target.x!=null && target.y!=null && !target.dead && condition(target,"Asleep") && Math.max(Math.abs(target.x-actor.x),Math.abs(target.y-actor.y))<=1)) {
+  for(const target of battle.actors.filter(target=>target.side===actor.side && target.x!=null && target.y!=null && !target.dead && (condition(target,"Asleep")||condition(target,"Hypnotic Pattern")) && Math.max(Math.abs(target.x-actor.x),Math.abs(target.y-actor.y))<=1)) {
     entries.push({id:"common:wake:"+target.id,actionId:"wake",targetId:target.id,name:"Wake "+target.name,mode:"common",tab:"common",timing:"action",instant:true,symbol:"heart",description:"Use your action to shake this adjacent ally awake."});
   }
   if(actor.nimbleEscape && !hasFeature(actor,"Cunning Action")) entries.push({id:"common:bonus-disengage",actionId:"bonus-disengage",name:"Disengage",mode:"common",tab:"common",timing:"bonus",instant:true,symbol:"shield",description:"Use a bonus action to avoid opportunity attacks."});
   if(actor.concentration?.bolt) entries.push({id:"common:witch-bolt",actionId:"witch-bolt",name:"Sustain Witch Bolt",mode:"common",tab:"spell",timing:"action",instant:true,symbol:"sparkles",description:"Deal the sustained damage of your current Witch Bolt without spending another spell slot."});
+  for(const thrall of thrallsOf(battle,actor)) {
+    const controlled=thrall.dominateControl?.from===actor.id;
+    entries.push({id:"dominate:"+thrall.id,actionId:"dominate-command",thrallId:thrall.id,name:"Command "+thrall.name,mode:"dominate",tab:"spell",timing:"free",instant:false,symbol:"sparkles",
+      stats:[controlled?"Total control active":"Telepathic link",thrall.dominateOrder?"Order pending":"No standing order"],
+      description:"Issue a free telepathic command (Attack, Approach, Flee, Dodge, or Dash). The thrall obeys on its turn. Total control spends your action and lasts until the end of your next turn."});
+  }
   if(hasFeature(actor,"Stunning Strike")) entries.push({id:"passive:stunning-strike",actionId:"arm-stun",name:"Stunning Strike",mode:"passive",tab:"feature",timing:"hit",resource:"ki",cost:1,instant:true,toggled:Boolean(actor.stunArmed),symbol:"fist",description:"Toggle Stunning Strike for melee hits, including bonus strikes. Toggling costs nothing; each eligible hit spends 1 Ki to force a Constitution save against being stunned."});
   if(hasFeature(actor,"Deflect Missiles")) entries.push({id:"passive:deflect-hand",actionId:"deflect-hand",name:"Free hand",mode:"passive",tab:"passive",timing:"free",instant:true,toggled:Boolean(actor.freeHand),symbol:"fist",description:"Keep a hand free to catch a missile reduced to zero damage by Deflect Missiles."});
   if(hasFeature(actor,"Cutting Words")) entries.push({id:"passive:cutting-words",actionId:"cutting-words",name:"Cutting Words",mode:"passive",tab:"passive",timing:"reaction",instant:true,toggled:Boolean(actor.cuttingWords),symbol:"award",description:"Toggle automatic Cutting Words reactions. Each use spends one Bardic Inspiration die and your reaction."});
+  for(const {rule} of reactionSpells(actor,battle.spellRules)) {
+    const ref=rule.reference,armed=isArmed(actor,ref);
+    entries.push({id:"passive:reaction:"+ref,actionId:armed?"disarm-reaction":"arm-reaction",reactionRef:ref,name:rule.name,mode:"passive",tab:"passive",timing:"reaction",instant:true,toggled:armed,symbol:"shield",description:"Arm this reaction spell so it fires automatically when its trigger happens (Shield on a hit, Absorb Elements on elemental damage, Counterspell when a foe casts, and so on)."});
+  }
   if(actor.inspiration) entries.push({id:"passive:arm-inspiration",actionId:"arm-inspiration",name:"Use Inspiration",mode:"passive",tab:"passive",timing:"free",instant:true,toggled:Boolean(actor.inspirationArmed),symbol:"award",description:"Add your Bardic Inspiration die to your next supported attack, save, or skill check."});
   entries.push({id:"reference:features",name:"Feature rules",mode:"reference",tab:"passive",timing:"free",symbol:"book",inspect:true,description:"Open your character sheet to read all unlocked features and any choices still to record."});
+  const filters=parseHotbarFilters(filter);
   for(const entry of entries) {
     entry.reason=entryReason(actor,battle,entry,canAct);
     if(!entry.reason && entry.mode==="spell" && entry.level>0) {
-      if(filter.startsWith("slot:") && !(actor.slots[filter.slice(5)]?.current>0)) entry.reason="No level "+filter.slice(5)+" spell slots remain. Choose another slot filter.";
-      if(filter.startsWith("pact:") && !(actor.resources?.pactMagic?.current>0)) entry.reason="No Pact Magic slots remain. Choose another slot filter.";
+      const slotFilters=filters.filter(part=>part.startsWith("slot:"));
+      const pactFilters=filters.filter(part=>part.startsWith("pact:"));
+      if(slotFilters.length) {
+        const match=slotFilters.find(part=>Number(part.slice(5))===entry.level);
+        if(match && !(actor.slots[entry.level]?.current>0)) entry.reason="No level "+entry.level+" spell slots remain. Choose another slot filter.";
+      }
+      if(!entry.reason && pactFilters.some(part=>Number(part.slice(5))===entry.level) && !(actor.resources?.pactMagic?.current>0)) entry.reason="No Pact Magic slots remain. Choose another slot filter.";
     }
   }
   return entries;
 }
 
-export function filterActionBar(entries,tab="all",filter="") {
+export function parseHotbarFilters(filter="") {
+  return String(filter || "").split(",").map(part=>part.trim()).filter(Boolean);
+}
+
+export function toggleHotbarFilter(current="",id="") {
+  if(!id) return "";
+  const parts=parseHotbarFilters(current);
+  if(/^(slot|pact):/.test(id)) {
+    const levels=parts.filter(part=>/^(slot|pact):/.test(part));
+    const next=levels.includes(id) ? levels.filter(part=>part!==id) : [...levels,id];
+    return next.join(",");
+  }
+  return parts.length===1 && parts[0]===id ? "" : id;
+}
+
+export function filterActionBar(entries,tab="all",filter="",query="") {
+  const filters=parseHotbarFilters(filter);
+  const levels=new Set(filters.filter(part=>/^(slot|pact):/.test(part)).map(part=>Number(part.slice(part.indexOf(":")+1))).filter(Number.isFinite));
+  const exclusive=filters.find(part=>!/^(slot|pact):/.test(part)) || "";
+  const needle=String(query || "").trim().toLowerCase();
   return entries.filter(entry=>{
     if(entry.contextual) return false;
     if(tab!=="all" && entry.tab!==tab) return false;
     if(tab==="all" && (entry.tab==="passive" || entry.inspect)) return false;
-    if(!filter) return true;
-    if(filter==="action") return entry.timing==="action";
-    if(filter==="bonus") return entry.timing==="bonus" || entry.timing==="flurry";
-    if(filter==="move") return entry.timing==="move" || /dash|step of the wind/i.test(entry.name);
-    if(filter.startsWith("resource:")) return entry.resource===filter.slice(9);
-    if(filter.startsWith("slot:")) return entry.mode==="spell" && entry.level>0 && entry.level<=Number(filter.slice(5));
-    if(filter.startsWith("pact:")) return entry.mode==="spell" && entry.level>0 && entry.level<=Number(filter.slice(5));
+    if(needle && !entry.name.toLowerCase().includes(needle)) return false;
+    if(!filters.length) return true;
+    if(levels.size) return entry.mode==="spell" && entry.level>0 && levels.has(entry.level);
+    if(exclusive==="action") return entry.timing==="action";
+    if(exclusive==="bonus") return entry.timing==="bonus" || entry.timing==="flurry";
+    if(exclusive==="move") return entry.timing==="move" || /dash|step of the wind/i.test(entry.name);
+    if(exclusive.startsWith("resource:")) return entry.resource===exclusive.slice(9);
     return true;
   });
 }
@@ -192,14 +331,23 @@ export function renderActionTile(entry,actor,selected,shortcut) {
   </button>`;
 }
 
-export function renderActionBar(entries,actor,{tab="all",filter="",selected="",expanded=false,utilitiesOpen=false}={}) {
-  const shown=filterActionBar(entries,tab,filter);
+function filterNote(filter,actor) {
+  const filters=parseHotbarFilters(filter);if(!filters.length) return "";
+  const levels=filters.filter(part=>/^(slot|pact):/.test(part)).map(part=>part.startsWith('pact:') ? 'Pact '+part.slice(5) : 'Level '+part.slice(5));
+  if(levels.length) return levels.join(' · ');
+  const exclusive=filters[0];
+  return exclusive==='bonus' ? 'Bonus' : exclusive==='action' ? 'Action' : exclusive==='move' ? 'Movement' : exclusive.startsWith('resource:') ? actor.resources[exclusive.slice(9)]?.name ?? 'Resource' : exclusive;
+}
+
+export function renderActionBar(entries,actor,{tab="all",filter="",query="",selected="",expanded=false,utilitiesOpen=false}={}) {
+  const shown=filterActionBar(entries,tab,filter,query);
   const followups=entries.filter(entry=>entry.contextual);
-  return `<section class="game-hotbar${expanded ? ' expanded' : ''}" aria-label="Character hotbar" data-hotbar-view="${escape([actor.id,tab,filter,expanded].join('|'))}">
+  return `<section class="game-hotbar${expanded ? ' expanded' : ''}" aria-label="Character hotbar" data-hotbar-view="${escape([actor.id,tab,filter,query,expanded].join('|'))}">
     <div class="hotbar-toolbar"><nav class="hotbar-tabs" aria-label="Action categories">${hotbarTabs.map(([id,name])=>
       `<button type="button" data-play="hotbar-tab" data-id="${id}" class="hotbar-tab" aria-pressed="${tab===id}">${name}</button>`).join('')}</nav>
-    ${filter ? `<div class="hotbar-filter-note"><span>${escape(filter==='bonus' ? 'Bonus' : filter==='action' ? 'Action' : filter==='move' ? 'Movement' : filter.startsWith('resource:') ? actor.resources[filter.slice(9)]?.name ?? 'Resource' : filter.startsWith('pact:') ? 'Pact' : 'Level '+filter.slice(5))}</span>
+    ${filter ? `<div class="hotbar-filter-note"><span>${escape(filterNote(filter,actor))}</span>
       <button type="button" data-play="hotbar-filter" data-id="" aria-label="Clear action filter">${icon('close',13)}</button></div>` : ''}
+      <label class="hotbar-search"><span class="sr-only">Search actions</span><input id="hotbar-search" type="search" data-play="hotbar-search" value="${escape(query)}" placeholder="Search" aria-label="Search weapons and spells"></label>
       <button type="button" class="hotbar-tab hotbar-tools" data-play="hotbar-tools" aria-pressed="${utilitiesOpen}" aria-label="Checks and resting">Checks</button>
       <button type="button" class="hotbar-expand hotbar-scroll" data-play="hotbar-scroll" data-id="back" aria-label="Scroll actions left">‹</button>
       <button type="button" class="hotbar-expand hotbar-scroll" data-play="hotbar-scroll" data-id="next" aria-label="Scroll actions right">›</button>
@@ -213,7 +361,8 @@ export function renderActionBar(entries,actor,{tab="all",filter="",selected="",e
 export function renderActionResources(actor,battle,filter="") {
   battle=turnView(battle,actor);
   if(!actor) return "";
-  const chip=(id,label,tone,used=false)=>`<button type="button" class="hotbar-resource resource-${tone}${used ? ' spent' : ''}" data-play="hotbar-filter" data-id="${escape(id)}" aria-pressed="${filter===id}" aria-label="Filter ${escape(label)}"><i></i><span>${escape(label)}</span></button>`;
+  const active=new Set(parseHotbarFilters(filter));
+  const chip=(id,label,tone,used=false)=>`<button type="button" class="hotbar-resource resource-${tone}${used ? ' spent' : ''}" data-play="hotbar-filter" data-id="${escape(id)}" aria-pressed="${active.has(id)}" aria-label="Filter ${escape(label)}"><i></i><span>${escape(label)}</span></button>`;
   const attacks=battle.action==="attack" ? Math.max(0,actor.swings-battle.attacksMade) : 0;
   return `<div class="hotbar-resources game-class-resources" aria-label="Action economy and resources">
     ${chip('action',battle.round ? battle.action ? attacks ? attacks+' attack'+(attacks===1 ? '' : 's')+' left' : 'Action spent' : 'Action ready' : 'Actions','action',battle.round && Boolean(battle.action) && !attacks)}

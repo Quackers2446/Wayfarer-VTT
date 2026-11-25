@@ -1,6 +1,8 @@
+import {upgradeOpenedRoom,upgradeRoomState} from '../dist/room-upgrades.mjs';
+import {starterRule} from '../dist/spell-rule-schema.mjs';
 import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFile} from 'node:fs/promises';
 import {sessionRequest} from '../worker/session.mjs';import {trainingMap,trainingActors} from '../dist/encounters.mjs';import {newBattle} from '../dist/combat.mjs';import {normalizeRoomState,travelRoom,roomBattle,commitRoomState} from '../dist/room-state.mjs';
-const sqlite=new DatabaseSync(':memory:');for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql','0006_profile_photos.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
 const DB={prepare(sql){let values=[];return{bind(...args){values=args;return this;},async first(column){const row=sqlite.prepare(sql).get(...values);return column?row?.[column]??null:row??null;},async all(){return{results:sqlite.prepare(sql).all(...values)};},async run(){const result=sqlite.prepare(sql).run(...values);return{meta:{changes:Number(result.changes)}};}};},async batch(statements){return Promise.all(statements.map(s=>s.run()));}};
 const origin='https://test.example',controller=crypto.randomUUID();let cookie;
 async function api(path,method='GET',body){const r=await sessionRequest(new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},...(body?{body:JSON.stringify(body)}:{})}),{DB});if(r.headers.get('Set-Cookie'))cookie=r.headers.get('Set-Cookie').split(';')[0];return r;}
@@ -18,5 +20,29 @@ const legacyWrite=await api(path,'PUT',{revision:current.revision,state:initial}
 const nested=structuredClone(current.state);nested.world.maps[a.key].battle={actors:[]};assert.equal((await api(path,'PUT',{revision:current.revision,state:nested})).status,400);
 const invalidRules=structuredClone(current.state);invalidRules.battle.spellRules={'phb|bad':{name:'Bad',reference:'phb|bad',effects:[]}};assert.equal((await api(path,'PUT',{revision:current.revision,state:invalidRules})).status,400);
 const splitParty=structuredClone(current.state);splitParty.world.maps[a.key].environment={actors:[]};assert.equal((await api(path,'PUT',{revision:current.revision,state:splitParty})).status,400);
+// Simulate a player action landing between the opening read and the first upgrade write.
+const oldSnapshot=current;
+const changed=structuredClone(current.state),hero=changed.battle.actors.find(a=>a.side==='party');
+hero.hp=5;
+hero.attacks.push({name:"Hestia's Fury"});
+hero.slots[4]={current:1,maximum:null};
+const fireball=starterRule({name:'Fireball',source:'PHB',edition:'2014',level:3});
+fireball.radius=15;
+changed.battle.spellRules={[fireball.reference]:fireball};
+assert.equal((await api(path,'PUT',{revision:current.revision,state:changed})).status,200);
+let upgradeWrites=0;
+const upgraded=await upgradeOpenedRoom(oldSnapshot,async(revision,state)=>{
+ upgradeWrites++;
+ return (await api(path,'PUT',{revision,state})).json();
+});
+assert.equal(upgradeWrites,2,'A conflicting save is read and upgraded at its new revision');
+assert.equal(upgraded.state.battle.actors.find(a=>a.id===hero.id).hp,5);
+assert.equal(upgraded.state.battle.actors.find(a=>a.id===hero.id).resources['spell:hestias fury:wall of fire'].current,1);
+assert.deepEqual(upgraded.state.battle.spellRules,changed.battle.spellRules);
+assert.deepEqual(upgraded.state.world,changed.world);
+assert.equal(upgradeRoomState(upgraded.state,a),upgraded.state,'Reopening a current room needs no write');
+current=await(await api(path)).json();
+assert.equal(current.revision,upgraded.revision);
+assert.equal(current.state.roomDataVersion,upgraded.state.roomDataVersion);
 assert.equal((await api(path,'DELETE',{revision:current.revision})).status,204);
 console.log('Room API persists one campaign across maps; reload and room cards use the active map; stale-map writes, cross-adventure maps and nested per-map battles are rejected; creator cleanup verified.');

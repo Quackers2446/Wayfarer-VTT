@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises
 globalThis.fetch=async path=>new Response(await readFile(new URL('../dist/'+path,import.meta.url)));
 const {loadBuilderData,newBuilderDraft,buildCharacter,builderProblems,builderId}=await import('../dist/character-builder-rules.mjs');
 const {partyActor}=await import('../dist/encounters.mjs');const db=await loadBuilderData();
+{
+ const fresh=newBuilderDraft();
+ assert.equal(fresh.method,'point');
+ assert.deepEqual(fresh.baseScores,{str:10,dex:10,con:10,int:10,wis:10,cha:10});
+ assert.deepEqual(fresh.visitedSteps,[0]);
+}
 function complete(d){
  for(let pass=0;pass<15;pass++){
  const c=buildCharacter(d,db);if(c.species.size?.length>1&&!d.size)d.size=c.species.size[0];const cls=c.character.rulesDetails.classDetails.classes[0];if(d.level>=cls.subclassLevel&&!d.subclass)d.subclass=cls.subclasses[0].id;
@@ -17,9 +23,9 @@ function complete(d){
  return buildCharacter(d,db);
 }
 for(const name of ['fighter','wizard','rogue','monk','cleric','druid','barbarian','bard','warlock','paladin','ranger','sorcerer','artificer']){
- const draft=newBuilderDraft();draft.name='Builder '+name;draft.classId=name+'|'+(name==='artificer'?'tce':'phb');const c=complete(draft);const issues=builderProblems(draft,c);assert.deepEqual(issues,[],name+': '+JSON.stringify(issues));const actor=partyActor(c.raw);assert(actor.maxHp>0);assert(actor.ac>0);assert.equal(actor.level,1);assert.equal(c.character.abilities[0].score,16,'Human gains source +1');if(c.equipment.items.some(i=>i.weaponCategory))assert(actor.attacks.length>0,name+' gets usable weapon attacks');if(name==='wizard'){assert(c.character.spells.length>=6);assert(actor.slots[1].maximum===2);assert(actor.spells.some(s=>s.prepared));}
+ const draft=newBuilderDraft();draft.name='Builder '+name;draft.classId=name+'|'+(name==='artificer'?'tce':'phb');const c=complete(draft);const issues=builderProblems(draft,c);assert.deepEqual(issues,[],name+': '+JSON.stringify(issues));const actor=partyActor(c.raw);assert(actor.maxHp>0);assert(actor.ac>0);assert.equal(actor.level,1);assert.equal(c.character.abilities[0].score,11,'Human gains source +1 on point-buy 10s');if(c.equipment.items.some(i=>i.weaponCategory))assert(actor.attacks.length>0,name+' gets usable weapon attacks');if(name==='wizard'){assert(c.character.spells.length>=6);assert(actor.slots[1].maximum===2);assert(actor.spells.some(s=>s.prepared));}
 }
-const monk=newBuilderDraft();Object.assign(monk,{name:'Level Nine',classId:'monk|phb',level:9});const high=complete(monk);assert.deepEqual(builderProblems(monk,high),[]);assert.equal(high.character.resources.ki.maximum,9);assert.equal(high.character.abilities[0].score,20,'Two ASIs apply once');assert.equal(partyActor(high.raw).resources.ki.current,9);
+const monk=newBuilderDraft();Object.assign(monk,{name:'Level Nine',classId:'monk|phb',level:9});const high=complete(monk);assert.deepEqual(builderProblems(monk,high),[]);assert.equal(high.character.resources.ki.maximum,9);assert.equal(high.character.abilities[0].score,15,'Two ASIs apply once on point-buy 10s');assert.equal(partyActor(high.raw).resources.ki.current,9);
 const revised=newBuilderDraft();Object.assign(revised,{name:'Revised acolyte',edition:'2024',classId:'cleric|xphb',speciesId:'human|xphb',backgroundId:'acolyte|xphb'});const r=complete(revised);assert.deepEqual(builderProblems(revised,r),[]);assert.equal(r.raw.creation.fixedFeats.includes('magic initiate|xphb'),true);assert(r.choices.some(c=>c.kind==='granted-spells'));assert(r.character.rulesDetails.languages.includes('Common'));
 const invalid=newBuilderDraft();invalid.name='Bad points';invalid.method='point';invalid.baseScores={str:15,dex:15,con:15,int:15,wis:15,cha:15};assert(builderProblems(invalid,buildCharacter(invalid,db)).some(p=>p.message.includes('27 points')));
 console.log('All 13 core classes create usable level-1 actors; Wizard learning/preparation, starting weapons/armor, Human ability increases, level-9 Monk ASIs/Ki, revised origin feats/languages, and invalid point buy verified.');
@@ -50,15 +56,15 @@ const swiftChar = complete(swiftDraft);
 assert.deepEqual(builderProblems(swiftDraft, swiftChar), []);
 assert.equal(swiftChar.species.name, 'Swiftstride Shifter');
 assert.deepEqual(swiftChar.abilityInfo.find(i => i.id === 'species').fixed, {}, 'No automatic fixed ability increases');
-assert.equal(swiftChar.character.abilities.find(a => a.abbr === 'DEX').score, 16); // base 14 + 2
-assert.equal(swiftChar.character.abilities.find(a => a.abbr === 'CHA').score, 9);  // base 8 + 1
+assert.equal(swiftChar.character.abilities.find(a => a.abbr === 'DEX').score, 12); // base 10 + 2
+assert.equal(swiftChar.character.abilities.find(a => a.abbr === 'CHA').score, 11); // base 10 + 1
 
 // Verify Swiftstride Shifter with alternate player choice (+2 CON, +1 STR)
 swiftDraft.allocations['species:0'] = 'con';
 swiftDraft.allocations['species:1'] = 'str';
 const swiftAlt = buildCharacter(swiftDraft, db);
-assert.equal(swiftAlt.character.abilities.find(a => a.abbr === 'CON').score, 15); // base 13 + 2
-assert.equal(swiftAlt.character.abilities.find(a => a.abbr === 'STR').score, 16); // base 15 + 1
+assert.equal(swiftAlt.character.abilities.find(a => a.abbr === 'CON').score, 12); // base 10 + 2
+assert.equal(swiftAlt.character.abilities.find(a => a.abbr === 'STR').score, 11); // base 10 + 1
 
 // Verify all 4 Shifter ERLW variants have player choice and complete cleanly
 for (const subId of ['beasthide', 'longtooth', 'swiftstride', 'wildhunt']) {
@@ -85,8 +91,8 @@ shifterMpmm.abilityOptions['species'] = 0;
 shifterMpmm.allocations['species:0'] = 'str';
 shifterMpmm.allocations['species:1'] = 'dex';
 const smOpt0 = buildCharacter(shifterMpmm, db);
-assert.equal(smOpt0.character.abilities.find(a => a.abbr === 'STR').score, 17); // 15 + 2
-assert.equal(smOpt0.character.abilities.find(a => a.abbr === 'DEX').score, 15); // 14 + 1
+assert.equal(smOpt0.character.abilities.find(a => a.abbr === 'STR').score, 12); // 10 + 2
+assert.equal(smOpt0.character.abilities.find(a => a.abbr === 'DEX').score, 11); // 10 + 1
 // Reject duplicate pick on distinct weighted ASI
 shifterMpmm.allocations['species:1'] = 'str';
 assert(builderProblems(shifterMpmm, buildCharacter(shifterMpmm, db)).some(p => p.message.includes('different abilities')));
@@ -97,9 +103,9 @@ shifterMpmm.allocations['species:0'] = 'str';
 shifterMpmm.allocations['species:1'] = 'dex';
 shifterMpmm.allocations['species:2'] = 'con';
 const smOpt1 = buildCharacter(shifterMpmm, db);
-assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'STR').score, 16); // 15 + 1
-assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'DEX').score, 15); // 14 + 1
-assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'CON').score, 14); // 13 + 1
+assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'STR').score, 11); // 10 + 1
+assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'DEX').score, 11); // 10 + 1
+assert.equal(smOpt1.character.abilities.find(a => a.abbr === 'CON').score, 11); // 10 + 1
 assert.deepEqual(builderProblems(shifterMpmm, smOpt1), []);
 console.log('Post-Tasha flexible ASIs (+2/+1 and +1/+1/+1) and duplicate protection verified.');
 
@@ -107,13 +113,13 @@ console.log('Post-Tasha flexible ASIs (+2/+1 and +1/+1/+1) and duplicate protect
 const dwarf = newBuilderDraft();
 Object.assign(dwarf, {name: 'Mountain Dwarf', speciesId: 'dwarf|phb', subraceId: 'mountain-dwarf'});
 const dw = complete(dwarf);
-assert.equal(dw.character.abilities.find(a => a.abbr === 'CON').score, 15); // 13 + 2
-assert.equal(dw.character.abilities.find(a => a.abbr === 'STR').score, 17); // 15 + 2
+assert.equal(dw.character.abilities.find(a => a.abbr === 'CON').score, 12); // 10 + 2
+assert.equal(dw.character.abilities.find(a => a.abbr === 'STR').score, 12); // 10 + 2
 
 const woodElf = newBuilderDraft();
 Object.assign(woodElf, {name: 'Wood Elf', speciesId: 'elf|phb', subraceId: 'wood-elf'});
 const we = complete(woodElf);
-assert.equal(we.character.abilities.find(a => a.abbr === 'DEX').score, 16); // 14 + 2
+assert.equal(we.character.abilities.find(a => a.abbr === 'DEX').score, 12); // 10 + 2
 assert.equal(we.character.abilities.find(a => a.abbr === 'WIS').score, 11); // 10 + 1
 assert.equal(partyActor(we.raw).speed, 35, 'Wood Elf speed 35');
 console.log('Combined base + subrace ability scores (Mountain Dwarf, Wood Elf) and traits verified.');

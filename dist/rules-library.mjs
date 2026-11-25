@@ -11,6 +11,9 @@ let weaponOptions = [];
 let archiveRestore;
 let archiveRevision = 0;
 const opened = new Map();
+/** Synced cache of archive-backed spell records (includes non-SRD entries from the user's ZIP). */
+const spellEntryCache = new Map();
+const spellPrimeInflight = new Map();
 
 export const archiveName = () => archiveSource;
 export const hasArchive = () => archive !== null;
@@ -49,7 +52,10 @@ export function matchSpell(label) {
 }
 
 export function matchWeapon(label) {
-  return findByPrefix(weaponOptions, label)?.weapon;
+  const exact=findByPrefix(weaponOptions,label)?.weapon;if(exact)return exact;
+  // Imported magic weapons often keep their ordinary weapon type in the name.
+  const words=' '+ruleKey(String(label??'').split('(')[0])+' ';
+  return weaponOptions.find(({key})=>words.includes(' '+key+' ')||words.includes(' '+key+'s '))?.weapon;
 }
 
 export function spellByKey(key) {
@@ -91,7 +97,52 @@ function setArchive(parsed, name) {
   archive = parsed;
   archiveSource = name;
   opened.clear();
+  spellEntryCache.clear();
+  spellPrimeInflight.clear();
   document.dispatchEvent(new CustomEvent("wayfarer:archive"));
+}
+
+/** Synchronous lookup of a spell enriched from the attached 5etools ZIP, if already primed. */
+export function cachedSpell(referenceOrSpell) {
+  if (!referenceOrSpell) return null;
+  if (typeof referenceOrSpell === "string") return spellEntryCache.get(referenceOrSpell) ?? null;
+  const key = spellKey(referenceOrSpell);
+  return spellEntryCache.get(key) ?? null;
+}
+
+let spellEntriesTimer = 0;
+function notifySpellEntries() {
+  if (typeof document === "undefined") return;
+  clearTimeout(spellEntriesTimer);
+  spellEntriesTimer = setTimeout(() => {
+    document.dispatchEvent(new CustomEvent("wayfarer:spell-entries"));
+  }, 80);
+}
+
+function publishSpellEntry(key, spell, hadEntries) {
+  spellEntryCache.set(key, spell);
+  if (!hadEntries && spell?.entries?.length) notifySpellEntries();
+  return spell;
+}
+
+/** Prefetch full spell text from the attached archive into the sync cache. */
+export function primeSpell(spellOrReference) {
+  if (!archive || !spellOrReference) return Promise.resolve(null);
+  const base = typeof spellOrReference === "string" ? spellByKey(spellOrReference) : spellOrReference;
+  if (!base?.name || !base?.source) return Promise.resolve(null);
+  const key = spellKey(base);
+  if (spellEntryCache.has(key) && spellEntryCache.get(key)?.entries?.length) return Promise.resolve(spellEntryCache.get(key));
+  if (spellPrimeInflight.has(key)) return spellPrimeInflight.get(key);
+  const hadEntries = Boolean(base.entries?.length || spellEntryCache.get(key)?.entries?.length);
+  const request = fullSpell(base).then((spell) => publishSpellEntry(key, spell, hadEntries)).finally(() => spellPrimeInflight.delete(key));
+  spellPrimeInflight.set(key, request);
+  return request;
+}
+
+export function primeSpells(spells) {
+  const list = (spells ?? []).filter(Boolean);
+  if (!archive || !list.length) return Promise.resolve([]);
+  return Promise.all(list.map((spell) => primeSpell(spell)));
 }
 
 export function restoreArchive() {
@@ -160,9 +211,18 @@ async function sourcedRecord(kind, recordType, source, name, indexFile = "index.
 }
 
 export async function fullSpell(spell) {
-  if (!archive) return spell;
+  if (!spell) return spell;
+  const key = spellKey(spell);
+  if (!archive) {
+    if (spell.entries?.length) spellEntryCache.set(key, spell);
+    return spell;
+  }
+  const cached = spellEntryCache.get(key);
+  if (cached?.entries?.length) return cached;
   const entry = await sourcedRecord("spells", "spell", spell.source, spell.name);
-  return entry ? {...spell, ...entry} : spell;
+  const merged = entry ? {...spell, ...entry} : spell;
+  spellEntryCache.set(key, merged);
+  return merged;
 }
 
 export async function monsterRecord(name, source = "MM") {

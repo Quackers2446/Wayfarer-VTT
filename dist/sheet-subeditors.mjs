@@ -1,5 +1,6 @@
 import {dismissOnBackdrop} from './modal-dismiss.mjs';
 import {initSheetSuggestions} from './sheet-suggestions.mjs';
+import {weaponProperties} from './weapon-properties.mjs';
 import {escape, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 
@@ -96,6 +97,7 @@ export function openAttackEditor({character, attackIndex = -1, onSave}) {
   }
 
   const bonusValue = attack.bonus != null && attack.bonus !== "" ? (typeof attack.bonus === "number" ? signed(attack.bonus) : attack.bonus) : "";
+  const properties=weaponProperties(attack);
 
   const formHtml = `
     <label>
@@ -112,6 +114,7 @@ export function openAttackEditor({character, attackIndex = -1, onSave}) {
         <input type="text" name="damage" value="${escape(attack.damage || "")}" placeholder="e.g. 1d8+3 slashing, 1d10 fire">
       </label>
     </div>
+    <label class="sheet-editor-check"><input type="checkbox" name="finesse"${properties.finesse?' checked':''}> Finesse weapon (eligible for Sneak Attack)</label>
     <label>
       Notes / Properties
       <textarea name="note" placeholder="Versatile (1d10), Range 20/60 ft, Light, Finesse…">${escape(rawNote)}</textarea>
@@ -140,6 +143,7 @@ export function openAttackEditor({character, attackIndex = -1, onSave}) {
         name: formattedName,
         bonus,
         damage,
+        finesse:data.has('finesse'),weaponPropertiesEdited:true,rangedWeapon:properties.rangedWeapon,
         note
       });
     }
@@ -148,7 +152,7 @@ export function openAttackEditor({character, attackIndex = -1, onSave}) {
 
 export function openItemEditor({character, itemIndex = -1, onSave}) {
   const isEdit = itemIndex >= 0 && character.items?.[itemIndex];
-  const item = isEdit ? character.items[itemIndex] : {name: "", quantity: 1, weight: 0, note: ""};
+  const item = isEdit ? character.items[itemIndex] : {name: "", quantity: 1, weight: 0, note: "", kind: "gear"};
 
   let rawName = item.name || "";
   let rawNote = item.note || "";
@@ -163,12 +167,23 @@ export function openItemEditor({character, itemIndex = -1, onSave}) {
     }
   }
 
+  const kind = item.kind || (item.formula ? "potion" : item.weapon ? "weapon" : "gear");
+  const damageMatch = String(item.damage || "").match(/^(.*?)(?:\s+(acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|poison|psychic|radiant|slashing|thunder))?$/i);
+
   const formHtml = `
     <label>
       Item name
       <input type="text" name="name" data-suggest="equipment" value="${escape(rawName)}" placeholder="e.g. Potion of Healing, Rope (50 ft)" required maxlength="140">
     </label>
     <div class="subeditor-grid">
+      <label>
+        Kind
+        <select name="kind">
+          <option value="gear"${kind === "gear" ? " selected" : ""}>Gear</option>
+          <option value="weapon"${kind === "weapon" ? " selected" : ""}>Weapon</option>
+          <option value="potion"${kind === "potion" ? " selected" : ""}>Potion / consumable</option>
+        </select>
+      </label>
       <label>
         Quantity
         <input type="number" name="quantity" value="${item.quantity != null ? item.quantity : 1}" min="0" max="99999" step="1">
@@ -177,7 +192,28 @@ export function openItemEditor({character, itemIndex = -1, onSave}) {
         Weight (lbs)
         <input type="number" name="weight" value="${item.weight != null ? item.weight : ""}" min="0" max="99999" step="0.1" placeholder="0">
       </label>
+      <label>
+        Healing / dice formula
+        <input type="text" name="formula" value="${escape(item.formula || "")}" placeholder="2d4+2 for potions">
+      </label>
+      <label>
+        Attack bonus
+        <input type="number" name="bonus" value="${item.bonus != null ? item.bonus : ""}" min="-10" max="40" placeholder="Weapons">
+      </label>
+      <label>
+        Damage dice
+        <input type="text" name="damage" value="${escape(damageMatch?.[1] || "")}" placeholder="1d8+3">
+      </label>
+      <label>
+        Damage type
+        <select name="damageType">
+          <option value="">—</option>
+          ${["acid","bludgeoning","cold","fire","force","lightning","necrotic","piercing","poison","psychic","radiant","slashing","thunder"].map((type) =>
+            `<option value="${type}"${(damageMatch?.[2] || "").toLowerCase() === type ? " selected" : ""}>${type}</option>`).join("")}
+        </select>
+      </label>
     </div>
+    ${isEdit ? "" : `<label class="sheet-editor-check"><input type="checkbox" name="addAttack"> Also add as an attack when this is a weapon</label>`}
     <label>
       Notes &amp; Details
       <textarea name="note" placeholder="Description, charges, magical properties…">${escape(rawNote)}</textarea>
@@ -197,13 +233,35 @@ export function openItemEditor({character, itemIndex = -1, onSave}) {
       const weightStr = data.get("weight")?.trim();
       const weight = weightStr ? Number.parseFloat(weightStr) : null;
       const note = data.get("note")?.trim() || "";
-      const formattedName = note ? `${name} (${note})` : name;
-      return onSave({
-        name: formattedName,
+      const kindValue = data.get("kind") || "gear";
+      const formula = data.get("formula")?.trim() || "";
+      const bonusStr = data.get("bonus")?.trim();
+      const damage = data.get("damage")?.trim() || "";
+      const damageType = data.get("damageType")?.trim() || "";
+      const result = {
+        name: note && !isEdit ? `${name} (${note})` : name,
         quantity,
         weight,
-        note
-      });
+        note,
+        kind: kindValue,
+      };
+      if (formula) result.formula = formula;
+      if (kindValue === "weapon") {
+        result.weapon = true;
+        if (bonusStr !== "") result.bonus = Number.parseInt(bonusStr, 10);
+        if (damage) result.damage = damage + (damageType ? " " + damageType : "");
+      }
+      if (kindValue === "potion" && !formula) throw new Error("Potions need a healing formula such as 2d4+2.");
+      if (!isEdit && data.has("addAttack") && kindValue === "weapon") {
+        result.addAttack = true;
+        result.attack = {
+          name,
+          bonus: bonusStr !== "" ? Number.parseInt(bonusStr, 10) : null,
+          damage: damage + (damageType ? " " + damageType : ""),
+          note,
+        };
+      }
+      return onSave(result);
     }
   });
 }
@@ -467,7 +525,6 @@ export function openSpellEditor({character, spellIndex = -1, onSave}) {
   ];
 
   const formHtml = `
-    <input type="hidden" name="source" value="${escape(spell.source??'')}">
     <label>
       Spell name
       <input type="text" name="name" data-suggest="spells" value="${escape(rawName)}" placeholder="e.g. Cure Wounds, Shield, Fireball" required maxlength="120">
@@ -479,6 +536,10 @@ export function openSpellEditor({character, spellIndex = -1, onSave}) {
           ${levels.map(([lvl, lbl]) => `<option value="${lvl}"${spell.level === lvl ? " selected" : ""}>${lbl}</option>`).join("")}
         </select>
       </label>
+      <label>
+        Source
+        <input type="text" name="source" value="${escape(spell.source??'')}" placeholder="PHB, XGE, or HB for homebrew" maxlength="12">
+      </label>
       <label class="sheet-editor-check subeditor-prepared">
         <input type="checkbox" name="prepared"${spell.prepared ? " checked" : ""}>
         <span>Prepared spell</span>
@@ -488,6 +549,7 @@ export function openSpellEditor({character, spellIndex = -1, onSave}) {
       Notes / Casting description
       <textarea name="note" placeholder="Components, casting time, range, saving throw…">${escape(rawNote)}</textarea>
     </label>
+    <p class="sheet-editor-detail">Use source <strong>HB</strong> to bind a homebrew spell rule from the Spell library. Without a matching enabled rule, casts stay manual.</p>
   `;
 
   openSubeditor({
@@ -502,12 +564,12 @@ export function openSpellEditor({character, spellIndex = -1, onSave}) {
       const prepared = data.has("prepared");
       const note = data.get("note")?.trim() || "";
       const formattedName = note ? `${name} (${note})` : name;
-
+      const source = data.get("source")?.trim() || undefined;
       return onSave({
         name: formattedName,
         level,
         prepared,
-        source: data.get("source") || undefined,
+        source,
         note
       });
     }

@@ -2,6 +2,7 @@ import {
   actorIsUp, approachPath, charmedBy, currentActor, diceTerms, distanceFt, endInitiative, endTurn, incapacitated, lineClear,
   log, moveLeft, moveToken, occupies, opportunity, resolveOpportunity, rollStrike, speedOf, turnAction,
 } from "./combat.mjs";
+import {runDominatedTurn} from "./dominate.mjs";
 import {overlaps} from './actor-space.mjs';
 
 const canAct = (actor) => actorIsUp(actor) && occupies(actor);
@@ -50,6 +51,7 @@ function approach(battle, map, actor, targets, weapons) {
 
 function enemyTurn(battle, map, actor, heroes, random) {
   if (!canAct(actor) || incapacitated(actor)) return;
+  if (runDominatedTurn(battle, map, actor, random)) return;
   if (actor.prone && speedOf(actor) && moveLeft(battle,actor) >= speedOf(actor)/2) {
     turnAction(battle,actor,"stand");
   }

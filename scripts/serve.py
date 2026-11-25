@@ -13,7 +13,13 @@ WORKBOOKS = PROJECT.parent / "Character Sheets"
 
 
 class CampaignHandler(SimpleHTTPRequestHandler):
-    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".mjs": "text/javascript"}
+    extensions_map = {
+        **SimpleHTTPRequestHandler.extensions_map,
+        ".mjs": "text/javascript",
+        # macOS/Python builds often omit WebM; browsers then refuse the gallery/board clips.
+        ".webm": "video/webm",
+        ".mp4": "video/mp4",
+    }
 
     def get_workbooks(self):
         return {

@@ -53,3 +53,17 @@ console.log('Healing, ability modifiers, upcasting, cantrip tiers and malformed 
 {
  const {rule,battle,caster,target,spell}=setup('Cure Wounds');Object.assign(rule,{range:30,effects:[{kind:'healing',trigger:'cast',area:'footprint',save:'',onSave:'none',condition:'',damage:[{formula:'1d8',type:'force',upcast:'',addAbility:true}]}]});caster.spellAbility=-2;target.hp=10;castSpell(battle,caster,target,spell,1,{map},()=>.45);assert.equal(target.hp,12,'Negative ability modifiers reduce healing');battle.action=null;target.dead=true;assert.throws(()=>castSpell(battle,caster,target,spell,1,{map}),/Choose a creature/);assert.equal(caster.slots[1].current,2,'Ordinary healing cannot resurrect a dead character or spend a slot trying');
 }
+
+for (const shape of ['circle', 'point']) {
+ const {rule,battle,caster,target,spell}=setup('Fireball');
+ const square={x:9,y:10};
+ rule.shape=shape;
+ assert.deepEqual(ruleProblems(rule),[]);
+ assert.throws(()=>castSpell(battle,caster,target,spell,3,{map},()=>.45),/Choose a point/);
+ assert.throws(()=>castSpell(battle,caster,null,spell,3,{map,square:{x:34,y:10}},()=>.45),/in range/);
+ assert.equal(caster.slots[3].current,3);
+ castSpell(battle,caster,null,spell,3,{map,square},()=>.45);
+ assert.equal(caster.slots[3].current,2);
+ assert.equal(target.hp,shape==='circle'?176:200,'An empty point is valid and only the selected footprint affects creatures');
+}
+console.log('Fireball and single-square point casts use map coordinates, validate range before spending slots, and apply the selected footprint.');

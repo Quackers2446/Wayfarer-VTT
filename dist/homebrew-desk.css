@@ -1,0 +1,45 @@
+.homebrew-desk{max-width:1440px;margin:auto}
+.homebrew-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+.homebrew-heading h1{font-family:var(--display);font-size:2rem;letter-spacing:-.02em}
+.homebrew-heading p,.homebrew-selected p,.homebrew-hint,.homebrew-status{color:var(--muted);margin-top:6px;line-height:1.5}
+.homebrew-workspace{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px}
+.homebrew-library{align-self:start;position:sticky;top:12px;display:grid;gap:10px;padding:14px;border:1px solid #c5d0bc;border-radius:12px;background:linear-gradient(180deg,#f7f8f1,#eef2e6)}
+.homebrew-entry-list{display:grid;gap:6px;max-height:62vh;overflow:auto}
+.homebrew-entry-list button{text-align:left;padding:10px 12px;border:1px solid #c3cdb8;border-radius:10px;background:#fffcf4;color:#21392a;cursor:pointer}
+.homebrew-entry-list button:hover{border-color:#6f9274}
+.homebrew-entry-list button[aria-pressed=true]{background:#d7e6cc;border-color:#3b654b;box-shadow:inset 0 0 0 1px #3b654b55}
+.homebrew-entry-list strong{display:block}
+.homebrew-entry-list span{display:block;margin-top:4px;font-size:.78rem;color:#516456}
+.homebrew-editor{min-width:0}
+.homebrew-selected{margin-bottom:12px}
+.homebrew-selected h2{font-family:var(--display);font-size:1.45rem}
+.homebrew-form label{display:grid;gap:5px;font-size:.84rem;font-weight:600;color:#2c4334}
+.homebrew-form input:not([type=checkbox]),.homebrew-form select,.homebrew-form textarea{width:100%;min-width:0;padding:9px 11px;border:1px solid #a8b3a1;border-radius:8px;background:#fffdf7;color:var(--ink);font:inherit;font-weight:500}
+.homebrew-form textarea{resize:vertical;min-height:72px}
+.homebrew-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.homebrew-abilities{grid-template-columns:repeat(6,minmax(0,1fr))}
+.homebrew-wide{grid-column:1/-1;margin-bottom:12px}
+.homebrew-form fieldset{border:1px solid #b4beaa;border-radius:12px;padding:16px;margin:16px 0;background:#ffffff55}
+.homebrew-form legend{padding:0 8px;font-weight:700}
+.homebrew-attack{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 14px;padding-bottom:14px;border-bottom:1px solid #d7ddd0}
+.homebrew-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+.homebrew-validation{margin:12px 0;padding:10px 12px;border-radius:8px;background:#f3ebe3;color:#6c4227;font-size:.88rem}
+.homebrew-check{display:flex!important;align-items:center;gap:8px;font-weight:500}
+.homebrew-check input{width:auto}
+.homebrew-spells{padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--paper)}
+.homebrew-spells h3{margin:18px 0 10px;font-family:var(--display)}
+.homebrew-list{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.homebrew-list li{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #d9d9ca;border-radius:8px;background:#fffcf4}
+.homebrew-hint code{font-size:.85em}
+@media(max-width:1000px){
+  .homebrew-workspace{grid-template-columns:220px minmax(0,1fr)}
+  .homebrew-fields,.homebrew-attack{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .homebrew-abilities{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:650px){
+  .homebrew-heading{flex-direction:column}
+  .homebrew-workspace{grid-template-columns:minmax(0,1fr)}
+  .homebrew-library{position:static}
+  .homebrew-entry-list{max-height:220px}
+  .homebrew-fields,.homebrew-attack,.homebrew-abilities{grid-template-columns:minmax(0,1fr)}
+}

@@ -195,6 +195,7 @@ body:has(.game-main) {
 }
 
 .game-portrait {
+  touch-action: manipulation;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -447,6 +448,17 @@ body:has(.game-main) {
   font-size: .85rem;
   line-height: 1.42;
   overflow-wrap: anywhere;
+  z-index: 6;
+  pointer-events: none
+}
+
+.combat-cue[data-layout="rail"] {
+  max-width: min(238px, 34%);
+  box-shadow: 0 6px 18px #080c08d0
+}
+
+.combat-cue .cue-dismiss {
+  pointer-events: auto
 }
 
 .combat-cue[data-point="top"]::after,
@@ -473,6 +485,7 @@ body:has(.game-main) {
 }
 
 .combat-cue-heading {
+  padding-right:30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -485,6 +498,9 @@ body:has(.game-main) {
 }
 
 .cue-dismiss {
+  position:absolute;
+  top:8px;
+  right:8px;
   pointer-events: auto;
   flex: none;
   align-self: start;
@@ -544,26 +560,40 @@ body:has(.game-main) {
 }
 
 .combat-impact {
-  font: 900 italic clamp(1.2rem, 2.8vw, 1.85rem)/1.1 var(--display);
-  letter-spacing: .05em;
-  color: #ffe0a0;
-  text-shadow: 2px 2px #141b16;
-  margin-bottom: 5px;
-  animation: combat-impact-pop .45s cubic-bezier(.16, 1, .3, 1)
+  font: 800 italic clamp(.95rem, 2vw, 1.25rem)/1.1 var(--display);
+  letter-spacing: .04em;
+  color: #e8d3a4;
+  text-shadow: 1px 1px #141b16;
+  margin-bottom: 4px;
+  animation: combat-impact-pop .4s cubic-bezier(.16, 1, .3, 1)
 }
 
-.combat-cue[data-outcome="Miss"] .combat-impact {
-  color: #c4d1da
+.combat-cue[data-outcome="Critical hit"] .combat-impact {
+  font-size: clamp(1.15rem, 2.6vw, 1.65rem);
+  color: #ffe0a0
+}
+
+.combat-cue[data-outcome="Miss"] .combat-impact,
+.combat-cue[data-outcome="heal"] .combat-impact {
+  color: #c4d1da;
+  font-style: normal;
+  font-weight: 700
+}
+
+.combat-cue[data-outcome="heal"] .combat-impact {
+  color: #a7f0bb
 }
 
 .token-impact-number {
   position: absolute;
+  z-index: 5;
   white-space: nowrap;
   transform: translate(-50%, -100%);
-  font: 900 1.5rem var(--display);
+  font: 900 1.35rem var(--display);
   color: #ffb09c;
   text-shadow: 0 2px 3px #000, 1px 0 2px #000;
-  animation: token-number-rise 2.6s ease-out both
+  animation: token-number-rise 2.6s ease-out both;
+  pointer-events: none
 }
 
 .token-impact-number.healing {
@@ -1059,8 +1089,10 @@ body:has(.game-main) {
   line-height: 1.35
 }
 
-.game-move-preview:not(:empty) {
-  color: #e5e6ce;
+.game-board-meta .game-move-preview:not(:empty) {
+  color: #ddfbea;
+  border-inline-start: 2px solid #85dbb7;
+  font-weight: 650;
   margin-bottom: 5px
 }
 
@@ -1092,6 +1124,64 @@ body:has(.game-main) {
 .tools-flyout {
   display: grid;
   gap: 6px
+}
+
+.tools-section {
+  border: 1px solid #e2dfd2;
+  border-radius: 8px;
+  background: #f7f5eb;
+  margin: 0;
+  overflow: hidden;
+}
+
+.tools-section summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 9px 11px;
+  font-weight: 700;
+  font-size: .88rem;
+  color: #273329;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #f1eee3;
+}
+
+.tools-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.tools-section summary::after {
+  content: "▸";
+  color: #6a7568;
+  font-size: .75rem;
+}
+
+.tools-section[open] summary {
+  border-bottom: 1px solid #e2dfd2;
+}
+
+.tools-section[open] summary::after {
+  content: "▾";
+}
+
+.tools-section-body {
+  padding: 10px 11px 11px;
+  display: grid;
+  gap: 8px;
+  background: #fdfcf7;
+}
+
+.tools-section .fog-controls {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.tools-section .fog-controls > h3:first-child {
+  display: none;
 }
 
 .story-flyout {
@@ -1618,9 +1708,13 @@ body:has(.game-main) {
   gap: 5px;
   flex: 1 1 180px;
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   min-width: 80px;
   padding: 3px 0
+}
+
+.hotbar-resources::-webkit-scrollbar {
+  display: none
 }
 
 .hotbar-resource {
@@ -1754,6 +1848,30 @@ body:has(.game-main) {
 
 .hotbar-scroll {
   font: 600 1.15rem/1 var(--body)
+}
+
+.hotbar-search {
+  flex: 0 1 120px;
+  min-width: 72px;
+  max-width: 140px;
+  display: flex;
+  align-items: center;
+}
+
+.hotbar-search input {
+  width: 100%;
+  min-width: 0;
+  height: 25px;
+  padding: 0 8px;
+  border: 1px solid #c9c4b4;
+  border-radius: 6px;
+  background: #fbfaf4;
+  color: #273329;
+  font: 500 .72rem/1 var(--sans, inherit);
+}
+
+.hotbar-search input::placeholder {
+  color: #7a8476
 }
 
 .hotbar-tools {
@@ -2989,24 +3107,27 @@ body:has(.game-main) {
   overflow: auto
 }
 
-/* One dock owns both panels, so minimizing either reflows the other. */
+/* One dock owns both panels; top+bottom give absolute children a real height. */
 .game-social-dock {
   position: absolute;
   z-index: 6;
+  top: 8px;
   right: 10px;
   bottom: 48px;
+  left: auto;
   width: min(330px, calc(100% - 20px));
-  max-height: calc(100% - 60px);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  max-height: none;
+  display: block;
   pointer-events: none;
-  overflow: auto;
+  overflow: visible;
   scrollbar-width: none
 }
 
 .game-social-dock .game-activity-home {
-  display: contents
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  pointer-events: auto;
 }
 
 .game-activity-home[data-activity-placement=chat] .game-event-slot {
@@ -3079,11 +3200,15 @@ body:has(.game-main) {
   white-space: pre-wrap
 }
 
-/* Independent floating panels, sized to the available map area. */
+/* Dock needs a real height so absolutely positioned chat/log are not clipped. */
 .game-social-dock {
-  inset: 8px 10px 8px 8px;
-  width: auto;
+  top: 8px;
+  right: 10px;
+  bottom: 48px;
+  left: auto;
+  width: min(330px, calc(100% - 20px));
   max-height: none;
+  height: auto;
   display: block;
   overflow: visible;
   pointer-events: none
@@ -3447,3 +3572,130 @@ body:has(.game-main) {
   font-size: .7rem
 }#dialog.ai-review-dialog{width:min(1200px,96vw);max-width:96vw}.ai-review-dialog .dialog-content{padding:16px 20px}.ai-review-dialog p{font-size:.88rem;line-height:1.5;margin:8px 0}.forecast-review-controls{display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin:12px 0}.forecast-review-controls label{display:flex;gap:10px;align-items:center}.forecast-review-viewport{overflow:auto;max-height:60vh;background:#13241d;border-radius:8px;overscroll-behavior:contain;border:1px solid #7c8f75}.forecast-review-viewport canvas{display:block;margin:auto;max-width:none;touch-action:pan-x pan-y}.forecast-review-status{color:#9c4932;min-height:1em}
 #dialog.ai-review-dialog[open]{display:flex;flex-direction:column;height:min(92vh,960px);max-height:92vh;overflow:hidden}.ai-review-dialog .dialog-header{flex:none;grid-template-columns:minmax(0,1fr) auto}.ai-review-dialog .dialog-content{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}.ai-review-dialog .dialog-content>p,.ai-review-dialog .forecast-review-controls,.ai-review-dialog .ai-forecast-dialog-actions{flex:none}.ai-review-dialog .forecast-review-viewport{flex:1;min-height:120px;max-height:none}.ai-review-dialog .forecast-review-status:empty{display:none}
+
+.rest-flyout{width:min(390px,calc(100% - 24px));max-height:calc(100% - 24px);overflow:auto;scrollbar-width:thin}.rest-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.rest-panel-heading h2{margin:0}.rest-choice{padding:12px 0;border-top:1px solid #b5b88d44}.rest-choice h3{margin:.25rem 0}.rest-choice p,.rest-danger-note{font-size:.85rem;line-height:1.5}.rest-flyout button:disabled{opacity:.45;cursor:not-allowed}
+
+.game-end-turn kbd {
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font: inherit;
+  font-size: .75em;
+  opacity: .8;
+}
+
+/* One default right rail for tools, story, chat and activity. */
+.game-screen { --game-panel-width: 330px; }
+.game-screen .game-flyout {
+  top: 8px;
+  right: 10px;
+  width: min(var(--game-panel-width), calc(100% - 18px));
+  max-height: calc(100% - 16px);
+  margin: 0;
+  box-sizing: border-box;
+}
+@media (max-width: 600px) {
+  .game-screen .game-flyout { width: min(var(--game-panel-width), calc(100% - 81px)); }
+}
+
+/* Impact bursts are presentation only and never intercept board input. */
+.damage-effect {
+  position:absolute;
+  z-index:2;
+  pointer-events:none;
+  transform:translate(-50%,-50%);
+}
+.damage-effect i {
+  position:absolute;
+  inset:0;
+  display:block;
+  opacity:0;
+  transform:rotate(var(--damage-angle));
+  animation: damage-particle .62s ease-out calc(var(--damage-delay) + var(--damage-particle-delay)) both;
+}
+.damage-effect i::before {
+  content:"";
+  position:absolute;
+  top:44%;
+  left:calc(50% + var(--damage-spread));
+  width:15%;
+  height:12%;
+  background:var(--damage-highlight);
+  box-shadow:0 0 .4rem var(--damage-color);
+}
+.damage-effect[data-pattern="embers"] i::before {width:14%;height:24%;border-radius:75% 20% 60% 45%;background:linear-gradient(var(--damage-highlight),var(--damage-color))}
+.damage-effect[data-pattern="drops"] i::before {width:11%;height:15%;border-radius:70% 40% 60% 50%;background:var(--damage-color)}
+.damage-effect[data-pattern="shards"] i::before {width:21%;height:13%;clip-path:polygon(0 20%,100% 46%,23% 100%)}
+.damage-effect[data-pattern="bolts"] i::before {width:38%;height:20%;clip-path:polygon(0 53%,36% 18%,62% 56%,100% 0,68% 86%,36% 49%,0 68%)}
+.damage-effect[data-pattern="points"] i::before {width:24%;height:7%;clip-path:polygon(0 0,100% 50%,0 100%)}
+.damage-effect[data-pattern="rays"] i::before {width:33%;height:11%;clip-path:polygon(0 50%,43% 35%,100% 50%,43% 68%)}
+.damage-effect[data-pattern="smoke"] i::before {top:33%;width:25%;height:25%;border-radius:50%;background:radial-gradient(var(--damage-color),transparent 72%);box-shadow:none}
+.damage-effect[data-pattern="cuts"] i::before {top:43%;left:13%;width:75%;height:17%;border-radius:50%;background:linear-gradient(90deg,transparent,var(--damage-highlight),transparent);transform:rotate(-16deg)}
+.damage-effect[data-pattern="shock"] i::before,.damage-effect[data-pattern="wave"] i::before {
+  inset:18%;
+  width:auto;
+  height:auto;
+  border:2px solid var(--damage-color);
+  border-radius:50%;
+  background:transparent;
+}
+.damage-effect[data-pattern="wave"] i::before {border-style:dashed}
+.damage-effect[data-pattern="shock"] i:nth-child(2)::before,.damage-effect[data-pattern="wave"] i:nth-child(2)::before {inset:28%}
+.damage-effect[data-pattern="shock"] i:nth-child(3)::before,.damage-effect[data-pattern="wave"] i:nth-child(3)::before {inset:38%}
+@keyframes damage-particle {
+  0% {opacity:0;transform:rotate(var(--damage-angle)) scale(.28)}
+  18% {opacity:.95}
+  100% {opacity:0;transform:rotate(var(--damage-angle)) scale(1.32)}
+}
+@media(prefers-reduced-motion:reduce){.damage-effect{display:none}}
+
+.builtin-spell-effect {
+  pointer-events:none;
+}
+.builtin-spell-effect span {
+  position:absolute;
+  inset:12%;
+  display:block;
+  border:2px solid var(--spell-color);
+  border-radius:50%;
+  background:radial-gradient(ellipse at center, color-mix(in srgb,var(--spell-color) 32%,transparent),transparent 74%);
+  box-shadow:0 0 12px var(--spell-color),inset 0 0 8px var(--spell-color);
+  opacity:0;
+  animation:spell-cast-pulse var(--spell-duration) ease-out var(--spell-delay) both;
+}
+.builtin-spell-effect span+span {
+  inset:28%;
+  border-style:dashed;
+  animation-delay:calc(var(--spell-delay) + 65ms);
+}
+.builtin-spell-effect[data-effect="shimmer"] span {border-style:dotted}
+.builtin-spell-effect[data-effect="charm"] span {transform:rotate(30deg);border-width:3px}
+.builtin-spell-effect[data-shape="cone"] span {
+  inset:0;
+  border:0;
+  border-radius:0;
+  clip-path:polygon(0 50%,90% 0,100% 16%,100% 84%,90% 100%);
+  background:linear-gradient(90deg,var(--spell-color),color-mix(in srgb,var(--spell-color) 70%,transparent) 40%,transparent);
+  box-shadow:none;
+  transform-origin:left center;
+  animation-name:spell-cast-cone;
+}
+.builtin-spell-effect[data-shape="ray"] span,.builtin-spell-effect[data-shape="line"] span {
+  inset:40% 12%;
+  border:0;
+  border-radius:40%;
+  background:var(--spell-color);
+  transform-origin:left center;
+  animation-name:spell-cast-cone;
+}
+@keyframes spell-cast-cone {
+  0% {transform:scaleX(.08);opacity:0}
+  28% {opacity:.88}
+  60% {transform:scaleX(1);opacity:.72}
+  100% {transform:scaleX(1);opacity:0}
+}
+@keyframes spell-cast-pulse {
+  0% {transform:scale(.45);opacity:0}
+  30% {opacity:.96}
+  100% {transform:scale(1.25);opacity:0}
+}

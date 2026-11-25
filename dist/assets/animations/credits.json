@@ -1,0 +1,1326 @@
+{
+  "creator": "JB2A \u2014 Jules & Ben's Animated Assets",
+  "website": "https://jb2a.com/",
+  "repository": "https://github.com/Jules-Bens-Aa/JB2A_DnD5e",
+  "license": "CC BY-NC-SA 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "changes": "Wayfarer scales and positions clips during playback. Per-clip notes identify re-encoding or transparency keying.",
+  "clips": [
+    {
+      "id": "fireball",
+      "file": "assets/animations/fireball.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/3rd_Level/Fireball/FireballExplosion_01_Orange_800x800.webm",
+      "sha256": "a5b47349735e6650b8c545042e016e2dd057e96be7e6658da24426c726d1c59b",
+      "duration": 4.042
+    },
+    {
+      "id": "cure-wounds",
+      "file": "assets/animations/cure-wounds.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Cure_Wounds/CureWounds_01_Blue_400x400.webm",
+      "sha256": "586b00fa5ef080cab45477b4f091f68abfedfd6b7e8c6ea816fe815a57d46b5c",
+      "duration": 3.067
+    },
+    {
+      "id": "healing",
+      "file": "assets/animations/healing.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Healing/HealingAbility_01_Green_400x400.webm",
+      "sha256": "9c8916a6d6ac9b8cf8f53acf9e1b72e8660835b0e4c3ab6beb0d89c3f084f84b",
+      "duration": 1.7
+    },
+    {
+      "id": "shield",
+      "file": "assets/animations/shield.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Shield/Shield_01_Regular_Blue_Intro_400x400.webm",
+      "sha256": "2e9f8aac5c88683a263471e93c84df0a55b9150f86f099a59535b62999e981b1",
+      "duration": 1.533
+    },
+    {
+      "id": "fire-bolt",
+      "file": "assets/animations/fire-bolt.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Cantrip/Fire_Bolt/FireBolt_01_Regular_Orange_30ft_1600x400.webm",
+      "sha256": "de98b36e0518710668c0be07b3740c853483f677a8b986f308b31fba00f5e709",
+      "duration": 1.533
+    },
+    {
+      "id": "eldritch-blast",
+      "file": "assets/animations/eldritch-blast.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Cantrip/Eldritch_Blast/EldritchBlast_01_Regular_Purple_30ft_1600x400.webm",
+      "sha256": "66d5d5209a1b8f2a7f3ec0817fb8baee9512ed019cdcb7a0516fe49d30a84c9e",
+      "duration": 4.367
+    },
+    {
+      "id": "magic-missile",
+      "file": "assets/animations/magic-missile.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Magic_Missile/MagicMissile_01_Regular_Purple_30ft_01_1600x400.webm",
+      "sha256": "1d5b21153ca098fa3cf28c5ddea580c139ac9812e970fe8d9f607cd6c3ada014",
+      "duration": 1.867
+    },
+    {
+      "id": "guiding-bolt",
+      "file": "assets/animations/guiding-bolt.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Guiding_Bolt/GuidingBolt_01_Regular_BlueYellow_30ft_1600x400.webm",
+      "sha256": "488b37173a73ee110c706c7f661bed874f93cf6c3815cee1e683413939fac4c1",
+      "duration": 5.9
+    },
+    {
+      "id": "2nd-level-scorching-ray-scorchingray-01-regular-orange-30ft-1600x400",
+      "file": "assets/animations/2nd-level-scorching-ray-scorchingray-01-regular-orange-30ft-1600x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Scorching_Ray/ScorchingRay_01_Regular_Orange_30ft_1600x400.webm",
+      "sha256": "ca9bda2349202b9fa8ba5d63c63b7e02cce17b69a37d224b13ef3b672408ddd2",
+      "duration": 1.8
+    },
+    {
+      "id": "6th-level-chain-lightning-chainlightning-01-regular-blue-30ft-primary-1600x400",
+      "file": "assets/animations/6th-level-chain-lightning-chainlightning-01-regular-blue-30ft-primary-1600x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/6th_Level/Chain_Lightning/ChainLightning_01_Regular_Blue_30ft_Primary_1600x400.webm",
+      "sha256": "0269497e26a1862910c1351f8de1c135335ae7912bfef4309e93c39609663333",
+      "duration": 1.7
+    },
+    {
+      "id": "6th-level-disintegrate-disintegrate-01-regular-green01-30ft-1600x400",
+      "file": "assets/animations/6th-level-disintegrate-disintegrate-01-regular-green01-30ft-1600x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/6th_Level/Disintegrate/Disintegrate_01_Regular_Green01_30ft_1600x400.webm",
+      "sha256": "cf61ad7fd0e2977bff15364aacfc02133903a1258d14786073f3f82fac56d3b6",
+      "duration": 2.967
+    },
+    {
+      "id": "1st-level-detect-magic-detectmagiccircle-01-regular-blue-1200x1200",
+      "file": "assets/animations/1st-level-detect-magic-detectmagiccircle-01-regular-blue-1200x1200.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Detect_Magic/DetectMagicCircle_01_Regular_Blue_1200x1200.webm",
+      "sha256": "5f52178291c9dd7476f3e1bd846bdb60dc98aae524db1deda26ef577a8891e61",
+      "duration": 4.033
+    },
+    {
+      "id": "cantrip-ray-of-frost-rayoffrost-01-regular-blue-30ft-1600x400",
+      "file": "assets/animations/cantrip-ray-of-frost-rayoffrost-01-regular-blue-30ft-1600x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Cantrip/Ray_Of_Frost/RayOfFrost_01_Regular_Blue_30ft_1600x400.webm",
+      "sha256": "469ab791ecfa71bbdb344d48f85df24edb553b8d13a5143cc58c8fbe95d0b41b",
+      "duration": 2.533
+    },
+    {
+      "id": "2nd-level-divine-smite-divinesmite-01-regular-blueyellow-target-400x400",
+      "file": "assets/animations/2nd-level-divine-smite-divinesmite-01-regular-blueyellow-target-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Divine_Smite/DivineSmite_01_Regular_BlueYellow_Target_400x400.webm",
+      "sha256": "33e2d68c600dc6fd7ad309b4184143d5be4844efde4cbec533bb8bacaab2d2bd",
+      "duration": 2.333
+    },
+    {
+      "id": "1st-level-witch-bolt-witchbolt-01-regular-blue-30ft-1600x400",
+      "file": "assets/animations/1st-level-witch-bolt-witchbolt-01-regular-blue-30ft-1600x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Witch_Bolt/WitchBolt_01_Regular_Blue_30ft_1600x400.webm",
+      "sha256": "6747d424a802cd231efd3856c8342d68af6948062addbe0903062ba7e749e78c",
+      "duration": 4
+    },
+    {
+      "id": "1st-level-bless-bless-01-regular-yellow-intro-400x400",
+      "file": "assets/animations/1st-level-bless-bless-01-regular-yellow-intro-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Bless/Bless_01_Regular_Yellow_Intro_400x400.webm",
+      "sha256": "592bda416873238217024244f3944b164cdc4b15639bee096e116219481a08c1",
+      "duration": 5
+    },
+    {
+      "id": "2nd-level-moonbeam-moonbeamcomplete-01-regular-blue-400x400",
+      "file": "assets/animations/2nd-level-moonbeam-moonbeamcomplete-01-regular-blue-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Moonbeam/MoonbeamComplete_01_Regular_Blue_400x400.webm",
+      "sha256": "429ef802ef80c3ee661287127bd2774c5df3032fe63850fc162dd537e051d79f",
+      "duration": 13.125
+    },
+    {
+      "id": "1st-level-thunderwave-thunderwave-01-bright-blue-center-600x600",
+      "file": "assets/animations/1st-level-thunderwave-thunderwave-01-bright-blue-center-600x600.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Thunderwave/Thunderwave_01_Bright_Blue_Center_600x600.webm",
+      "sha256": "28f9e93718aec0527c63699f8620920ac3751d6775d86620f7ffc49d926a91e1",
+      "duration": 1.033
+    },
+    {
+      "id": "cantrip-sacred-flame-sacredflametarget-01-regular-yellow-400x400",
+      "file": "assets/animations/cantrip-sacred-flame-sacredflametarget-01-regular-yellow-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Cantrip/Sacred_Flame/SacredFlameTarget_01_Regular_Yellow_400x400.webm",
+      "sha256": "1638445c5ffceaac70c11da299cbcc36489260fbf654e7ea75573f6823047f46",
+      "duration": 5.433
+    },
+    {
+      "id": "1st-level-burning-hands-burninghands-01-regular-orange-600x600",
+      "file": "assets/animations/1st-level-burning-hands-burninghands-01-regular-orange-600x600.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Burning_Hands/BurningHands_01_Regular_Orange_600x600.webm",
+      "sha256": "966c1d56252f0c532e0d5091c6e075c95866f92d2ca50da905c14b9b6d600619",
+      "duration": 5.567
+    },
+    {
+      "id": "2nd-level-flaming-sphere-flamingsphere-02-orange-400x400",
+      "file": "assets/animations/2nd-level-flaming-sphere-flamingsphere-02-orange-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Flaming_Sphere/FlamingSphere_02_Orange_400x400.webm",
+      "sha256": "819a0cd1c0347b9c20aa918feb8504a9af1b65f1eee32c87126be452fadcde6b",
+      "duration": 5.042
+    },
+    {
+      "id": "2nd-level-cloud-of-daggers-cloudofdaggers-01-light-orange-400x400",
+      "file": "assets/animations/2nd-level-cloud-of-daggers-cloudofdaggers-01-light-orange-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Cloud_Of_Daggers/CloudOfDaggers_01_Light_Orange_400x400.webm",
+      "sha256": "28ef26ac9717d23c3a3450c6474ef3e7abfc6f76d2b4e5d4ba22e0efe1af7de4",
+      "duration": 5
+    },
+    {
+      "id": "1st-level-entangle-entangle-01-yellow-400x400",
+      "file": "assets/animations/1st-level-entangle-entangle-01-yellow-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Entangle/Entangle_01_Yellow_400x400.webm",
+      "sha256": "d47605587d990fdec34644d82ef4ea2ba6fe9442184d8b5a266819d7fbfa09bb",
+      "duration": 3.966,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "3rd-level-spirit-guardians-spiritguardians-01-light-blueyellow-600x600",
+      "file": "assets/animations/3rd-level-spirit-guardians-spiritguardians-01-light-blueyellow-600x600.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/3rd_Level/Spirit_Guardians/SpiritGuardians_01_Light_BlueYellow_600x600.webm",
+      "sha256": "df13d483db1820e1bc835496d2dfc4bb12cd87b1ff634be188da6aee13bded8c",
+      "duration": 6.042
+    },
+    {
+      "id": "5th-level-arcane-hand-arcanehand-human-01-idle-blue-400x400",
+      "file": "assets/animations/5th-level-arcane-hand-arcanehand-human-01-idle-blue-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/5th_Level/Arcane_Hand/ArcaneHand_Human_01_Idle_Blue_400x400.webm",
+      "sha256": "8c1e9fd0e309ca81c8b974c79213512c5291aef4c163e0acfbd90f3b9f949577",
+      "duration": 4.958
+    },
+    {
+      "id": "5th-level-antilife-shell-antilifeshell-01-blue-circle-400x400",
+      "file": "assets/animations/5th-level-antilife-shell-antilifeshell-01-blue-circle-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/5th_Level/Antilife_Shell/AntilifeShell_01_Blue_Circle_400x400.webm",
+      "sha256": "ce5e0d7668369d8e594df0a1c30f120799095b5ff93876b5bcd63d478cc8c049",
+      "duration": 4
+    },
+    {
+      "id": "4th-level-black-tentacles-blacktentacles-01-dark-purple-600x600",
+      "file": "assets/animations/4th-level-black-tentacles-blacktentacles-01-dark-purple-600x600.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/4th_Level/Black_Tentacles/BlackTentacles_01_Dark_Purple_600x600.webm",
+      "sha256": "aaab028a6418e275393231e320782b8ffcf7eceb83fb2abd8424f222dd3addc0",
+      "duration": 5
+    },
+    {
+      "id": "1st-level-sleep-cloud01-01-regular-pink-400x400",
+      "file": "assets/animations/1st-level-sleep-cloud01-01-regular-pink-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Sleep/Cloud01_01_Regular_Pink_400x400.webm",
+      "sha256": "cef9d65149fbf3e8a085654c185d04a80b8ede7980683e1f23c86638c5d727dc",
+      "duration": 5.042
+    },
+    {
+      "id": "2nd-level-darkness-darkness-01-black-600x600",
+      "file": "assets/animations/2nd-level-darkness-darkness-01-black-600x600.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Darkness/Darkness_01_Black_600x600.webm",
+      "sha256": "6f7f9da1ef45ff9ee5e84f08eaddc7f86792b4d5f8848d35bd1d121618a6b902",
+      "duration": 5
+    },
+    {
+      "id": "5th-level-cone-of-cold-coneofcold-01-regular-blue-600x600",
+      "file": "assets/animations/5th-level-cone-of-cold-coneofcold-01-regular-blue-600x600.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/5th_Level/Cone_Of_Cold/ConeOfCold_01_Regular_Blue_600x600.webm",
+      "sha256": "4d15e4d3d856907eb61c95830403b78b97aeeb2cd310c034a1d97c56b51bbe4e",
+      "duration": 4.4
+    },
+    {
+      "id": "1st-level-fog-cloud-fogcloud-01-white-800x800",
+      "file": "assets/animations/1st-level-fog-cloud-fogcloud-01-white-800x800.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Fog_Cloud/FogCloud_01_White_800x800.webm",
+      "sha256": "445c9fd8d425ab62c308272281c2c29d2495c09054adb875ca78d79d1fc13d97",
+      "duration": 5.042
+    },
+    {
+      "id": "1st-level-grease-grease-dark-brown-600x600",
+      "file": "assets/animations/1st-level-grease-grease-dark-brown-600x600.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Grease/Grease_Dark_Brown_600x600.webm",
+      "sha256": "9007305abcac4805d7d88fe2ce2f398879cd7c531f1f095334e86306bb87a6bb",
+      "duration": 10.033
+    },
+    {
+      "id": "2nd-level-shatter-shatter-01-blue-400x400",
+      "file": "assets/animations/2nd-level-shatter-shatter-01-blue-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Shatter/Shatter_01_Blue_400x400.webm",
+      "sha256": "896b5a24ccea5462c59b63f6edaccab7db6ca5d5ba30c50be18ab9a98812f5cd",
+      "duration": 3.033
+    },
+    {
+      "id": "2nd-level-misty-step-mistystep-01-regular-blue-400x400",
+      "file": "assets/animations/2nd-level-misty-step-mistystep-01-regular-blue-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Misty_Step/MistyStep_01_Regular_Blue_400x400.webm",
+      "sha256": "813845f057c5f32a39cb80c3cce80f097ad2351b7acf4f0387811ec6195a2f03",
+      "duration": 3
+    },
+    {
+      "id": "3rd-level-sleet-storm-sleetstorm-01-blue-800x800",
+      "file": "assets/animations/3rd-level-sleet-storm-sleetstorm-01-blue-800x800.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/3rd_Level/Sleet_Storm/SleetStorm_01_Blue_800x800.webm",
+      "sha256": "b3e9dbf9e9721358d4eea99ac12642b356730bfa6734199d21a9035fe24f9670",
+      "duration": 6.25
+    },
+    {
+      "id": "5th-level-wall-of-force-wallofforce-01-grey-h-200x200",
+      "file": "assets/animations/5th-level-wall-of-force-wallofforce-01-grey-h-200x200.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/5th_Level/Wall_Of_Force/WallOfForce_01_Grey_H_200x200.webm",
+      "sha256": "cab0539e65673832fc11fa281df7bb6b9c2f8212aeff3ee3e1e477cc7bf69ffd",
+      "duration": 4.042
+    },
+    {
+      "id": "cantrip-toll-the-dead-tollthedead-01-regular-green-400x400",
+      "file": "assets/animations/cantrip-toll-the-dead-tollthedead-01-regular-green-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Cantrip/Toll_The_Dead/TollTheDead_01_Regular_Green_400x400.webm",
+      "sha256": "8e3e5e05eb8ebe96ac7354b744d107f38f4aae0c5daafdd89e4632e29efb3fdb",
+      "duration": 3.533
+    },
+    {
+      "id": "2nd-level-spiritual-weapon-spiritualweapon-club01-02-spectral-green-400x400",
+      "file": "assets/animations/2nd-level-spiritual-weapon-spiritualweapon-club01-02-spectral-green-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Spiritual_Weapon/SpiritualWeapon_Club01_02_Spectral_Green_400x400.webm",
+      "sha256": "c4d37e5ed5abdb9321d8748cbe96a5d746714a23e9446294cf95e1ef6ff1739e",
+      "duration": 5.042
+    },
+    {
+      "id": "2nd-level-web-web-01-white-01-400x400",
+      "file": "assets/animations/2nd-level-web-web-01-white-01-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Web/Web_01_White_01_400x400.webm",
+      "sha256": "b0dc957a2da88df431ffe9e21cc9f3b401ca184a68224356483ea183913f9606",
+      "duration": 3.042
+    },
+    {
+      "id": "3rd-level-call-lightning-calllightning-01-blueorange-1000x1000",
+      "file": "assets/animations/3rd-level-call-lightning-calllightning-01-blueorange-1000x1000.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/3rd_Level/Call_Lightning/CallLightning_01_BlueOrange_1000x1000.webm",
+      "sha256": "f8120c5e4b8709704ff643a970e287023a7f54c050bdba4976f0d399dc98c005",
+      "duration": 4.0,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "1st-level-arms-of-hadar-armsofhadar-01-dark-purple-500x500",
+      "file": "assets/animations/1st-level-arms-of-hadar-armsofhadar-01-dark-purple-500x500.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Arms_Of_Hadar/ArmsOfHadar_01_Dark_Purple_500x500.webm",
+      "sha256": "a351e9fa261cc0a3654b83a0f31f714769916a6737340a921f701361cf1dba7e",
+      "duration": 5
+    },
+    {
+      "id": "7th-level-whirlwind-whirlwind-01-bluegrey-01-400x400",
+      "file": "assets/animations/7th-level-whirlwind-whirlwind-01-bluegrey-01-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/7th_Level/Whirlwind/Whirlwind_01_BlueGrey_01_400x400.webm",
+      "sha256": "806435ec51ceadc4279530e75bcd2f2fa912e9d07f8d3d4b685b0dae2012ee7e",
+      "duration": 8.042
+    },
+    {
+      "id": "cantrip-dancing-lights-dancinglights-01-blueyellow-200x200",
+      "file": "assets/animations/cantrip-dancing-lights-dancinglights-01-blueyellow-200x200.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Cantrip/Dancing_Lights/DancingLights_01_BlueYellow_200x200.webm",
+      "sha256": "765cf07362f641212adb1198d6cc392428943df4495fc73b30871d880279b99b",
+      "duration": 4
+    },
+    {
+      "id": "2nd-level-gust-of-wind-gustofwind-01-white-1200x200",
+      "file": "assets/animations/2nd-level-gust-of-wind-gustofwind-01-white-1200x200.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/2nd_Level/Gust_Of_Wind/GustOfWind_01_White_1200x200.webm",
+      "sha256": "906e1240e73719c66609abcc461dd49bc482a6907d74c30d6fd78ac8f0b8ec50",
+      "duration": 4.033
+    },
+    {
+      "id": "3rd-level-wind-wall-windwall-01-500x100",
+      "file": "assets/animations/3rd-level-wind-wall-windwall-01-500x100.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/3rd_Level/Wind_Wall/WindWall_01_500x100.webm",
+      "sha256": "4cb326f0be5e4b2346371615b7ab32aef17fe2a322865bd38380b0002969fade",
+      "duration": 4.0,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "3rd-level-lightning-bolt-lightningbolt-01-regular-blue-4000x200",
+      "file": "assets/animations/3rd-level-lightning-bolt-lightningbolt-01-regular-blue-4000x200.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/3rd_Level/Lightning_Bolt/LightningBolt_01_Regular_Blue_4000x200.webm",
+      "sha256": "1550beee1ad44f40960385956b784dc6c9dd223b329b76d08e79e7c5fb02fcb7",
+      "duration": 4
+    },
+    {
+      "id": "4th-level-wall-of-fire-walloffire-01-yellow-ring-400x400",
+      "file": "assets/animations/4th-level-wall-of-fire-walloffire-01-yellow-ring-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/4th_Level/Wall_Of_Fire/WallOfFire_01_Yellow_Ring_400x400.webm",
+      "sha256": "be4a7943c0d5b85caf4230f3bccbfb55748a6c16488f7fa039ab29946daf4038",
+      "duration": 4.0,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "1st-level-hunters-mark-huntersmark-01-regular-green-pulse-200x200",
+      "file": "assets/animations/1st-level-hunters-mark-huntersmark-01-regular-green-pulse-200x200.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/1st_Level/Hunters_Mark/HuntersMark_01_Regular_Green_Pulse_200x200.webm",
+      "sha256": "83510544785e7314ba70fa84e1a58e621fb62f27493e0faa51fe3de4ffac90cc",
+      "duration": 5
+    },
+    {
+      "id": "5th-level-wall-of-force-wallofforce-01-grey-sphere-400x400",
+      "file": "assets/animations/5th-level-wall-of-force-wallofforce-01-grey-sphere-400x400.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/5th_Level/Wall_Of_Force/WallOfForce_01_Grey_Sphere_400x400.webm",
+      "sha256": "dc2f745f8d1edc29ab257aeaaa89992fda3fb8fef6fa3888d7692e8bac9910d0",
+      "duration": 4.042
+    },
+    {
+      "id": "combat-glaive",
+      "file": "assets/animations/combat-glaive.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Glaive01_01_Regular_White_800x600.webm",
+      "sha256": "6b2386a8004b73a3cc5b6a594508f15a8cd37b68ff16b71899e7b3b2663a8a5d",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-flame-blade",
+      "file": "assets/animations/combat-flame-blade.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group03/MeleeAttack03_MagicalGreatSword01_01_Regular_Orange_800x600.webm",
+      "sha256": "3a6477a7de59f6c626bf2fe4b6505c8e8fa96d33733a19fc3776b505ae35f824",
+      "duration": 1.7
+    },
+    {
+      "id": "combat-unarmed",
+      "file": "assets/animations/combat-unarmed.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Unarmed_Attacks/Unarmed_Strike/UnarmedStrike_01_Regular_Blue_Physical01_800x600.webm",
+      "sha256": "e3404c39b53981d995edfeb0dff64e6caba083cb593caed40362026a0ab797c3",
+      "duration": 1.033,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-dagger",
+      "file": "assets/animations/combat-dagger.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Dagger02_01_Regular_White_800x600.webm",
+      "sha256": "0989d9e9e77503929e1135aa843602350825da14d0a519136bee009395176868",
+      "duration": 1.6,
+      "notes": "Re-encoded to VP8 for browser playback."
+    },
+    {
+      "id": "combat-katana",
+      "file": "assets/animations/combat-katana.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group04/MeleeAttack04_Katana01_01_800x600.webm",
+      "sha256": "2ff52b37480f80b64472e04919c075601bd5d82c6ef98e874220be0a3c65a36b",
+      "duration": 1.567
+    },
+    {
+      "id": "combat-staff",
+      "file": "assets/animations/combat-staff.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Quarterstaff01_01_Regular_White_800x600.webm",
+      "sha256": "1de3d224f9a6487bf6bf329e302f8118e683b01b39f1bdfd75bdff45a32cb159",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-spikes",
+      "file": "assets/animations/combat-spikes.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Spear01_01_Regular_White_800x600.webm",
+      "sha256": "bb5dd232d0de4d73cfd38c52e0fd4c2586e83e8046fe03828fc00b9266fda08f",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-tentacle",
+      "file": "assets/animations/combat-tentacle.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/4th_Level/Black_Tentacles/BlackTentacles_01_Dark_Purple_600x600.webm",
+      "sha256": "aaab028a6418e275393231e320782b8ffcf7eceb83fb2abd8424f222dd3addc0",
+      "duration": 5
+    },
+    {
+      "id": "combat-arrow-5",
+      "file": "assets/animations/combat-arrow-5.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Arrow01_01_Regular_White_05ft_600x400.webm",
+      "sha256": "b4bb932fc19f8eb05441863a96c17925660735af1df2d1b7bbd48ae0a6aa56d3",
+      "duration": 1.733,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-arrow-15",
+      "file": "assets/animations/combat-arrow-15.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Arrow01_01_Regular_White_15ft_1000x400.webm",
+      "sha256": "eb936307603171901bf0d53672c19a5108484e42bfa9a265f0c655dc1ee3e465",
+      "duration": 1.866,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-arrow-30",
+      "file": "assets/animations/combat-arrow-30.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Arrow01_01_Regular_White_30ft_1600x400.webm",
+      "sha256": "f0f6e7c394efa81c04f52d2ee972a045d3978cbc6a7c623d4a45edeadbc364c8",
+      "duration": 1.866,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-arrow-60",
+      "file": "assets/animations/combat-arrow-60.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Arrow01_01_Regular_White_60ft_2800x400.webm",
+      "sha256": "96f6aed539d13667487c6dbc59a1e77f513d07c8b179c2b3ee6b1eb98edb2acf",
+      "duration": 2.066,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-arrow-90",
+      "file": "assets/animations/combat-arrow-90.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Arrow01_01_Regular_White_90ft_4000x400.webm",
+      "sha256": "db820d89685e97d639e3d08a7b7628a2afef779b3ac1586bd38d09da389c9626",
+      "duration": 2.4,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-battleaxe",
+      "file": "assets/animations/combat-battleaxe.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group02/MeleeAttack02_BattleAxe01_01_800x600.webm",
+      "sha256": "d5e9ab41076ffd7ab42ba1b703e570066f92c777bc1c2aecb5c7a6319f35d5b8",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-club",
+      "file": "assets/animations/combat-club.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Club01_01_Regular_White_800x600.webm",
+      "sha256": "31d9bc220fb2400b31ac880637e77891e61bbee5bd9b5f0bbc30c14c621a0b77",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-flail",
+      "file": "assets/animations/combat-flail.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group01/MeleeAttack01_Flail01_01_800x600.webm",
+      "sha256": "6ea7b0799d1c55110de349c77968225212da77e82183629741a3fc0b5ee76c55",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-greataxe",
+      "file": "assets/animations/combat-greataxe.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/GreatAxe01_01_Regular_White_800x600.webm",
+      "sha256": "947845cce8764ae891fe9f0f97c7a584996f484072ff0d14fbcfa928e6d31b63",
+      "duration": 2.4,
+      "notes": "Re-encoded to VP8 for browser playback."
+    },
+    {
+      "id": "combat-greatclub",
+      "file": "assets/animations/combat-greatclub.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/GreatClub01_01_Regular_White_800x600.webm",
+      "sha256": "0766fd8115a12ea3af69b6c5018202ad731ac3d4814e2dc077d141dc723e5692",
+      "duration": 1.7,
+      "notes": "Re-encoded to VP8 for browser playback."
+    },
+    {
+      "id": "combat-greatsword",
+      "file": "assets/animations/combat-greatsword.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/GreatSword01_01_Regular_White_800x600.webm",
+      "sha256": "450f0637a1d66c9e1d0fb198fc6ec10075e953ed949fcb6e914d34671e2d589a",
+      "duration": 2.4,
+      "notes": "Re-encoded to VP8 for browser playback."
+    },
+    {
+      "id": "combat-halberd",
+      "file": "assets/animations/combat-halberd.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Halberd01_01_Regular_White_800x600.webm",
+      "sha256": "d00e574411e4fe7d2a63fa67e643b141f683e688fe6a51ac03a892dc9e8361df",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-handaxe",
+      "file": "assets/animations/combat-handaxe.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group02/MeleeAttack02_HandAxe01_01_800x600.webm",
+      "sha256": "d9baeacc31abac17c2895bca20adf3693f49dd2474e34897c4e4d42780e07d05",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-hammer",
+      "file": "assets/animations/combat-hammer.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group02/MeleeAttack02_Hammer01_01_800x600.webm",
+      "sha256": "72f44454c610eddd12e92a55a0b1ae8dd63cf0b2316d16f7d3ef79442af1b212",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-longsword",
+      "file": "assets/animations/combat-longsword.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Sword01_01_Regular_White_800x600.webm",
+      "sha256": "cd8b02946efe7234cd9713ad8302779578f782aee5600c9e354303f3dcf3e002",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-mace",
+      "file": "assets/animations/combat-mace.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group02/MeleeAttack02_Mace01_01_800x600.webm",
+      "sha256": "824d717a62064c42c9ffe5952e5463a0a52c48b754da2a3a59694d2fda3b6f8b",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-maul",
+      "file": "assets/animations/combat-maul.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group03/MeleeAttack03_Maul01_01_800x600.webm",
+      "sha256": "267597f57e004734ce3277df8e8df42d46f806e471abdad3d92ebc649621ed81",
+      "duration": 1.7
+    },
+    {
+      "id": "combat-rapier",
+      "file": "assets/animations/combat-rapier.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Rapier01_01_Regular_White_800x600.webm",
+      "sha256": "a7a98ddf2685839a5ab427be8d4841c23f35ea839d9a51b7cefd0fbab0017dac",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-scimitar",
+      "file": "assets/animations/combat-scimitar.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Falchion01_01_Regular_White_800x600.webm",
+      "sha256": "751ae2bbe04642f5cdfa0cc736460befc89eeaeae4529ad773b450a5a7eb9014",
+      "duration": 2.2
+    },
+    {
+      "id": "combat-shortsword",
+      "file": "assets/animations/combat-shortsword.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group01/MeleeAttack01_ShortSword01_01_800x600.webm",
+      "sha256": "d2cc614a0ea35352835b471d8b6d6943b9da3bc674a78d0249878e68ec3c5741",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-sickle",
+      "file": "assets/animations/combat-sickle.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group01/MeleeAttack01_Sickle01_01_800x600.webm",
+      "sha256": "4add0eb6ce33db3e2645c008ee65b91f75d906d0fe05c7048dbffd28267acc90",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-warhammer",
+      "file": "assets/animations/combat-warhammer.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Melee/Group02/MeleeAttack02_Warhammer01_01_800x600.webm",
+      "sha256": "3f2735ec66444276cb900dd2919ed69c3200c17a1b2b66f05dd0b45aeefa8961",
+      "duration": 1.533
+    },
+    {
+      "id": "combat-bolt-5",
+      "file": "assets/animations/combat-bolt-5.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Bolt01_01_Regular_Orange_Physical_05ft_600x400.webm",
+      "sha256": "94e73f01926ca126abd1b1a30a434de826deb5133c05d7553ec7d2d76e6ae0d1",
+      "duration": 1.4,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-bolt-15",
+      "file": "assets/animations/combat-bolt-15.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Bolt01_01_Regular_Orange_Physical_15ft_1000x400.webm",
+      "sha256": "dd9162117d4cdb259b5bbe578c103b7475165abeb97bfc0029ac0ccaa4e283c5",
+      "duration": 1.4,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-throw-dagger-15",
+      "file": "assets/animations/combat-throw-dagger-15.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Dagger01_01_Regular_White_15ft_1000x400.webm",
+      "sha256": "565bf0e4bada9ace935c2a8029af71fa35fe7ac53158041ccf7af92dc18a76d1",
+      "duration": 1.5,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-bolt-30",
+      "file": "assets/animations/combat-bolt-30.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Bolt01_01_Regular_Orange_Physical_30ft_1600x400.webm",
+      "sha256": "fa35bd52aa7a27b777e18b3dfe1aeb3ee3c660a233b8c4517832ba9a0cfaf5e5",
+      "duration": 1.5,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-throw-dagger-30",
+      "file": "assets/animations/combat-throw-dagger-30.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Dagger01_01_Regular_White_30ft_1600x400.webm",
+      "sha256": "1375907ce590401bb40ab3e3752447847c80cd5cb5f9bd96d418557be9361c70",
+      "duration": 1.6,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-bolt-60",
+      "file": "assets/animations/combat-bolt-60.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Bolt01_01_Regular_Orange_Physical_60ft_2800x400.webm",
+      "sha256": "7cdcaba412dc0f67a09ba8c0ecf53dfc546b35891cb3d115f1cd4984cb8436d0",
+      "duration": 1.666,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-throw-dagger-60",
+      "file": "assets/animations/combat-throw-dagger-60.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Dagger01_01_Regular_White_60ft_2800x400.webm",
+      "sha256": "6858a338f7560233cdcee9931346a2b09f68553d90df92e521078df6061916bf",
+      "duration": 1.766,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-bolt-90",
+      "file": "assets/animations/combat-bolt-90.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Bolt01_01_Regular_Orange_Physical_90ft_4000x400.webm",
+      "sha256": "2818310c510a2feb69422cb7afb12553e50217afe9027896f287c361a63763e6",
+      "duration": 1.833,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "combat-throw-dagger-90",
+      "file": "assets/animations/combat-throw-dagger-90.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Weapon_Attacks/Ranged/Dagger01_01_Regular_White_90ft_4000x400.webm",
+      "sha256": "63f1201e1aacefa93fe1242638e0aec37e5905de103950d557d1cc1a2d292abf",
+      "duration": 1.933,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "spell-fx-psychic",
+      "file": "assets/animations/spell-fx-psychic.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Impact/Impact_11_Regular_Blue_400x400.webm",
+      "sha256": "84205db66c479a41ac0cfe90d23a1b7f8c91d93683c4c3d43e17a962f8ac7ce4",
+      "duration": 1.1
+    },
+    {
+      "id": "spell-fx-poison",
+      "file": "assets/animations/spell-fx-poison.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Template/Cone/Breath_Weapon/BreathWeapon_Poison01_Regular_Green_30ft_Cone_Burst_600x600.webm",
+      "sha256": "8b3aa081960577a8c0961dfa232b9eef81a7989ba0265b5720e3dd154e49e083",
+      "duration": 9.266,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "spell-fx-life",
+      "file": "assets/animations/spell-fx-life.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Energy/ShieldEldritchWebAbove01_01_Dark_Purple_400x400.webm",
+      "sha256": "6028aa53742a27e6617c04f288810ec154df339a217ef6a23937e9d2d3faf0e1",
+      "duration": 5
+    },
+    {
+      "id": "spell-fx-ice-armor",
+      "file": "assets/animations/spell-fx-ice-armor.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Ice/ShieldIceAbove01_01_Regular_Blue_400x400.webm",
+      "sha256": "3c4fbaa3a2dda5bced1d9413f92a2b7ea56440436337a8c9633f9601762522ec",
+      "duration": 5
+    },
+    {
+      "id": "spell-fx-ward",
+      "file": "assets/animations/spell-fx-ward.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Marker/WardRune_01_Regular_Yellow_600x600.webm",
+      "sha256": "e9a56dd17e074cab2e69e2341f3fcd6ce3729f075475ff8ca42bd3831b6578a4",
+      "duration": 6
+    },
+    {
+      "id": "spell-fx-bind",
+      "file": "assets/animations/spell-fx-bind.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Marker/MarkerRunes03_01_Regular_Orange_400x400.webm",
+      "sha256": "c8427380994d53baaf16cc4f0cc31720464f4d57d3743cca597997c57595904f",
+      "duration": 6.042
+    },
+    {
+      "id": "spell-fx-bane",
+      "file": "assets/animations/spell-fx-bane.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Conditions/Curse01/ConditionCurse01_001_Red_600x600.webm",
+      "sha256": "12cb83a26b1248bec5a629845bf631c2718495278edcef2ebebb0b2b7c957240",
+      "duration": 3.033
+    },
+    {
+      "id": "spell-fx-ice-storm",
+      "file": "assets/animations/spell-fx-ice-storm.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Ice/SnowflakeBurst_01_Regular_BlueWhite_Burst_600x600.webm",
+      "sha256": "1ee573b83e9cdea2893839555d49bdc1b197a0caccc990d1f223f7160177fbe2",
+      "duration": 2.366,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "spell-fx-breath-fire",
+      "file": "assets/animations/spell-fx-breath-fire.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Template/Cone/Breath_Weapon/BreathWeapon_Fire01_Regular_Orange_30ft_Cone_Burst_600x600.webm",
+      "sha256": "c0fca0bab4d7ef5bd6f16eedb11e18c926d4114a73a999455fca74f3bb25e7fc",
+      "duration": 8.466,
+      "notes": "Re-encoded to VP8 for browser playback."
+    },
+    {
+      "id": "spell-fx-breath-cold",
+      "file": "assets/animations/spell-fx-breath-cold.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Template/Cone/Breath_Weapon/BreathWeapon_Cold01_Regular_Blue_30ft_Cone_Burst_600x600.webm",
+      "sha256": "f67f61bb57342e888150e3bf802442f124b9f9bb3ca9f948b6c83c016baeb8cb",
+      "duration": 9
+    },
+    {
+      "id": "spell-fx-acid",
+      "file": "assets/animations/spell-fx-acid.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Liquid/LiquidSplash01_Regular_Blue_400x400.webm",
+      "sha256": "345f9d129246a97105660f8c363c388842decd850def9f2260f589642692a5a7",
+      "duration": 3.542
+    },
+    {
+      "id": "spell-fx-acid-ray",
+      "file": "assets/animations/spell-fx-acid-ray.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/RangedSpell/01/RangedProjectile01_01_Dark_Orange_30ft_1600x400.webm",
+      "sha256": "0155de67273aa33aedad2391fedbc4ca5c11aaf1f7280fa5f8d5a93a1cb2b817",
+      "duration": 1.833
+    },
+    {
+      "id": "spell-fx-fire-impact",
+      "file": "assets/animations/spell-fx-fire-impact.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Impact/ImpactFire01_01_Regular_Orange_600x600.webm",
+      "sha256": "a7e7fac986536196b5c610865c7b92ad04313ded207292ae1ad39c8be61e179e",
+      "duration": 2.267
+    },
+    {
+      "id": "spell-fx-acid-line",
+      "file": "assets/animations/spell-fx-acid-line.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Template/Line/Breath_Weapon/BreathWeapon_Acid01_Regular_Green_30ft_Line_Burst_1200x200.webm",
+      "sha256": "16016d9be8b91aaa704579c1d9e656451e0d2b1a7633aa69dbc20649706955c1",
+      "duration": 7.1,
+      "notes": "Re-encoded to VP8 for browser playback."
+    },
+    {
+      "id": "spell-fx-fear",
+      "file": "assets/animations/spell-fx-fear.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Marker/MarkerFear_01_Dark_Purple_400x400.webm",
+      "sha256": "7d77c8062e85401fad2f61583153d201c1b7b73fe11b5b380bd64726f0ba2395",
+      "duration": 6.042
+    },
+    {
+      "id": "spell-fx-thorn",
+      "file": "assets/animations/spell-fx-thorn.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Nature/PlantGrowthRound03_01_Regular_GreenYellow_500x500.webm",
+      "sha256": "1c19e3e33eeddd09f77fd321a123c6a5dd58f0e9e2fc7bf747e31d3a0b4c849b",
+      "duration": 8.5
+    },
+    {
+      "id": "spell-fx-lightning",
+      "file": "assets/animations/spell-fx-lightning.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Lightning/LightningStrike01_01_Regular_Blue_800x800.webm",
+      "sha256": "7901e596a9505bc2798922ff609021735e382b8519116373542036d8d884d7ea",
+      "duration": 2
+    },
+    {
+      "id": "spell-fx-force-burst",
+      "file": "assets/animations/spell-fx-force-burst.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Energy/EnergyAttack_01_01_Regular_Blue_1000x1000.webm",
+      "sha256": "031cf9f1eb04df3f0787e8c55c47f5b15399de553a6573c36bb6c39b9b0dd005",
+      "duration": 2.8
+    },
+    {
+      "id": "spell-fx-slow",
+      "file": "assets/animations/spell-fx-slow.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Conditions/Dizzy_Stars/DizzyStars_01_BlueOrange_400x400.webm",
+      "sha256": "d32509a513795b0817eb73f7ceabf4e0143c375e550d626e4207d854609ffe66",
+      "duration": 2
+    },
+    {
+      "id": "spell-fx-charm",
+      "file": "assets/animations/spell-fx-charm.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Marker/MarkerHeart_01_Regular_Pink_400x400.webm",
+      "sha256": "9ced4ea361d9ac58812c68fcee2abb0dfd74a439cd6471ae53568518f82fbae6",
+      "duration": 6.042
+    },
+    {
+      "id": "spell-fx-shimmer",
+      "file": "assets/animations/spell-fx-shimmer.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Conditions/Boon02/ConditionBoon02_001_Refraction_600x600.webm",
+      "sha256": "9159a1726ba79d8b0f656514e5d62ba4b9adb16ece5d8edc0189a7d229ad4a2b",
+      "duration": 3.033
+    },
+    {
+      "id": "spell-fx-haste",
+      "file": "assets/animations/spell-fx-haste.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Energy/EnergyField_01_Regular_Blue_600x600.webm",
+      "sha256": "f3df3b0b16eb4e08b297979923e1de9757c142ef5068f394500a841c13078444",
+      "duration": 5.042
+    },
+    {
+      "id": "spell-fx-boon",
+      "file": "assets/animations/spell-fx-boon.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Conditions/Boon01/ConditionBoon01_001_Green_600x600.webm",
+      "sha256": "be4343b8608bc03b4ce7a678b3ee9b369b2fff61ca4c807bc5c9b76bfd4a074b",
+      "duration": 3.033
+    },
+    {
+      "id": "spell-fx-portal",
+      "file": "assets/animations/spell-fx-portal.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Portals/Portal_Bright_Yellow_H_400x400.webm",
+      "sha256": "76c38e55adb2f99ef5052ddbf6a28569be3f7e84b19dcbdd83d8830aff386c7e",
+      "duration": 8.042
+    },
+    {
+      "id": "spell-fx-faerie",
+      "file": "assets/animations/spell-fx-faerie.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Marker/MarkerCircleOfStars_Regular_Blue_400x400.webm",
+      "sha256": "b223cd7f9f4ed5c059a081b3b8ab14ea097a75caa4d4029676076909163e8f56",
+      "duration": 4
+    },
+    {
+      "id": "spell-fx-silence",
+      "file": "assets/animations/spell-fx-silence.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Marker/MarkerMute_01_Dark_Red_400x400.webm",
+      "sha256": "063774b01b5204c0d8444da32b970bbca7180b1d5b9daa3aef645791622c184a",
+      "duration": 6
+    },
+    {
+      "id": "spell-fx-fog",
+      "file": "assets/animations/spell-fx-fog.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Smoke/SmokePuffRing01_01_Regular_White_400x400.webm",
+      "sha256": "b88844c3cafd667aecbc2fba3d182135629a49aa26972a767b62904598bd3a41",
+      "duration": 1.067
+    },
+    {
+      "id": "spell-fx-necrotic-ray",
+      "file": "assets/animations/spell-fx-necrotic-ray.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Energy/EnergyStrand_01_Regular_Purple_30ft_1600x400.webm",
+      "sha256": "64199a1241f9b8cef34761beebd0d29d3034c210e106adfa6f450303c18257a3",
+      "duration": 2.033
+    },
+    {
+      "id": "zone-loop-vines",
+      "file": "assets/animations/zone-loop-vines.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Nature/PlantGrowthRoundLoop03_01_Regular_GreenYellow_500x500.webm",
+      "sha256": "b0ad1e0f64b3377889bf13830eeefbcfd0687ffed01be70135915c0d07481f7b",
+      "duration": 4.042
+    },
+    {
+      "id": "zone-loop-energy-ring",
+      "file": "assets/animations/zone-loop-energy-ring.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/Generic/Energy/EnergyWall01_01_Regular_Orange_Circle_Loop_500x500.webm",
+      "sha256": "ab050a99a30251cb9dc8c2cfaf866e4f8cba2579f9721d3f1ecf899b91b2c592",
+      "duration": 2.667
+    },
+    {
+      "id": "4th-level-wall-of-fire-walloffire-01-yellow-300x100",
+      "file": "assets/animations/4th-level-wall-of-fire-walloffire-01-yellow-300x100.webm",
+      "source": "https://raw.githubusercontent.com/Jules-Bens-Aa/JB2A_DnD5e/e930132102cbfa22a0ba964a3df73feb3412727a/Library/4th_Level/Wall_Of_Fire/WallOfFire_01_Yellow_300x100.webm",
+      "sha256": "a08eeb9d7b2d62c88da49b25a6f3ce1e921812dd34ce0575b2d69f910c23d12a",
+      "duration": 4.0,
+      "notes": "Re-encoded to VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-ice-knife-05ft",
+      "file": "assets/animations/blfx-ice-knife-05ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Ice_Knife_1_COLOR_1_05ft_600x400.webm",
+      "sha256": "ef55624c8117890b0182b0f1e2a1b87a234b0b797619b04d5f5287215945667d",
+      "duration": 1.833,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-ice-knife-15ft",
+      "file": "assets/animations/blfx-ice-knife-15ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Ice_Knife_1_COLOR_1_15ft_1000x400.webm",
+      "sha256": "fea64c7c139f1840e824d6b1797148d33791466a492da584d07cdfa4a551903d",
+      "duration": 1.833,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-ice-knife-30ft",
+      "file": "assets/animations/blfx-ice-knife-30ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Ice_Knife_1_COLOR_1_30ft_1600x400.webm",
+      "sha256": "6f01b69b5dd61f6f40ef88a677fcdf2eb424260890a2c0341356e538e1c94d09",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-ice-knife-60ft",
+      "file": "assets/animations/blfx-ice-knife-60ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Ice_Knife_1_COLOR_1_60ft_2800x400.webm",
+      "sha256": "5d1bc0aba667e8e4315cb12816d0ec87a8677cd2aa03e9f2b9b64ac5b35392de",
+      "duration": 2.166,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-ice-knife-90ft",
+      "file": "assets/animations/blfx-ice-knife-90ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Ice_Knife_1_COLOR_1_90ft_4000x400.webm",
+      "sha256": "0793f57d699ff3d8251b5e617b79b2eab2c84e59905172b42db6e68fc55cf31a",
+      "duration": 2.333,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-ice-shard-burst",
+      "file": "assets/animations/blfx-ice-shard-burst.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Shard_Explosion_1_Ice_COLOR_1_1200x1200.webm",
+      "sha256": "18e3017b7ef85a11ee00b82f32ffb2968aa71c8c1b3ae92b2b27f42924f501bc",
+      "duration": 2.333,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-chaos-bolt-30ft",
+      "file": "assets/animations/blfx-chaos-bolt-30ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Sorcerous_Burst_1_COLOR_1_30ft_1600x400.webm",
+      "sha256": "43d45aecd9d9641b5661cddefb6a6de12f18cd8f971f2d98cb0278a4fedbb1ee",
+      "duration": 1.133,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-chaos-bolt-05ft",
+      "file": "assets/animations/blfx-chaos-bolt-05ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Sorcerous_Burst_1_COLOR_1_05ft_600x400.webm",
+      "sha256": "b072c3ef00ff3615cd7c7bdfd5a15fafa4b574ad701a0f81e73fcd83268dae51",
+      "duration": 0.866,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-chaos-bolt-15ft",
+      "file": "assets/animations/blfx-chaos-bolt-15ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Sorcerous_Burst_1_COLOR_1_15ft_1000x400.webm",
+      "sha256": "e07bf622dd85da122516d96a2e2d1e5fc12bc7349c8bed29e0ddc2cd76790181",
+      "duration": 0.966,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-chaos-bolt-60ft",
+      "file": "assets/animations/blfx-chaos-bolt-60ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Sorcerous_Burst_1_COLOR_1_60ft_2800x400.webm",
+      "sha256": "6a5cee2182c938cd6424e7eb6bcbe72e73607a4601e76b85a8ab7459980a5dcd",
+      "duration": 1.4,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-chaos-bolt-90ft",
+      "file": "assets/animations/blfx-chaos-bolt-90ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/projectile/Projectile_Sorcerous_Burst_1_COLOR_1_90ft_4000x400.webm",
+      "sha256": "ebd930a6048abfba886e24edc3b1eb66464a35acd3a8090e4b2de9723792ffca",
+      "duration": 1.7,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-catapult-30ft",
+      "file": "assets/animations/blfx-catapult-30ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/06-ability/throw/rock/Rock_1_RANGE_COLOR_1_30ft_1600x400.webm",
+      "sha256": "ef995e6dfec0b4972ac64f71cc5a2b8a5903448718445abc42f78a9792f756e5",
+      "duration": 1.7,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-catapult-05ft",
+      "file": "assets/animations/blfx-catapult-05ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/06-ability/throw/rock/Rock_1_RANGE_COLOR_1_05ft_600x400.webm",
+      "sha256": "d7a05467fbb2f8bdbdf701701d7f2fae74861fe0b0706b4284f887c6eb4e65ed",
+      "duration": 1.366,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-catapult-15ft",
+      "file": "assets/animations/blfx-catapult-15ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/06-ability/throw/rock/Rock_1_RANGE_COLOR_1_15ft_1000x400.webm",
+      "sha256": "018ced5771652e67037d9a5c9c38080a6dc339caa019524d4ab76515f7a66726",
+      "duration": 1.5,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-catapult-60ft",
+      "file": "assets/animations/blfx-catapult-60ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/06-ability/throw/rock/Rock_1_RANGE_COLOR_1_60ft_2800x400.webm",
+      "sha256": "2fed874c0cffb610d1416da06e597340f743e6317e9e9033fa39610272ca3057",
+      "duration": 1.933,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-catapult-90ft",
+      "file": "assets/animations/blfx-catapult-90ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/06-ability/throw/rock/Rock_1_RANGE_COLOR_1_90ft_4000x400.webm",
+      "sha256": "305c2ab8acddbed72892e4c4c88b41cc902efd8563f31992f0413ebf0df4d65e",
+      "duration": 2.266,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-absorb-elements",
+      "file": "assets/animations/blfx-absorb-elements.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/cast/Cast_Elemental_1_Color_1_1200x1200.webm",
+      "sha256": "9a79aef5b5b9673dc83b0383f096707f82e09726990c567e179600d5178e4609",
+      "duration": 3.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-thunderwave",
+      "file": "assets/animations/blfx-thunderwave.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/square/Thunderwave_1_SQUARE_COLOR_1_1200x1200.webm",
+      "sha256": "76831df603cf1c89cfca40530171b41b01dc186450f46d10581846b605e6d5a7",
+      "duration": 1.2,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-thunder-impact",
+      "file": "assets/animations/blfx-thunder-impact.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Thunder_Impact_1_1200x1200.webm",
+      "sha256": "d691cf27c704b71cdce854fb38747a64734232f48bd080d9143268e4f5b11fbb",
+      "duration": 1.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-fire-impact",
+      "file": "assets/animations/blfx-fire-impact.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Fire_Impact_1_1200x1200.webm",
+      "sha256": "c956ef86a1217131046fe81f1b39bd1c38d406966e40907d8f396817f04e181d",
+      "duration": 1.366,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-throw-flame-30ft",
+      "file": "assets/animations/blfx-throw-flame-30ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/throw/Throw_Flame_1_RANGE_COLOR_1_30ft_1600x400.webm",
+      "sha256": "1d56789b98b187403b6ceaed5fcf75b9c397852c9f82488eec269816dbf369d5",
+      "duration": 2.233,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-scorcher-line",
+      "file": "assets/animations/blfx-scorcher-line.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/homebrew/fire/Shockwave_1_Fire_1_ORANGE_1200x1200.webm",
+      "sha256": "5c9066a5a36b6344698aca235a530a4dd8090c821e4f16635081aae7158e123d",
+      "duration": 3.033,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-frost-ray-30ft",
+      "file": "assets/animations/blfx-frost-ray-30ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_1_Frost_BLUE_RANGE_30ft_1600x400.webm",
+      "sha256": "086bcb360060afe80fdcff45a2ca17bcd19c5024c13bab35a8034afd9b0352e5",
+      "duration": 1.7,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-frost-ray-05ft",
+      "file": "assets/animations/blfx-frost-ray-05ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_1_Frost_BLUE_RANGE_05ft_600x400.webm",
+      "sha256": "5e83ee2fba363df25c47dd421189697215a63f687440958c02a920cbfe58153c",
+      "duration": 1.7,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-frost-ray-15ft",
+      "file": "assets/animations/blfx-frost-ray-15ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_1_Frost_BLUE_RANGE_15ft_1000x400.webm",
+      "sha256": "c79ad1e3df484440f61aa1f7def1fa97b22ab7e2c39e7570e0a6cd21ccb2a2a9",
+      "duration": 1.7,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-frost-ray-60ft",
+      "file": "assets/animations/blfx-frost-ray-60ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_1_Frost_BLUE_RANGE_60ft_2800x400.webm",
+      "sha256": "1475ccff700c007bc7e90f1918dcdac7daa14c6c7bf4f2fe47d143ffd76f2966",
+      "duration": 1.7,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-frost-ray-90ft",
+      "file": "assets/animations/blfx-frost-ray-90ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_1_Frost_BLUE_RANGE_90ft_4000x400.webm",
+      "sha256": "4d9fba55427937203cbc37e72ac2cc18861e919e8acbac5eccd19f195887126d",
+      "duration": 1.7,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-snowball-swarm",
+      "file": "assets/animations/blfx-snowball-swarm.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Ice_Frost_Snowflakes_CIRCLE_RADIUS_GROUND_1_COLOR_1_1200x1200.webm",
+      "sha256": "3ca218de55419a34f210207f9f778bc97df5b95f0be621ab01d64ffa6d15983f",
+      "duration": 4.5,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-ice-storm-loop",
+      "file": "assets/animations/blfx-ice-storm-loop.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Ice_Storm_1_LOOP_COLOR_1_1200x1200.webm",
+      "sha256": "87d34b6b915ac86c31afc7c51676fcfff5e80482382714ec6cb410863102d357",
+      "duration": 6.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-tidal-wave",
+      "file": "assets/animations/blfx-tidal-wave.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Wave_4_CIRCLE_COLOR_1_1200x1200.webm",
+      "sha256": "14f1b72bed50deb0e715ca5166ca223ea2589e68dc1a3f7d80d0d922cca3567c",
+      "duration": 4.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-psychic-impact",
+      "file": "assets/animations/blfx-psychic-impact.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Psychic_Impact_1_1200x1200.webm",
+      "sha256": "22ba9a88a326bb2d713ca034064b32ab7337c36d0832b0bdfdfdacbaf3c8b812",
+      "duration": 1.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-lightning-impact",
+      "file": "assets/animations/blfx-lightning-impact.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Lightning_Impact_1_1200x1200.webm",
+      "sha256": "d318ccf5923a16aec54a3af893f711027f7bacba94f052e8f433edcfc1adffb6",
+      "duration": 1.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-storm-sphere",
+      "file": "assets/animations/blfx-storm-sphere.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/homebrew/air/Storm_1_BLUE_ORANGE_1200x1200.webm",
+      "sha256": "1d81def375ff5bda628c173930465b7f151b7b926a07474832e9a2dfe2069e68",
+      "duration": 5.033,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-force-impact",
+      "file": "assets/animations/blfx-force-impact.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Force_Impact_1_COLOR_1_1200x1200.webm",
+      "sha256": "459639820e8d3865a09e3d5cd1aa523a3568b2edf847ffc3550f0178ace3466a",
+      "duration": 1.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-steel-wind",
+      "file": "assets/animations/blfx-steel-wind.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Slashing_Impact_1_COLOR_1_1200x1200.webm",
+      "sha256": "0f4048fadb3b7a9da71654c3d947951bd47cd9316ef8130636f15fc9c8cd9e02",
+      "duration": 0.666,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-sacred-flame",
+      "file": "assets/animations/blfx-sacred-flame.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Sacred_Flame_1_COLOR_1_1200x1200.webm",
+      "sha256": "ba7a4b15c247a140f1cd681f467f213968a4a53f71a5f1073330007bfe519965",
+      "duration": 2.4,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-holy-flare",
+      "file": "assets/animations/blfx-holy-flare.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/cast/Cast_Light_Flare_1_Center_COLOR_1_1200x1200.webm",
+      "sha256": "f9cb4ba87bc5452ed1cbb3086ab56fd7d2d8353b5b9bc20f5dd6cc6a38111e84",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-earth-burst",
+      "file": "assets/animations/blfx-earth-burst.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Boulder_Rock_Debris_Explosion_1_COLOR_1_1200x1200.webm",
+      "sha256": "ebe8fd70ad929423ee61a49b00e645ae8e3a6a5811f84a9ec414021dee2ee9fd",
+      "duration": 1.333,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-nature-aura",
+      "file": "assets/animations/blfx-nature-aura.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Aura_11_Nature_Plants_1_LOOP_COLOR_1_1200x1200.webm",
+      "sha256": "08e63fbe837b7f4d157344d101492e41daebb99ed038e31cec65c877b9f014f4",
+      "duration": 6.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-wind-aura",
+      "file": "assets/animations/blfx-wind-aura.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Aura_9_Air_Wind_2_Jump_LOOP_COLOR_1_1200x1200.webm",
+      "sha256": "53802c45c03804ef8cfd8118321fd5423abf3d2f4e3fcaf44bd78928e4317bb5",
+      "duration": 3.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-necrotic-impact",
+      "file": "assets/animations/blfx-necrotic-impact.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Necrotic_Impact_1_1200x1200.webm",
+      "sha256": "a94c4eee2fc9c4b1cb90ebcc12bc7f865bc914249394225a9a5dce6966d58834",
+      "duration": 1.2,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-enervation-30ft",
+      "file": "assets/animations/blfx-enervation-30ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_of_Enfeeblement_1_COLOR_1_RANGE_30ft_1600x400.webm",
+      "sha256": "1912d7d799662a523f5c4be4773c4f966ef3b3cfeffce51653ad8b56ce126d85",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-enervation-05ft",
+      "file": "assets/animations/blfx-enervation-05ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_of_Enfeeblement_1_COLOR_1_RANGE_05ft_600x400.webm",
+      "sha256": "8dc55ff1be2db8f6fe16839944dfbb915b4efd35adca558fac95cf11c108197b",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-enervation-15ft",
+      "file": "assets/animations/blfx-enervation-15ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_of_Enfeeblement_1_COLOR_1_RANGE_15ft_1000x400.webm",
+      "sha256": "bdf6c72f8dccadc23f3a0a91b7aae303c4fcec305cce9f94262c129e964fc5c1",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-enervation-60ft",
+      "file": "assets/animations/blfx-enervation-60ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_of_Enfeeblement_1_COLOR_1_RANGE_60ft_2800x400.webm",
+      "sha256": "ed0a8d024903c3d50b3025596574bcda3c637176e4e0e330f24a023c053a24c6",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-enervation-90ft",
+      "file": "assets/animations/blfx-enervation-90ft.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/range/ray/Ray_of_Enfeeblement_1_COLOR_1_RANGE_90ft_4000x400.webm",
+      "sha256": "bf05118113ce55046785826fadccd3d2529e03d39662b17476808ed6cb055c2f",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-vitriolic-sphere",
+      "file": "assets/animations/blfx-vitriolic-sphere.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Explosion_Liquid_Sphere_COLOR_1_1200x1200.webm",
+      "sha256": "5008650220646ab2b38b064a1333643feded702b7491b8a76f83e19ee9341835",
+      "duration": 3.5,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-acid-line",
+      "file": "assets/animations/blfx-acid-line.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/line/Breath_Weapon_1_Acid_LINE_1_COLOR_1_1200x400.webm",
+      "sha256": "aae418e7310a1f1bad81f075df84780018b9217c9d24878f869bff320f8740fb",
+      "duration": 5.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-poison-impact",
+      "file": "assets/animations/blfx-poison-impact.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Damage_Poison_Impact_1_1200x1200.webm",
+      "sha256": "d54b6438a98da0a916673002f08ad3a398d425c67168df09f1bafe7183f012d1",
+      "duration": 1.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-blink",
+      "file": "assets/animations/blfx-blink.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/cast/Blink_1_Gravity_CIRCLE_RADIUS_COLOR_1_1200x1200.webm",
+      "sha256": "454b61c6dd31f325a8aef896e4c35df7587ccbad7b53722086ea38debeda9240",
+      "duration": 2.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-primal-claw",
+      "file": "assets/animations/blfx-primal-claw.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/06-ability/claw/Claw_1_ON_TARGET_COLOR_1_1200x1200.webm",
+      "sha256": "8e86ce2e09ebfde909b1169549a65689fa609332a2bf65443e2e14f38da0889b",
+      "duration": 1.5,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-vitality",
+      "file": "assets/animations/blfx-vitality.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Aura_10_Vitality_1_LOOP_COLOR_1_1200x1200.webm",
+      "sha256": "e210e23bda3d5926a2fb9ca5263e741a4ee799e48eb749a675735bf44ba2973d",
+      "duration": 4.5,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-counterspell",
+      "file": "assets/animations/blfx-counterspell.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/cast/Cast_Counterspell_1_1200x1200.webm",
+      "sha256": "d4d9bc07a55b246e0de5332428e11a1d62a4b8093d370e082a3c1a55d92bc832",
+      "duration": 2.5,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-wall-light-ring",
+      "file": "assets/animations/blfx-wall-light-ring.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/impact/Ring_Rays_1_COLOR_1_1200x1200.webm",
+      "sha256": "cb307c7ae2ae66a9609165b3e48c8116c6fb3fa0ce4265d84df82b3ed1b11d81",
+      "duration": 1.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-earthbind",
+      "file": "assets/animations/blfx-earthbind.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/template/circle/Aura_3_Emanating_Inwards_Gravity_CIRCLE_RADIUS_LOOP_COLOR_1_1200x1200.webm",
+      "sha256": "3f8db51cce5b6aef101724f0a0d6a956e3694aadb6673e7d0e4667665f3b2e7a",
+      "duration": 4.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    },
+    {
+      "id": "blfx-charm",
+      "file": "assets/animations/blfx-charm.webm",
+      "source": "BLFX Assets Pack 01 catalogue: artwork/05-spell/cast/Charm_1_LOOP_COLOR_1_1200x1200.webm",
+      "sha256": "7d34e9499066cc3fdb400ad55da5d83ff96c6a49fd8154d3c71aebd4ac21c6d4",
+      "duration": 5.0,
+      "notes": "Boss Loot BLFX catalogue preview, re-encoded VP8 for browser playback. Keyed to transparent VP9 (yuva420p) for VTT overlay."
+    }
+  ],
+  "sourceRevision": "e930132102cbfa22a0ba964a3df73feb3412727a",
+  "additionalVariants": {
+    "index": "/spell-animation-index.mjs",
+    "delivery": "Unmodified spell videos streamed on demand from the same pinned JB2A source revision.",
+    "license": "CC BY-NC-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+  }
+}

@@ -1,10 +1,20 @@
+import {attackVisual} from './attack-visuals.mjs';
+import {hasHestiasFury,hestiaName} from './hestias-fury.mjs';
+import {nativeSpellDefinitions} from './native-spell-definitions.mjs';
+import {weaponProperties} from './weapon-properties.mjs';
 import {customSpellEffect} from './spell-rule-store.mjs';
-import {castCustomSpell,customZoneTriggers,expireCustomZones} from './custom-spells.mjs';
+import {castCustomSpell,customZoneTriggers,expireCustomZones,refreshFollowZones,flushPendingDamage} from './custom-spells.mjs';
+import {defaultSpellAnimation,resolveSpellAnimation,breathAnimation,spellVisualEvent,formRule} from './spell-animation-library.mjs';
+import {needsEndpoint} from './spell-shapes.mjs';
 import {awardDefeatXP} from "./encounter-rewards.mjs";
 import {crossesMapWall, mapFloor, mapLineClear, mapWalls} from "./map-walls.mjs";
-import {matchWeapon} from './rules-library.mjs';
-import {tokenSize,sizeRank,actorCells,containsCell,overlaps,spaceDistance,touchesArea} from './actor-space.mjs';
+import {tokenSize,sizeRank,actorCells,containsCell,overlaps,spaceDistance,touchesArea,creatureSize} from './actor-space.mjs';
 import {captureImpact, captureMessage, captureRoll, recordAction, withActionEvent} from "./action-events.mjs";
+import {modsOf, canReact, autoFailsSave, saveMode, expireTurnStatuses, endStatuses, syncStatusHp, conditionTable} from "./conditions.mjs";
+import {fireReactions} from "./reactions.mjs";
+import {dismissSummons, pruneDismissed} from "./summons.mjs";
+import {scaledTargets} from "./spell-scaling.mjs";
+export {modsOf, canReact, autoFailsSave, conditionTable};
 
 const storedDamageTypes = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 const error = (message) => {throw new Error(message);};
@@ -109,7 +119,7 @@ export const occupies = (actor) => !actor.dead && !actor.carriedBy && actor.x !=
 export const modifier = (score) => score == null ? null : Math.floor((score - 10) / 2);
 export const hasFeature = (actor,name) => actor.classRules?.edition === "2014" && actor.classRules.traits.includes(name);
 export const condition = (actor,name) => actor?.conditions?.find((effect) => effect.name === name);
-export const incapacitated = (actor) => Boolean(condition(actor,"Paralyzed") || condition(actor,"Asleep") || condition(actor,"Stunned"));
+export const incapacitated = (actor) => modsOf(actor).incapacitated;
 
 export function movementGroup(battle) {
   const first=initiativeActor(battle);
@@ -137,18 +147,28 @@ export function makeActor(record) {
   };
 }
 
-function removeCondition(actor,effect) {
+export function removeCondition(actor,effect) {
   if (actor.conditions) actor.conditions = actor.conditions.filter((entry) => entry !== effect);
+  if (effect?.dominated) {
+    delete actor.dominateOrder;
+    delete actor.dominateControl;
+  }
 }
 
-function endConcentration(battle,caster) {
+export function endConcentration(battle,caster) {
   if (!caster.concentration) return;
   log(battle,caster.name + " loses concentration on " + caster.concentration.name + ".");
   for (const actor of battle.actors) {
+    if (actor.conditions?.some((effect) => effect.concentration === caster.id && effect.dominated)) {
+      delete actor.dominateOrder;
+      delete actor.dominateControl;
+    }
     if (actor.conditions) actor.conditions = actor.conditions.filter((effect) => effect.concentration !== caster.id);
   }
   if (battle.spellZones) battle.spellZones = battle.spellZones.filter((zone) => zone.caster !== caster.id || zone.concentration===false);
+  dismissSummons(battle,caster.id,{concentrationOnly:true});
   delete caster.concentration;
+  for (const actor of battle.actors) syncStatusHp(actor);
 }
 
 export function startConcentration(battle,caster,name,duration) {
@@ -163,7 +183,8 @@ export function addCondition(battle,actor,name,duration,properties = {}) {
   }
   const effects = actor.conditions ??= [];
   effects.push({name,expires:(battle.elapsed ?? 0)+duration,...properties});
-  log(battle,actor.name + (name === "Dragon’s Breath" ? " gains Dragon’s Breath." : " is " + name.toLowerCase() + "."));
+  log(battle,actor.name + (properties.rollModifiers || properties.mods ? " gains "+name+"." : name === "Dragon’s Breath" ? " gains Dragon’s Breath." : " is " + name.toLowerCase() + "."));
+  syncStatusHp(actor);
   if (incapacitated(actor)) endConcentration(battle,actor);
 }
 
@@ -177,6 +198,8 @@ export function advanceTime(battle, seconds) {
     if (creature.bladesong?.expires <= battle.elapsed || incapacitated(creature)) delete creature.bladesong;
     if (creature.concentration?.expires <= battle.elapsed) endConcentration(battle,creature);
     if (creature.conditions) creature.conditions = creature.conditions.filter((effect) => effect.expires > battle.elapsed);
+    syncStatusHp(creature);
+    if (creature.summonExpires != null && creature.summonExpires <= battle.elapsed) dismissSummons(battle,null,{only:creature.id});
     if (creature.tempExpires && creature.tempExpires <= battle.elapsed) {
       creature.tempHp = 0;
       creature.agathys = null;
@@ -195,23 +218,42 @@ export function advanceTime(battle, seconds) {
       log(battle,"Aid expires for "+creature.name+".");
     }
   }
+  if (!battle.round) pruneDismissed(battle);
 }
 
-function resetActorTurn(battle,actor) {
-  customZoneTriggers(battle,actor,'start');
+// Repeat saving throws declared by conditions: `repeatSave` (ability) with `repeatWhen` 'end' (default), 'start' or 'damaged'.
+export function repeatConditionSaves(battle,actor,when,random = Math.random) {
+  for (const effect of [...(actor.conditions ?? [])]) {
+    if (!effect.repeatSave || (effect.repeatWhen ?? "end") !== when || !actorIsUp(actor)) continue;
+    const passed = withActionEvent(battle,actor,{action:effect.name+" saving throw",kind:"save"},() => {
+      const save = savingThrow(actor,effect.repeatSave,{random});
+      const passed = save.total >= effect.dc;
+      log(battle,actor.name + " repeats the save against " + effect.name + " — " + save.total + " vs DC " +
+        effect.dc + (passed ? ", succeeds." : ", fails."));
+      return passed;
+    });
+    if (passed) removeCondition(actor,effect);
+  }
+}
+
+function resetActorTurn(battle,actor,random = Math.random) {
   actor.dodging=false;actor.disengaged=false;actor.reactionUsed=false;actor.steadyAim=false;
+  flushPendingDamage(battle,actor,'start',random);
+  if (expireTurnStatuses(battle.actors,actor,'start',battle.round)) for (const creature of battle.actors) syncStatusHp(creature);
+  customZoneTriggers(battle,actor,'start',undefined,random);
+  repeatConditionSaves(battle,actor,'start',random);
   for(const creature of battle.actors) {
     if(creature.slowedBy===actor.id) creature.slowedBy=null;
     if(creature.helped?.helper===actor.id) delete creature.helped;
   }
 }
-function resetTurn(battle) {
+function resetTurn(battle,random = Math.random) {
   const actor=initiativeActor(battle);if(!actor) return;
   Object.assign(battle,freshTurn(battle.earlyMovement?.[actor.id] ?? 0));
   battle.sharedTurns={};battle.sharedEnded={};
-  resetActorTurn(battle,actor);
+  resetActorTurn(battle,actor,random);
   for(const member of sharedTurnGroup(battle)) if(member.id!==actor.id) {
-    resetActorTurn(battle,member);
+    resetActorTurn(battle,member,random);
     battle.sharedTurns[member.id]=freshTurn(battle.earlyMovement?.[member.id] ?? 0);
   }
   delete battle.earlyMovement;
@@ -223,6 +265,7 @@ export function startInitiative(battle, random = Math.random, participantIds = n
   const ready = battle.actors.filter((actor) => occupies(actor) && actor.side !== "neutral" &&
     (!participantIds || participantIds.has(actor.id)));
   if (ready.length < 2) error("Place at least two tokens on the grid.");
+  battle.combatId=crypto.randomUUID();
   const scores = ready.map((actor) => {
     const roll = withActionEvent(battle,actor,{action:"Initiative",kind:"initiative"},
       () => d20(actor.initiative, {random,label:"Initiative"}));
@@ -235,7 +278,7 @@ export function startInitiative(battle, random = Math.random, participantIds = n
   battle.turn = 0;
   battle.deathRolled = false;
   delete battle.earlyMovement;
-  resetTurn(battle);
+  resetTurn(battle,random);
   log(battle, "Initiative — " + scores.map((actor) => actor.name + " " + actor.initiativeRoll).join(", ") + ".");
   return currentActor(battle);
 }
@@ -274,18 +317,14 @@ export function endTurn(battle, random = Math.random, selected = currentActor(ba
     for (const creature of battle.actors) {
       if (creature.conditions) creature.conditions = creature.conditions.filter((effect) =>
         effect.untilTurn !== actor.id || effect.untilRound > battle.round);
+      if (creature.dominateControl?.untilActor === actor.id && creature.dominateControl.untilRound <= battle.round) {
+        delete creature.dominateControl;
+        log(battle, "Total control over " + creature.name + " ends.");
+      }
     }
-    for (const effect of actor.conditions ?? []) {
-      if (!effect.repeatSave || !actorIsUp(actor)) continue;
-      const passed = withActionEvent(battle,actor,{action:effect.name+" saving throw",kind:"save"},() => {
-        const save = savingThrow(actor,effect.repeatSave,{random});
-        const passed = save.total >= effect.dc;
-        log(battle,actor.name + " repeats the save against " + effect.name + " — " + save.total + " vs DC " +
-          effect.dc + (passed ? ", succeeds." : ", fails."));
-        return passed;
-      });
-      if (passed) removeCondition(actor,effect);
-    }
+    repeatConditionSaves(battle,actor,"end",random);
+    flushPendingDamage(battle,actor,'end',random);
+    if (expireTurnStatuses(battle.actors,actor,'end',battle.round)) for (const creature of battle.actors) syncStatusHp(creature);
     if (actor.concentration?.bolt && budget.action && budget.action !== "witch-bolt") endConcentration(battle,actor);
     actor.mocked = false;
     for (const creature of battle.actors) {
@@ -324,7 +363,7 @@ export function endTurn(battle, random = Math.random, selected = currentActor(ba
     }
     if (next && !next.dead && !battle.sharedEnded?.[next.id]) {
       battle.deathRolled = false;
-      resetTurn(battle);
+      resetTurn(battle,random);
       log(battle, "Round " + battle.round + " · " + next.name + "’s turn.");
       return next;
     }
@@ -344,9 +383,17 @@ export function endInitiative(battle) {
   log(battle, "Initiative ended.");
 }
 
-export const speedOf = (actor) => incapacitated(actor) || actor.steadyAim ? 0 :
-  Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0))*(actor.carrying ? .5 : 1);
-export const armorClass = (actor) => actor.ac+(actor.bladesong ? Math.max(1,actor.ability.int ?? 0) : 0);
+export function speedOf(actor) {
+  const mods = modsOf(actor);
+  if (mods.incapacitated || mods.speedZero || actor.steadyAim) return 0;
+  let speed = Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0)+mods.speedBonus);
+  if (mods.speedMultiplier !== 1) speed = Math.floor(speed*mods.speedMultiplier/5)*5;
+  return speed*(actor.carrying ? .5 : 1);
+}
+export function armorClass(actor) {
+  const mods = modsOf(actor);
+  return Math.max(actor.ac,mods.acBase)+(actor.bladesong ? Math.max(1,actor.ability.int ?? 0) : 0)+mods.acBonus;
+}
 export const movementBudget=(battle,actor)=>speedOf(actor)+(canTakeTurn(battle,actor) ? turnView(battle,actor).dash : 0);
 export const moveLeft=(battle,actor)=>battle.sharedEnded?.[actor.id] ? 0 : Math.max(0,movementBudget(battle,actor)-
   (canTakeTurn(battle,actor) ? turnView(battle,actor).spent : battle.earlyMovement?.[actor.id] ?? 0));
@@ -361,6 +408,7 @@ export function placeToken(battle, actor, x, y, board) {
 function footprintClear(battle,actor,x,y,board) {
   const cells=actorCells({...actor,x,y});
   return cells.every(c=>c.x>=0 && c.y>=0 && c.x<board.cols && c.y<board.rows && mapFloor(board,c.x,c.y,battle) && battle.terrain[keyAt(c.x,c.y)]!=='wall' &&
+    !battle.spellZones?.some(zone=>zone.blocksMovement&&zone.cells?.includes(keyAt(c.x,c.y))) &&
     (c.x===x || !crossesMapWall(board,{x:c.x-1,y:c.y},c,battle)) && (c.y===y || !crossesMapWall(board,{x:c.x,y:c.y-1},c,battle)));
 }
 export function canStand(battle,actor,x,y,board) {
@@ -437,7 +485,7 @@ export function exploreToken(battle, actor, x, y, board, stopAt) {
     const previousSquare={x:actor.x,y:actor.y};actor.x = step.x; actor.y = step.y;syncCarriedBody(battle,actor);
     travelled.push({x:step.x,y:step.y});
     distance = step.cost;
-    customZoneTriggers(battle,actor,'enter',previousSquare);if(!actorIsUp(actor))break;
+    customZoneTriggers(battle,actor,'enter',previousSquare);refreshFollowZones(battle,actor,board);if(!actorIsUp(actor))break;
     // A route can cross friendly squares. The token must stop in a free square.
     if (battle.actors.some((other) => other.id !== actor.id && occupies(other) && overlaps({...actor,...step},other))) continue;
     if (stopAt(actor)) break;
@@ -477,7 +525,7 @@ function walkRemaining(battle, actor, board) {
     const disengaged = currentActor(battle)?.id === actor.id && actor.disengaged;
     const foe = !disengaged && !walk.noOpportunity && battle.actors.find((other) => actorIsUp(other) && occupies(other) &&
       !incapacitated(other) && !charmedBy(other,actor) && !condition(actor,"Invisible") &&
-      other.side !== actor.side && other.side !== "neutral" && !other.reactionUsed && !walk.passed.includes(other.id) &&
+      other.side !== actor.side && other.side !== "neutral" && canReact(other) && !walk.passed.includes(other.id) &&
       reactionWeapons(other).some((weapon) => {
         const reach = weapon.reach || 5;
         return distanceFt(actor,other) <= reach && distanceFt({...actor,...next},other) > reach && canSee(battle,other,actor,board);
@@ -488,7 +536,7 @@ function walkRemaining(battle, actor, board) {
       return;
     }
     const previousSquare={x:actor.x,y:actor.y};actor.x = next.x;
-    actor.y = next.y;customZoneTriggers(battle,actor,'enter',previousSquare);syncCarriedBody(battle,actor);
+    actor.y = next.y;customZoneTriggers(battle,actor,'enter',previousSquare);syncCarriedBody(battle,actor);refreshFollowZones(battle,actor,board);
     walk.index += 1;
     walk.passed = [];
     checkSpellTethers(battle,board);
@@ -551,9 +599,29 @@ export function resolveOpportunity(battle, attackIndex, random = Math.random, bo
   walkRemaining(battle,actor,board);
 }
 
-export function turnAction(battle, actor, action) {
+// Spend the action to break free of a condition that declares `escape: {ability, dc}` (Web, Entangle, grapples).
+export function escapeCondition(battle,actor,random = Math.random) {
+  const effect = (actor.conditions ?? []).find((entry) => entry.escape);
+  if (!effect) error("Nothing is holding this character.");
+  return withActionEvent(battle,actor,{action:"Break free · "+effect.name,kind:"save"},() => {
+    const ability = effect.escape.ability ?? "str";
+    const roll = d20(actor.ability?.[ability] ?? 0,{random,label:actor.name+" · "+ability.toUpperCase()+" check"});
+    const freed = roll.total >= effect.escape.dc;
+    log(battle,actor.name+" tries to break free of "+effect.name+" — "+roll.total+" vs DC "+effect.escape.dc+(freed ? ", succeeds." : ", fails."));
+    if (freed) removeCondition(actor,effect);
+    return freed;
+  });
+}
+
+export function turnAction(battle, actor, action, random = Math.random) {
   battle=turnView(battle,actor);
   assertTurn(battle, actor);
+  if (action === "escape") {
+    if (battle.action) error("This token has used its action.");
+    battle.action = "escape";
+    escapeCondition(battle,actor,random);
+    return;
+  }
   if (action === "stand") {
     if (!actor.prone) error("This token is already standing.");
     const cost = speedOf(actor) / 2;
@@ -600,10 +668,13 @@ function damageTrait(records,type,properties) {
 
 export function applyDamage(battle, actor, rawDamage, type, critical = false, random = Math.random, source, properties = {}) {
   let damage = Math.max(0, rawDamage);
-  if (type && damageTrait(actor.immune,type,properties)) damage = 0;
+  // A reaction such as Absorb Elements may change the creature's resistances before the damage lands.
+  if (damage > 0 && actor.reactions?.length && !properties.noReaction) fireReactions(battle,'damage',{reactor:actor,source,damageType:type,amount:damage,properties,map:properties.map},random);
+  const mods = modsOf(actor);
+  if (type && (damageTrait(actor.immune,type,properties) || mods.immune.includes(type) || String(type).toLowerCase() === "fire" && actor.side === "party" && hasHestiasFury(actor))) damage = 0;
   else if (type) {
-    if (damageTrait(actor.resist,type,properties)) damage = Math.floor(damage / 2);
-    if (damageTrait(actor.vulnerable,type,properties)) damage *= 2;
+    if (damageTrait(actor.resist,type,properties) || mods.resist.includes(type) || mods.resistAll) damage = Math.floor(damage / 2);
+    if (damageTrait(actor.vulnerable,type,properties) || mods.vulnerable.includes(type)) damage *= 2;
   }
   const absorbed = Math.min(actor.tempHp, damage);
   actor.tempHp -= absorbed;
@@ -625,9 +696,11 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false, ra
   if (damage) {
     const asleep = condition(actor,"Asleep");
     if (asleep) removeCondition(actor,asleep);
+    endStatuses(actor,'onDamaged');
     if (source) {
       for (const effect of actor.conditions ?? []) {
-        if (effect.name === "Charmed" && battle.actors.find(({id}) => id === effect.source)?.side === source.side) {
+        // Dominate-style charms use repeatWhen:'damaged' for a Wis save; leave those to repeatConditionSaves.
+        if (effect.name === "Charmed" && effect.repeatWhen !== "damaged" && battle.actors.find(({id}) => id === effect.source)?.side === source.side) {
           removeCondition(actor,effect);
         }
       }
@@ -642,9 +715,13 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false, ra
       }
     }
   }
+  if (damage && actorIsUp(actor)) repeatConditionSaves(battle,actor,'damaged',random);
   if(actor.dead && before>0){actor.defeatedAt=Date.now();actor.finalBlow=source?.id;awardDefeatXP(battle,actor,source,log);}
   if((actor.dead || actor.hp===0) && actor.carrying){const body=battle.actors.find(body=>body.id===actor.carrying);if(body){body.carriedBy=null;body.x=actor.x;body.y=actor.y;}actor.carrying=null;}
-  return {damage, absorbed, defeated:actor.dead, unconscious:!actor.dead && actor.hp === 0 && before > 0};
+  const outcome={damage,absorbed,defeated:actor.dead,unconscious:!actor.dead && actor.hp===0 && before>0};
+  captureImpact(battle,actor,{amount:damage,type,critical,defeated:outcome.defeated,absorbed});
+  if (damage > 0 && actor.reactions?.length && source && !properties.noReaction) fireReactions(battle,'damaged',{reactor:actor,source,damageType:type,amount:damage,properties,map:properties.map},random);
+  return outcome;
 }
 
 export function heal(actor, amount) {
@@ -664,6 +741,8 @@ export function fallingDamage(battle,actor,height,{slowFall=true}={},random=Math
   if(!actorIsUp(actor)) error("Choose a conscious creature.");
   if(battle.movement || battle.classReaction) error("Resolve the pending reaction first.");
   return withActionEvent(battle,actor,{action:"Fall · "+height+" ft",kind:"fall"},()=>{
+    if (actor.reactions?.length) fireReactions(battle,'falling',{reactor:actor,height},random);
+    if (modsOf(actor).negateFall) {log(battle,actor.name+" falls gently and takes no damage.");return {damage:0};}
     const dice=Math.min(20,Math.floor(height/10));
     if(!dice) {log(battle,actor.name+" falls less than 10 ft without falling damage.");return {damage:0};}
     const roll=rollDice(dice+"d6",{random,label:"Falling damage"});
@@ -735,7 +814,6 @@ function validTarget(attacker, target, allowDown = true) {
 
 function recordDamage(battle, target, amount, type, breakdown, critical = false, random = Math.random, source, properties = {}) {
   const outcome = applyDamage(battle,target,amount,type,critical,random,source,properties);
-  captureImpact(battle,target,{amount:outcome.damage,type,critical,defeated:outcome.defeated,absorbed:outcome.absorbed});
   log(battle, target.name + " takes " + outcome.damage + (type ? " " + type : "") + " damage" +
     " (" + breakdown + (outcome.absorbed ? "; " + outcome.absorbed + " absorbed by temp HP" : "") + ")" +
     (outcome.defeated ? " and is defeated." : outcome.unconscious ? " and falls unconscious." : "."));
@@ -747,16 +825,30 @@ function damageLog(battle, target, expression, type, critical, random, source) {
   return recordDamage(battle,target,roll.total,type,roll.breakdown,critical,random,source,{magical:true,spell:true});
 }
 
-export function savingThrow(actor, ability, {extra = 0, advantage = false, random = Math.random} = {}) {
+export function savingThrow(actor, ability, {extra = 0, advantage = false, disadvantage = false, random = Math.random} = {}) {
   let bonus = actor.saves[ability] ?? actor.ability[ability] ?? 0;
   if (ability === "str" && actor.astralArms) bonus += Math.max(0,(actor.ability.wis ?? 0)-(actor.ability.str ?? 0));
-  const result = d20(bonus + extra,{advantage,random,label:actor.name+" · "+(ability ? ability.toUpperCase()+" save" : "Death save")});
+  const mods = modsOf(actor), mode = ability ? saveMode(actor,ability,mods) : {};
+  bonus += mods.saveBonus[ability] ?? 0;
+  const result = d20(bonus + extra,{advantage:advantage || Boolean(mode.advantage),disadvantage:disadvantage || Boolean(mode.disadvantage),random,label:actor.name+" · "+(ability ? ability.toUpperCase()+" save" : "Death save")});
   addInspiration(actor,result,random);
+  addSpellRollModifiers(actor,result,'save',random);
   if (actor.sliver) {
     actor.sliver = null;
     const penalty = rollDice("1d4",{random});
     result.total -= penalty.total;
     result.breakdown += " − Mind Sliver " + penalty.total;
+  }
+  return result;
+}
+
+export function addSpellRollModifiers(actor,result,kind,random=Math.random){
+  const applied=new Set();
+  for(const effect of actor.conditions??[]){
+    if(!effect.rollModifiers?.[kind]||applied.has(effect.name))continue;
+    applied.add(effect.name);
+    const roll=rollDice(effect.rollModifiers[kind],{random,label:effect.name+' · '+kind+' modifier'});
+    result.total+=roll.total;result.breakdown+=' '+(roll.total<0?'−':'+')+' '+effect.name+' '+Math.abs(roll.total);
   }
   return result;
 }
@@ -770,14 +862,18 @@ export function addInspiration(actor,result,random = Math.random) {
   delete actor.inspirationArmed;
 }
 
-function attackMode(battle, attacker, target, options, ranged, distance) {
+export function attackMode(battle, attacker, target, options, ranged, distance) {
   const obscured = battle.spellZones?.length > 0 && options.map;
   const nearby = ranged && battle.actors.some((other) => other.side !== attacker.side && other.side !== "neutral" &&
     actorIsUp(other) && !incapacitated(other) && !condition(attacker,"Invisible") && occupies(other) && distanceFt(attacker, other) <= 5 &&
     (!obscured || canSee(battle,other,attacker,options.map)));
+  const own = modsOf(attacker), theirs = modsOf(target);
   return {
+    // Auto-crits against paralyzed / unconscious targets are implemented but opt-in (battle.houseRules.autoCrit): the app's default is natural-20-only crits.
+    autoCrit: Boolean(battle.houseRules?.autoCrit) && distance <= 5 && theirs.autoCritNear,
     advantage: Boolean(options.mode === "advantage" || attacker.steadyAim || target.helped?.side === attacker.side ||
       condition(attacker,"Invisible") || incapacitated(target) || condition(target,"Stunned") || target.hp === 0 ||
+      own.attackAdv || theirs.attackedAdv || distance <= 5 && theirs.attackedNearAdv || distance > 5 && theirs.attackedFarAdv ||
       (obscured && !canSee(battle,target,attacker,options.map)) ||
       ((target.prone || target.hp === 0) && distance <= 5) ||
       (attacker.packTactics && battle.actors.some((other) => other.id !== attacker.id && other.side === attacker.side &&
@@ -785,7 +881,8 @@ function attackMode(battle, attacker, target, options, ranged, distance) {
     disadvantage: Boolean(options.mode === "disadvantage" || nearby || attacker.mocked || condition(target,"Invisible") ||
       (obscured && !canSee(battle,attacker,target,options.map)) ||
       (target.dodging && actorIsUp(target) && speedOf(target) > 0) ||
-      ((target.prone || target.hp === 0 || condition(target,"Asleep")) && distance > 5) || attacker.prone),
+      ((target.prone || target.hp === 0 || condition(target,"Asleep")) && distance > 5) || attacker.prone ||
+      own.attackDis || theirs.attackedDis || distance <= 5 && theirs.attackedNearDis || distance > 5 && theirs.attackedFarDis),
   };
 }
 
@@ -833,6 +930,31 @@ export function canSee(battle,from,to,map) {
   return false;
 }
 
+/** First spell zone whose cells the line from→to enters, matching `predicate`, or null. */
+export function zoneAlongLine(battle, from, to, predicate) {
+  if (!battle.spellZones?.length || from.x === to.x && from.y === to.y) return null;
+  const zones = battle.spellZones.filter(predicate);
+  if (!zones.length) return null;
+  const blocked = obscuredCells(zones);
+  let {x, y} = from;
+  const dx = Math.abs(to.x - x), dy = -Math.abs(to.y - y);
+  const sx = Math.sign(to.x - x), sy = Math.sign(to.y - y);
+  let error = dx + dy;
+  while (x !== to.x || y !== to.y) {
+    const next = 2 * error;
+    if (next >= dy) { error += dy; x += sx; }
+    if (next <= dx) { error += dx; y += sy; }
+    const here = keyAt(x, y);
+    if (blocked.has(here)) return zones.find((zone) => zone.cells?.includes(here)) ?? null;
+  }
+  return null;
+}
+
+/** Wind Wall and similar: ordinary ranged weapon projectiles through the zone auto-miss. */
+export function rangedBlockedByZone(battle, from, to) {
+  return zoneAlongLine(battle, from, to, (zone) => zone.blocksRanged);
+}
+
 export function rollStrike(battle, attacker, target, weapon, options = {}, random = Math.random) {
   battle=turnView(battle,attacker);
   assertTurn(battle, attacker);
@@ -861,7 +983,8 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
   const distance = distanceFt(attacker, target);
   const ranged = !!weapon.normalRange;
   if (distance > (ranged ? weapon.longRange || weapon.normalRange : weapon.reach || 5)) error("The target is out of range.");
-  if (options.cover === "full" || !lineClear(battle,attacker,target,options.map)) error("Full cover blocks the attack.");
+  if (options.cover === "full" || !lineClear(battle,attacker,target,options.map) ||
+      zoneAlongLine(battle,attacker,target,(zone)=>zone.blocksMovement)) error("Full cover blocks the attack.");
   if (bonusStrike) {
     if (battle.flurry && !options.kiFueled) battle.flurry -= 1;
     else battle.bonusUsed = true;
@@ -874,25 +997,66 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
 }
 
 function resolveWeaponRoll(battle, attacker, target, weapon, options, random) {
-  if(!weapon.finesse && matchWeapon(weapon.baseName ?? weapon.name)?.property?.includes('F')) weapon={...weapon,finesse:true};
+  weapon=weaponProperties(weapon);
   if(attacker.classRules?.unarmoredMonk && (weapon.monkWeapon || weapon.unarmed)) {
     const dice=diceTerms(weapon.damage)?.filter(term=>term.faces);
     if(dice?.length===1 && dice[0].count===1 && dice[0].sign===1 && attacker.classRules.martialDie>dice[0].faces) {
       weapon={...weapon,damage:weapon.damage.replace(/\d*d\d+/i,'1d'+attacker.classRules.martialDie)};
     }
   }
-  return withActionEvent(battle,attacker,{action:weapon.name,kind:"attack",target:target.name,targetActor:target.id},
+  return withActionEvent(battle,attacker,{action:weapon.name,kind:"attack",target:target.name,targetActor:target.id,...attackVisual(weapon,attacker,target,distanceFt(attacker,target))},
     () => weaponRoll(battle,attacker,target,weapon,options,random));
+}
+
+export function sneakAttackStatus(battle,attacker,target,weapon,options={},mode){
+  weapon=weaponProperties(weapon);
+  const dice=attacker.classRules?.sneakDice??Math.ceil((attacker.classRules?.levels?.Rogue??0)/2);
+  const turnKey=(battle.combatId?battle.combatId+'|':'')+battle.round+'|'+(options.reaction?initiativeActor(battle)?.id:currentActor(turnView(battle,attacker))?.id);
+  const allyNearby=Boolean(target&&battle.actors.some(ally=>ally.id!==attacker.id&&ally.id!==target.id&&ally.side===attacker.side&&ally.side!==target.side&&actorIsUp(ally)&&!incapacitated(ally)&&occupies(ally)&&distanceFt(ally,target)<=5));
+  const ranged=Boolean(weapon.normalRange);
+  mode??=target?attackMode(battle,attacker,target,options,ranged,distanceFt(attacker,target)):{};
+  const reason=!dice?'This character has no Sneak Attack.':!target?'Choose a target.':weapon.spellAttack||!(weapon.finesse||weapon.rangedWeapon||ranged&&!weapon.thrown)?'Requires a finesse weapon or ranged weapon.':attacker.sneakTurn===turnKey?'Already used on this turn.':mode.disadvantage&&!mode.advantage?'Disadvantage prevents Sneak Attack.':!allyNearby&&!(mode.advantage&&!mode.disadvantage)?'Needs advantage or an active ally within 5 ft of the target.':'';
+  return {eligible:!reason,reason,dice,turnKey,allyNearby};
+}
+
+// Extra damage declared by statuses: Divine Favor / smites (`riders` on the attacker) and Hex / Hunter's Mark (`markRiders` on the target).
+export function applyAttackRiders(battle,attacker,target,{weapon,ranged=false,spell=false},critical,random) {
+  const kind = spell ? "spell" : ranged ? "ranged" : "melee";
+  const riders = [...modsOf(attacker).riders.map((rider) => ({rider,holder:attacker})),
+    ...modsOf(target).markRiders.filter(({entry}) => entry.source === attacker.id).map((rider) => ({rider,holder:target}))];
+  for (const {rider,holder} of riders) {
+    const when = rider.when ?? "weapon";
+    if (when === "weapon" && spell || when === "melee" && kind !== "melee" || when === "spell" && !spell || !actorIsUp(target)) continue;
+    const type = rider.type === "weapon" ? weapon?.type : rider.type === "triggering" ? rider.entry.triggerType ?? weapon?.type : rider.type;
+    const roll = rollDice(rider.formula,{doubleDice:critical,random,label:rider.entry.name+" damage"});
+    recordDamage(battle,target,roll.total,type,rider.entry.name+" "+roll.breakdown,critical,random,attacker,{magical:true,spell:true});
+    if (rider.consume) removeCondition(holder,rider.entry);
+  }
 }
 
 function weaponRoll(battle, attacker, target, weapon, options, random) {
   const distance = distanceFt(attacker,target);
   const ranged = Boolean(weapon.normalRange);
 
+  // Wind Wall etc.: ordinary projectiles through the wall are deflected (auto-miss).
+  const deflect = ranged && !weapon.spellAttack && rangedBlockedByZone(battle, attacker, target);
+  if (deflect) {
+    breakInvisibility(battle, attacker);
+    attacker.steadyAim = false;
+    attacker.mocked = false;
+    log(battle, attacker.name + " · " + weapon.name + " vs " + target.name + " — deflected by " + deflect.name + ".");
+    recordAction(battle, attacker, {
+      action: weapon.name, target: target.name, outcome: "Miss", blocked: true,
+      messages: [deflect.name + " deflects the projectile."],
+    });
+    return {hit: false, critical: false, roll: {total: 0, breakdown: "deflected", kept: 0}, damage: null};
+  }
+
   const mode = attackMode(battle, attacker, target, options, ranged, distance);
   mode.disadvantage ||= ranged && distance > weapon.normalRange;
   const roll = d20(weapon.bonus, {...mode, random,label:"Attack roll"});
   addInspiration(attacker,roll,random);
+  addSpellRollModifiers(attacker,roll,'attack',random);
   if (hasFeature(attacker,"Focused Aim") && roll.kept!==1 && roll.kept!==20 && options.focusedAim>0) {
     const needed=Math.ceil((armorClass(target)+(Number(options.cover)||0)-roll.total)/2);
     const maximum=Math.min(3,Number(options.focusedAim),attacker.resources?.ki?.current ?? 0);
@@ -920,8 +1084,15 @@ function weaponRoll(battle, attacker, target, weapon, options, random) {
   attacker.steadyAim = false;
   breakInvisibility(battle,attacker);
   attacker.mocked = false;
-  const hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= armorClass(target) + (Number(options.cover) || 0));
-  const critical = hit && roll.kept === 20;
+  let hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= armorClass(target) + (Number(options.cover) || 0));
+  // Reactions such as Shield can turn a hit into a miss before damage is rolled.
+  if (hit && roll.kept !== 20 && target.reactions?.length) {
+    fireReactions(battle,'hit',{reactor:target,source:attacker,attackTotal:roll.total,cover:Number(options.cover) || 0,map:options.map,weapon},random);
+    hit = roll.kept === 20 || (roll.kept !== 1 && roll.total >= armorClass(target) + (Number(options.cover) || 0));
+  }
+  if (hit && roll.kept !== 20 && deflectMirrorImage(battle,target,random)) hit = false;
+  endStatuses(target,'onAttacked');endStatuses(attacker,'onAttack');
+  const critical = hit && (roll.kept === 20 || Boolean(mode.autoCrit));
   let damage;
   let prone;
   log(battle, attacker.name + " · " + weapon.name + " vs " + target.name + " — " + roll.breakdown + " = " + roll.total +
@@ -931,19 +1102,14 @@ function weaponRoll(battle, attacker, target, weapon, options, random) {
     const raw = rollDice(weapon.damage,{doubleDice:critical,random,label:"Damage"});
     let totalDamage = raw.total;
     let breakdown = raw.breakdown;
-    const turnKey = battle.round+"|"+currentActor(battle)?.id;
-    const allyNearby = battle.actors.some((ally) => ally.id !== attacker.id && ally.id!==target.id && ally.side === attacker.side && ally.side!==target.side &&
-      actorIsUp(ally) && !incapacitated(ally) && occupies(ally) && distanceFt(ally,target) <= 5);
-    const disadvantaged = mode.disadvantage && !mode.advantage;
-    const sneakEligible = attacker.classRules?.sneakDice && (weapon.finesse || ranged) && attacker.sneakTurn !== turnKey &&
-      !disadvantaged && (mode.advantage && !mode.disadvantage || allyNearby);
-    if (sneakEligible) {
-      const sneak = rollDice(attacker.classRules.sneakDice+"d6",{doubleDice:critical,random,label:"Sneak Attack"});
+    const sneakStatus=sneakAttackStatus(battle,attacker,target,weapon,options,mode);
+    if (sneakStatus.eligible) {
+      const sneak = rollDice(sneakStatus.dice+"d6",{doubleDice:critical,random,label:"Sneak Attack"});
       totalDamage += sneak.total;
       breakdown += " + Sneak Attack "+sneak.breakdown;
-      attacker.sneakTurn = turnKey;
-      log(battle,attacker.name+" adds Sneak Attack"+(allyNearby ? " — an ally is within 5 ft of "+target.name : " with advantage")+".");
-    }
+      attacker.sneakTurn = sneakStatus.turnKey;
+      log(battle,attacker.name+" adds Sneak Attack"+(sneakStatus.allyNearby ? " — an ally is within 5 ft of "+target.name : " with advantage")+".");
+    }else if(sneakStatus.dice)log(battle,'Sneak Attack not applied: '+sneakStatus.reason);
     if (ranged && !weapon.spellAttack && hasFeature(target,"Deflect Missiles") && !target.reactionUsed && !incapacitated(target)) {
       const bonus=(target.ability.dex ?? 0)+(target.classRules.levels.Monk ?? 0);
       const reduction = rollDice("1d10"+(bonus>=0 ? "+" : "")+bonus,{random,label:"Deflect Missiles"}).total;
@@ -960,7 +1126,8 @@ function weaponRoll(battle, attacker, target, weapon, options, random) {
       log(battle,target.name+" uses Uncanny Dodge to halve the attack’s damage.");
     }
     damage = recordDamage(battle,target,totalDamage,weapon.type,breakdown,critical,random,attacker,
-      {attack:true,magical:weapon.magical || weapon.spellAttack || weapon.unarmed && hasFeature(attacker,"Ki-Empowered Strikes"),silvered:weapon.silvered,adamantine:weapon.adamantine});
+      {attack:true,magical:weapon.magical || weapon.spellAttack || weapon.unarmed && hasFeature(attacker,"Ki-Empowered Strikes"),silvered:weapon.silvered,adamantine:weapon.adamantine,map:options.map});
+    applyAttackRiders(battle,attacker,target,{weapon,ranged},critical,random);
     if (options.stun && actorIsUp(target) && attacker.resources.ki.current>=1) {
       attacker.resources.ki.current -= 1;
       if(!options.bonusStrike && !options.reaction) battle.kiAction=true;
@@ -986,38 +1153,11 @@ function weaponRoll(battle, attacker, target, weapon, options, random) {
   return {roll, hit, critical};
 }
 
-const spellEffects = {
-  "vicious mockery": {range:60, save:"wis", type:"psychic", faces:4, mock:true, sight:true},
-  "sacred flame": {range:60, save:"dex", type:"radiant", faces:8, ignoresCover:true, sight:true},
-  "poison spray": {range:10, save:"con", type:"poison", faces:12},
-  "fire bolt": {range:120, attack:true, type:"fire", faces:10},
-  "ray of frost": {range:60, attack:true, type:"cold", faces:8, slow:true},
-  "eldritch blast": {range:120, attack:true, type:"force", faces:10, beams:true},
-  "mind sliver": {range:60, save:"int", type:"psychic", faces:6, sliver:true},
-  "healing word": {range:60, heal:true, level:1, faces:4, bonus:true, exploration:true},
-  "cure wounds": {range:5, heal:true, level:1, faces:8, exploration:true},
-  "false life": {level:1, self:true, temporary:true, exploration:true},
-  "armor of agathys": {level:1, self:true, temporary:true, retaliation:true, exploration:true},
-  "misty step": {level:2, range:30, bonus:true, teleport:true, exploration:true},
-  "aid": {level:2, range:30, aid:true, exploration:true},
-  "fireball": {level:3, range:150, area:20, save:"dex", type:"fire", faces:6},
-  "burning hands": {level:1, cone:15, save:"dex", type:"fire", faces:6, dice:3},
-  "dissonant whispers": {level:1, range:60, save:"wis", type:"psychic", faces:6, dice:3, half:true, flee:true},
-  "sleep": {level:1, range:90, area:20, sleep:true, exploration:true},
-  "hold person": {level:2, range:60, save:"wis", humanoid:true, condition:"Paralyzed", concentration:60, repeat:true, moreTargets:true, sight:true, cluster:30},
-  "charm person": {level:1, range:30, save:"wis", humanoid:true, condition:"Charmed", duration:3600, moreTargets:true, exploration:true, sight:true, cluster:30},
-  "invisibility": {level:2, range:5, condition:"Invisible", concentration:3600, moreTargets:true, exploration:true},
-  "witch bolt": {level:1, range:30, attack:true, type:"lightning", faces:12, concentration:60, bolt:true},
-  "magic missile": {level:1, range:120, missiles:true, type:"force", sight:true},
-  "fog cloud": {level:1, range:120, area:20, areaPerSlot:20, zone:"Fog", concentration:3600, exploration:true},
-  "darkness": {level:2, range:60, area:15, zone:"Darkness", concentration:600, exploration:true},
-  "dragons breath": {level:2, range:5, breath:true, bonus:true, concentration:60, exploration:true},
-  "exhale dragons breath": {cone:15, exhale:true},
-};
+const spellEffects = nativeSpellDefinitions;
 
 export const breathTypes = ["acid","cold","fire","lightning","poison"];
 export const supportedSpell = (key,rules) => customSpellEffect(key,rules) ?? (Object.hasOwn(spellEffects,String(key).split('|').at(-1)) ? spellEffects[String(key).split('|').at(-1)] : undefined);
-export const spellTargetCount = (effect,casterLevel,rank) => effect.moreTargets ? 1+Math.max(0,rank-effect.level) :
+export const spellTargetCount = (effect,casterLevel,rank) => effect.custom ? scaledTargets(effect.definition,casterLevel,rank) : effect.moreTargets ? 1+Math.max(0,rank-effect.level) :
   effect.missiles ? 2+rank : effect.beams ? 1+[5,11,17].filter((limit) => casterLevel >= limit).length : effect.aid ? 3 : 1;
 
 export function breakInvisibility(battle,actor) {
@@ -1046,7 +1186,7 @@ export function checkCast(battle,caster,level,slotLevel,timing,usage,slotPool) {
   if (!occupies(caster)) error("Place the caster on the grid first.");
   if (battle.round) {
     if (timing === "reaction") {
-      if (battle.movement || caster.reactionUsed) error("This token’s reaction is unavailable.");
+      if (battle.movement || !canReact(caster)) error("This token’s reaction is unavailable.");
     } else {
       assertTurn(battle,caster);
       if (timing === "bonus") {
@@ -1100,7 +1240,7 @@ export function recordSpell(battle,caster,spell,slotLevel,options={}) {
 function spellSave(battle, caster, target, effect, options, random) {
   const dex = effect.save === "dex";
   const cover = dex && !effect.ignoresCover ? Number(options.cover) || 0 : 0;
-  const result = (target.hp === 0 || incapacitated(target)) && ["str","dex"].includes(effect.save) ? null : savingThrow(target,effect.save,{
+  const result = (target.hp === 0 || autoFailsSave(target,effect.save)) && ["str","dex"].includes(effect.save) ? null : savingThrow(target,effect.save,{
     extra:cover, advantage:effect.condition === "Charmed" && battle.round > 0 && target.side !== caster.side ||
       dex && target.dodging && actorIsUp(target) && speedOf(target)>0, random,
   });
@@ -1112,13 +1252,20 @@ function spellSave(battle, caster, target, effect, options, random) {
 
 function rangedSpellAttack(battle,caster,target,effect,expression,options,random) {
   const distance = distanceFt(caster,target);
-  const result = d20(caster.spellAttack,{...attackMode(battle,caster,target,options,true,distance),random,label:"Spell attack"});
+  const mode = attackMode(battle,caster,target,options,true,distance);
+  const result = d20(caster.spellAttack,{...mode,random,label:"Spell attack"});
   addInspiration(caster,result,random);
+  addSpellRollModifiers(caster,result,'attack',random);
   if (target.helped?.side === caster.side) delete target.helped;
   breakInvisibility(battle,caster);
   caster.mocked = false;
-  const hit = result.kept === 20 || (result.kept !== 1 && result.total >= armorClass(target) + (Number(options.cover) || 0));
-  const critical = hit && result.kept === 20;
+  let hit = result.kept === 20 || (result.kept !== 1 && result.total >= armorClass(target) + (Number(options.cover) || 0));
+  if (hit && result.kept !== 20 && target.reactions?.length) {
+    fireReactions(battle,'hit',{reactor:target,source:caster,attackTotal:result.total,cover:Number(options.cover) || 0,map:options.map,spell:true},random);
+    hit = result.kept === 20 || (result.kept !== 1 && result.total >= armorClass(target) + (Number(options.cover) || 0));
+  }
+  endStatuses(target,'onAttacked');
+  const critical = hit && (result.kept === 20 || Boolean(mode.autoCrit));
   log(battle,"Spell attack on "+target.name+" — "+result.breakdown+" = "+result.total+(critical ? ", critical hit." : hit ? ", hit." : ", miss."));
   recordAction(battle,caster,{outcome:critical ? "Critical hit" : hit ? "Hit" : "Miss",roll:result.breakdown,total:result.total});
   if (hit) {
@@ -1168,7 +1315,7 @@ export function spellCells(battle,caster,square,effect,board,rank = effect.level
   return cells;
 }
 
-function fleeFrom(battle,caster,target,board) {
+export function fleeFrom(battle,caster,target,board) {
   if (!board || !actorIsUp(target) || incapacitated(target) || target.reactionUsed) return;
   target.reactionUsed = true;
   const path = findPath(battle,target,null,null,board,false,{budget:speedOf(target),score:(cell) => distanceFt(cell,caster)});
@@ -1179,8 +1326,35 @@ function fleeFrom(battle,caster,target,board) {
 }
 
 function boltTarget(battle,caster,map) {
+  const range = caster.concentration?.boltRange || 30;
   const target = battle.actors.find(({id}) => id === caster.concentration?.bolt);
-  return target && occupies(target) && distanceFt(caster,target) <= 30 && lineClear(battle,caster,target,map) ? target : null;
+  return target && occupies(target) && distanceFt(caster,target) <= range && lineClear(battle,caster,target,map) ? target : null;
+}
+
+// Melee weapon attack used by Booming Blade–style cantrips: the spell already spent the action.
+export function weaponAttackForSpell(battle,attacker,target,weapon,options={},random=Math.random) {
+  weapon = weaponProperties(weapon);
+  if (!Number.isFinite(weapon.bonus) || !diceTerms(weapon.damage)) error("This cantrip needs a weapon with an attack bonus and damage.");
+  if (weapon.normalRange) error("Choose a melee weapon.");
+  const distance = distanceFt(attacker,target);
+  if (distance > (weapon.reach || 5)) error("The target is out of reach.");
+  if (options.cover === "full" || !lineClear(battle,attacker,target,options.map)) error("Full cover blocks the attack.");
+  return weaponRoll(battle,attacker,target,weapon,{...options,spellWeapon:true},random);
+}
+
+// Mirror Image: chance the attack strikes a duplicate instead of the creature.
+function deflectMirrorImage(battle,target,random) {
+  const entry = (target.conditions ?? []).find((effect) => (effect.mods?.images ?? effect.images) > 0);
+  if (!entry) return false;
+  const count = entry.mods?.images ?? entry.images;
+  const threshold = count >= 3 ? 6 : count === 2 ? 8 : 11;
+  const roll = d20(0,{random,label:"Mirror Image"});
+  if (roll.kept < threshold) {log(battle,target.name+"'s mirror image is missed ("+roll.total+" vs "+threshold+").");return false;}
+  const next = count - 1;
+  if (entry.mods) entry.mods.images = next; else entry.images = next;
+  log(battle,"An image of "+target.name+" is destroyed ("+roll.total+").");
+  if (next <= 0) removeCondition(target,entry);
+  return true;
 }
 
 export function checkSpellTethers(battle,map) {
@@ -1194,7 +1368,9 @@ export function checkSpellTethers(battle,map) {
 
 export function sustainWitchBolt(battle,caster,map,random = Math.random) {
   battle=turnView(battle,caster);
-  return withActionEvent(battle,caster,{action:"Sustain Witch Bolt",kind:"spell"},() => resolveWitchBolt(battle,caster,map,random));
+  const target=boltTarget(battle,caster,map);
+  return withActionEvent(battle,caster,{action:"Sustain Witch Bolt",kind:"spell",
+    ...spellVisualEvent(customSpellEffect('phb|witch bolt',battle.spellRules)?.definition?.visual??defaultSpellAnimation('witch bolt'),caster,target)},() => resolveWitchBolt(battle,caster,map,random));
 }
 
 function resolveWitchBolt(battle,caster,map,random) {
@@ -1203,16 +1379,18 @@ function resolveWitchBolt(battle,caster,map,random) {
   if (!target || battle.action) error("Witch Bolt’s action is unavailable.");
   battle.action = "witch-bolt";
   log(battle,caster.name+" sustains Witch Bolt on "+target.name+".");
-  damageLog(battle,target,"1d12","lightning",false,random,caster);
+  damageLog(battle,target,caster.concentration?.boltDice||"1d12",caster.concentration?.boltType||"lightning",false,random,caster);
 }
 
 export function wakeCreature(battle,actor,target) {
   battle=turnView(battle,actor);
   assertTurn(battle,actor);
   const sleep = condition(target,"Asleep");
-  if (!sleep || !occupies(target) || distanceFt(actor,target) > 5 || battle.action) error("Choose a sleeping creature within reach and use your action.");
+  const hypnotic = condition(target,"Hypnotic Pattern");
+  if ((!sleep && !hypnotic) || !occupies(target) || distanceFt(actor,target) > 5 || battle.action) error("Choose a sleeping or hypnotized creature within reach and use your action.");
   battle.action = "wake";
-  removeCondition(target,sleep);
+  if (sleep) removeCondition(target,sleep);
+  if (hypnotic) removeCondition(target,hypnotic);
   log(battle,actor.name+" wakes "+target.name+".");
   recordAction(battle,actor,{action:"Wake "+target.name,kind:"ability"});
 }
@@ -1245,6 +1423,7 @@ function exhaleBreath(battle,caster,options,random) {
 }
 
 export function castSpell(battle,caster,target,spell,slotLevel,options = {},random = Math.random) {
+  if(spell.castUsage?.itemOnly && (slotLevel!==0 || !hasHestiasFury(caster))) error("Cast this spell through "+hestiaName+".");
   battle=turnView(battle,caster);
   const usage = spell.castUsage && slotLevel === 0 ? spell.castUsage : undefined;
   const original = {spellAbility:caster.spellAbility,spellDC:caster.spellDC,spellAttack:caster.spellAttack};
@@ -1255,15 +1434,35 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
     caster.spellAttack = caster.proficiency+ability;
   }
   try {
-    return withActionEvent(battle,caster,{action:spell.name,kind:"spell",target:target?.name,targetActor:target?.id},
+    const custom=customSpellEffect(spell.reference ?? spell.key,battle.spellRules);
+    const definition=custom?.definition;
+    const runtime=custom?.custom?custom:custom?.importedNative?nativeSpellDefinitions[custom.nativeKey]:spellEffects[spell.key];
+    const rank=usage?spell.level:slotLevel;
+    const shaped=formRule(definition,options.form);
+    const aim=options.square??target;
+    const shotFeet=aim&&Number.isFinite(caster.x)&&Number.isFinite(aim.x)?distanceFt(caster,aim):undefined;
+    const visual=runtime?.exhale?breathAnimation(condition(caster,"Dragon’s Breath")?.type):
+      resolveSpellAnimation(spell.name,shaped,{distanceFt:shotFeet});
+    const length=['cone','line','wall'].includes(shaped?.shape)&&shaped.version===2?shaped.length/5:shaped?.shape==='cone'?shaped.radius/5:runtime?.cone?runtime.cone/5:visual?.length;
+    const diameter=shaped&&['circle','ring','sphere','movable','aura'].includes(shaped.shape)
+      ? Math.max(1,(shaped.radius>0?shaped.radius*2:5)/5)
+      : shaped?.shape==='cube' ? Math.max(1,shaped.side/5)
+      : runtime?.area&&!custom?.custom?(runtime.area+(runtime.areaPerSlot??0)*Math.max(0,rank-runtime.level))*2/5:undefined;
+    const count=runtime?spellTargetCount(runtime,caster.level,rank):1;
+    const targets=[...new Set((options.targets??[]).filter(Boolean))].filter(entry=>entry!==target).slice(0,count-1);
+    const wallEnd=shaped&&needsEndpoint(shaped)?options.end:undefined;
+    return withActionEvent(battle,caster,{action:runtime?.exhale?"Exhale Dragon’s Breath":spell.name,kind:"spell",target:target?.name,targetActor:target?.id,
+      ...spellVisualEvent(visual,caster,target,{square:runtime?.self?null:options.square,end:wallEnd,length,diameter,targets}),
+      ...(Number.isFinite(shotFeet)?{attackDistance:shotFeet}:{}),
+      ...(runtime?.teleport&&visual?.url?{visualDeparture:{x:caster.x,y:caster.y,creatureSize:creatureSize(caster)}}:{})},
       () => resolveSpell(battle,caster,target,spell,usage ? spell.level : slotLevel,options,random,usage));
   } finally {Object.assign(caster,original);}
 }
 
 function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage) {
   const custom=customSpellEffect(spell.reference ?? spell.key,battle.spellRules);
-  if(custom)return castCustomSpell(battle,caster,target,spell,slotLevel,options,random);
-  const effect = spellEffects[spell.key];
+  if(custom?.custom)return castCustomSpell(battle,caster,target,spell,usage ? 0 : slotLevel,options,random);
+  const effect = custom?.importedNative ? nativeSpellDefinitions[custom.nativeKey] : spellEffects[spell.key];
   if (!effect || spell.edition !== "2014" || spell.customUse) error("This spell needs manual adjudication.");
   if (effect.exhale) return exhaleBreath(battle,caster,options,random);
   const {level = 0, heal:healing} = effect;

@@ -15,7 +15,7 @@ export function createFloatingPanels(){
     const chatVisible=visible(panels.get('chat'));
     for(const [kind,panel] of panels){
       const value=state(kind),minWidth=Math.min(240,width),minHeight=Math.min(kind==='chat'?180:100,height);
-      const w=clamp(Number.isFinite(value.width)?value.width:Math.min(330,width-(width<600?63:0)),minWidth,width);
+      const w=clamp(Number.isFinite(value.width)?value.width:Math.min(parseFloat(getComputedStyle(screen).getPropertyValue('--game-panel-width')) || 330,width-(width<600?63:0)),minWidth,width);
       const h=clamp(Number.isFinite(value.height)?value.height:kind==='chat'||panel.dataset.logMode==='expanded'?height:240,minHeight,height);
       const defaultX=kind==='log' && chatVisible && width>=w*2+8 ? width-w*2-8 : width-w;
       const x=clamp(Number.isFinite(value.x)?value.x:defaultX,0,width-w);

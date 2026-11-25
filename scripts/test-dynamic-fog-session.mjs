@@ -6,7 +6,7 @@ import {trainingMap,trainingActors} from '../dist/encounters.mjs';
 import {newBattle} from '../dist/combat.mjs';
 import {rememberDynamicVision} from '../dist/dynamic-fog.mjs';
 import {saveExplored} from '../dist/fog-memory.mjs';
-const db=new DatabaseSync(':memory:');for(const name of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql'])db.exec(await readFile(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+const db=new DatabaseSync(':memory:');for(const name of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql','0006_profile_photos.sql'])db.exec(await readFile(new URL('../drizzle/'+name,import.meta.url),'utf8'));
 const DB={prepare(sql){let args=[];return{bind(...v){args=v;return this;},async first(key){const row=db.prepare(sql).get(...args);return key?row?.[key]??null:row??null;},async all(){return{results:db.prepare(sql).all(...args)};},async run(){return{meta:{changes:Number(db.prepare(sql).run(...args).changes)}};}};},async batch(items){return Promise.all(items.map(x=>x.run()));}};
 const origin='https://fog.test',api=(path,method='GET',value)=>sessionRequest(new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json'},body:value?JSON.stringify(value):undefined}),{DB});
 const battle={...newBattle(),actors:trainingActors(),fogEnabled:true,fogSettings:{sharedVision:false,remember:true,opacity:.9,exploredOpacity:.6,softness:1.5,blockMovement:true},wallData:{manual:true,walls:[{x1:7.24,y1:0,x2:7.24,y2:9}],doors:[]}};

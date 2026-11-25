@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {resetSceneBoard} from '../dist/board-reset.mjs';
+import {newBattle,makeActor} from '../dist/combat.mjs';
+import {commitRoomState,roomBattle} from '../dist/room-state.mjs';
+const map={key:'one',module:'QA',regions:[]};
+const original={...newBattle(),round:3,order:['hero','foe'],sceneReady:true,worldLootVersion:1,terrain:{'2,2':'wall'},markers:[{looted:true}],wallData:{vertices:[{x:1,y:1}]},rest:{shortUsed:1},sheets:{hero:{name:'Hero'}},actors:[makeActor({id:'hero',side:'party',hp:7,maxHp:20,x:1,y:1,xp:100,items:[{name:'Sword'}],carrying:'foe'}),makeActor({id:'foe',hp:0,dead:true})]};
+let calls=0;const next=await resetSceneBoard(original,map,{populate:async(m,b)=>{calls++;b.actors.push(makeActor({id:'fresh',hp:20}));b.sceneReady=true;}});
+assert.equal(calls,1);assert.equal(next.round,0);assert.deepEqual(next.terrain,{});assert.equal(next.actors[0].hp,7);assert.equal(next.actors[0].xp,100);assert.equal(next.actors[0].items[0].name,'Sword');assert.equal(next.actors[0].carrying,undefined);assert.deepEqual(next.wallData,original.wallData);assert.deepEqual(next.rest,original.rest);assert.deepEqual(next.sheets,original.sheets);assert.equal(original.round,3);assert.equal(original.actors[1].dead,true);
+const state=commitRoomState({currentMap:map,battle:{...original,actors:[...original.actors,makeActor({id:'elsewhere',sceneKey:'two'})]}},map,next);
+assert.ok(state.battle.actors.some(a=>a.id==='elsewhere'));assert.equal(roomBattle(state).actors.length,2);
+await assert.rejects(resetSceneBoard({...original,movement:{}},map,{}));
+await assert.rejects(resetSceneBoard(original,map,{populate:async()=>{throw Error('offline');}}));assert.equal(original.actors.length,2);
+console.log('Board reset preserves party progress, sheets, walls, rests and other maps; blocks pending reactions and leaves original intact on failure.');

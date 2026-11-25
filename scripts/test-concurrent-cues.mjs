@@ -195,12 +195,19 @@ combatCues.sync('battle-1', [event1, event2], viewport);
 const cueElements = layer.children.filter(c => c.className.includes('combat-cue'));
 assert.equal(cueElements.length, 2, 'Both non-dice cues appear simultaneously in the layer');
 
-// Check that anti-overlap offset has positioned them differently (not identical top/left)
+// Action rail: same right-edge column, stacked with distinct tops (no scatter dodge)
+assert.equal(
+  cueElements[0].style.left,
+  cueElements[1].style.left,
+  'Action messages share a predictable right-edge rail column'
+);
 assert.notEqual(
   cueElements[0].style.top,
   cueElements[1].style.top,
-  'Anti-overlap layout stacks or separates cues for the same actor'
+  'Action rail stacks cues vertically without overlap'
 );
+assert.equal(cueElements[0].dataset.layout, 'rail');
+assert.equal(cueElements[1].dataset.layout, 'rail');
 
 // Test 2: Dismissing one cue removes only that specific cue
 cueElements[0].dispatchEvent({type: 'click', stopPropagation: () => {}, target: {closest: sel => sel === '.cue-dismiss'}});

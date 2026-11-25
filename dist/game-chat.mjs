@@ -1,3 +1,4 @@
+import {profilePhotoURL} from './profile-photo.mjs';
 import {icon} from "./icons.mjs";
 import {readChat, sendChat} from "./multiplayer.mjs";
 import {parseRollCommand, executeRoll, formatRollMessage, parseRollMessage, visibleMessageText} from "./chat-commands.mjs";
@@ -10,13 +11,13 @@ export function createGameChat(id, sender) {
   panel.setAttribute("aria-label","Party chat");
   panel.innerHTML = `
     <header class="chat-header">
-      <h2>Party chat</h2>
+      <h2>Chat &amp; activity</h2>
       <button id="game-chat-toggle" class="game-button chat-toggle" type="button" aria-controls="game-chat-content">
         ${icon("chat",16)}<span></span><small class="chat-unread" hidden></small>
       </button>
     </header>
     <div id="game-chat-content" class="chat-content" hidden>
-      <label class="chat-activity-control"><input type="checkbox" class="chat-activity-toggle"> Include activity log</label>
+      <label class="chat-activity-control"><input type="checkbox" class="chat-activity-toggle" checked> Show combat &amp; roll activity</label>
       <div class="chat-history" role="log" aria-label="Chat messages" tabindex="0">
         <p class="chat-empty">No messages yet.</p>
       </div>
@@ -58,7 +59,7 @@ export function createGameChat(id, sender) {
   let following = true;
 
   const chatMessages=new Map(),activityMessages=new Map(),eventTimes=new Map();
-  let includeActivity=false,activitySource,lastActivity=0,timelineSignature='';
+  let includeActivity=Boolean(panel.querySelector('.chat-activity-toggle')?.checked),activitySource,lastActivity=0,timelineSignature='';
   const activityObserver=new MutationObserver(syncActivity);
 
   function syncActivity(){
@@ -78,7 +79,15 @@ export function createGameChat(id, sender) {
     timelineSignature=signature;const nodes=new Map([...history.children].map(e=>[e.dataset.row,e]));
     for(const row of rows){
       let item=nodes.get(row.key);if(!item){item=document.createElement('div');item.dataset.row=row.key;item.className='chat-line'+(row.system?' chat-system':'');if(row.system)item.dataset.activity=String(row.sequence);else item.dataset.message=String(row.sequence);const info=document.createElement('div'),speaker=document.createElement('strong'),time=document.createElement('time'),text=document.createElement('p');info.append(speaker,time);item.append(info,text);}
-      item.querySelector('strong').textContent=row.author;const time=item.querySelector('time');time.hidden=!row.time;if(row.time){time.dateTime=new Date(row.time).toISOString();time.textContent=timeFormat.format(row.time);}
+      const speaker=item.querySelector('strong');
+      speaker.textContent=row.author;
+      const photo=profilePhotoURL(row.profileId,row.photo);
+      if(photo){
+        const avatar=document.createElement('img');
+        avatar.className='chat-profile-avatar';avatar.src=photo;avatar.alt='';avatar.loading='lazy';
+        speaker.prepend(avatar);
+      }
+      const time=item.querySelector('time');time.hidden=!row.time;if(row.time){time.dateTime=new Date(row.time).toISOString();time.textContent=timeFormat.format(row.time);}
       const visText=visibleMessageText(row.body);item.querySelector('p').textContent=visText;
       item.classList.toggle('chat-roll',visText.startsWith('🎲'));
       history.append(item);nodes.delete(row.key);

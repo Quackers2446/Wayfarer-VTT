@@ -4,11 +4,13 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const workerCode = fs.readFileSync(path.join(root, 'dist/client/_worker.js'), 'utf8');
+const workerB64 = Buffer.from(workerCode).toString('base64');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 
 const executeCode = 'async () => {\n' +
   '  const manifest = ' + JSON.stringify(manifest) + ';\n' +
-  '  const workerCode = ' + JSON.stringify(workerCode) + ';\n' +
+  '  const workerB64 = "' + workerB64 + '";\n' +
+  '  const workerCode = new TextDecoder().decode(Uint8Array.from(atob(workerB64), c => c.charCodeAt(0)));\n' +
   '  const form = new FormData();\n' +
   '  form.append("manifest", JSON.stringify(manifest));\n' +
   '  form.append("branch", "main");\n' +

@@ -16,8 +16,13 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
     const hp = Math.max(0, Math.min(character.hp,character.maxHp));
     const owner = controllers?.[character.id];
     const mine = owner === controller;
+    const selectable=(!owner||mine)&&actorIsUp(character)&&(!inCombat||movers.includes(character));
+    const selectedHere=character.id===selected?.id;
+    const hint=selectable?'Click to select. Double-click to open sheet.':'Double-click to open sheet.';
     return `<div class="game-character ${character.id === selected?.id ? "game-character-current" : ""}">
-      <button type="button" class="game-portrait" data-play="inspect" data-id="${id}" aria-label="Open character sheet for ${name}" title="${escape(character.name+' · '+character.hp+'/'+character.maxHp+' HP'+(owner ? ' · '+(mine ? 'Your character' : names.get(owner) ?? 'Claimed') : ''))}">
+      <button type="button" class="game-portrait" id="game-portrait-${id}" data-play="party-portrait" data-id="${id}"
+        aria-label="${selectable?'Select':'Inspect'} ${name}" aria-pressed="${selectedHere}" aria-keyshortcuts="Shift+Enter"
+        title="${escape(hint+' · '+character.hp+'/'+character.maxHp+' HP'+(owner ? ' · '+(mine ? 'Your character' : names.get(owner) ?? 'Claimed') : ''))}">
         <span class="game-avatar palette-${index%4}" aria-hidden="true">
           <span data-token-initial>${escape(initials)}</span><canvas data-creature-portrait="${id}" hidden></canvas>
         </span>
@@ -26,7 +31,7 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
           ${owner ? `<small>${mine ? "Your character" : escape(names.get(owner) ?? "Claimed")}</small>` : ""}
         </span>
       </button>
-      ${(!inCombat || movers.includes(character)) && (!owner || mine) && actorIsUp(character) && selected?.id !== character.id
+      ${selectable && !selectedHere
         ? button("Control","", "control-party", `data-id="${id}" aria-label="${inCombat ? "Control " + name : "Control"}"`) : ""}
       ${controllers && (!owner || mine) ? button(mine ? "Release" : "Claim","","claim-party",`data-id="${id}" aria-label="${mine ? "Release" : "Claim"} ${name}"`) : ""}
     </div>`;
@@ -48,9 +53,9 @@ function activityLog(history,mode) {
 }
 
 export function gameScreen({
-  map, battle, roomName, saveStatus, selected, party, category, actions, tacticalTools, room, status, artworkNote,
+  map, battle, roomName, saveStatus, selected, party, category, actions, tacticalTools, status,
   logOpen, logHistory=battle.log, eventLogMode="compact", eventLogPlacement="separate", toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,hotbar,resourceControls,
-  destination, adventureName, hasToken, tableOpen, tableContent, shared, partyOpen=false,partyContent='',chatOpen=false, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
+  destination, adventureName, hasToken, tableOpen, tableContent, shared, partyOpen=false,partyContent='',restOpen=false,restContent='',chatOpen=false, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
 }) {
   const active = battle.round > 0;
   const turn = currentActor(battle);
@@ -74,9 +79,10 @@ export function gameScreen({
         ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"${shared ?
           ` data-online="${online}" aria-label="Session" aria-description="${online} ${online === 1 ? "player" : "players"} online"` : ""}`)}
         ${button("Party","users","game-party",`aria-pressed="${partyOpen}"`)}
-        ${button("Chat","chat","game-chat",`aria-pressed="${chatOpen}"`)}
+        ${button("Rest","heart","game-rest",`aria-expanded="${restOpen}"`)}
         ${button("Story","book","game-story",`aria-pressed="${storyOpen}"`)}
-        ${button("Log","book","game-log",`aria-pressed="${logOpen}"`)}
+        ${button(eventLogPlacement === "chat" ? "Chat & log" : "Chat","chat","game-chat",`aria-pressed="${chatOpen}"`)}
+        ${eventLogPlacement === "chat" ? "" : button("Log","book","game-log",`aria-pressed="${logOpen}"`)}
         ${button("Tools","map","game-tools",`aria-pressed="${toolsOpen}"`)}
       </div>
     </header>
@@ -97,10 +103,11 @@ export function gameScreen({
         ${mapViewport(map,true)}
         <div class="combat-cues" aria-live="polite" aria-atomic="true"></div>
         <div class="game-board-meta">
-          <div><p id="game-move-preview" class="game-move-preview">${escape(canAct && destination || '')}</p><p id="game-map-status" role="status">${escape(status || room?.entry?.name || artworkNote)}</p>${mapHint()}</div>
+          <div><p id="game-move-preview" class="game-move-preview">${escape(canAct && destination || '')}</p><p id="game-map-status" role="status">${escape(status)}</p>${mapHint()}</div>
           ${mapControls(hasToken)}
         </div>
         ${storyOpen ? `<aside class="game-flyout play-panel story-flyout" aria-label="Story journal">${storyContent}</aside>` : ""}
+        ${restOpen ? `<aside class="game-flyout play-panel rest-flyout" aria-label="Party rest">${restContent}</aside>` : ""}
         ${toolsOpen ? `<aside class="game-flyout tools-flyout play-panel" aria-label="Table tools">${tacticalTools}</aside>` : ""}
         ${partyOpen ? `<aside class="game-flyout tools-flyout play-panel party-flyout" aria-label="Party management">${partyContent}</aside>` : ""}
         ${tableOpen ? `<aside class="game-flyout tools-flyout play-panel session-panel" aria-label="Multiplayer">${tableContent}</aside>` : ""}
@@ -123,7 +130,7 @@ export function gameScreen({
             '<strong>Free movement</strong>'}
         </div>`}
         ${!enemyTurn && !movingEarly ? resourceControls : ''}
-        ${active && !enemyTurn && !movingEarly && !reacting ? button("End turn","check","end",battle.movement || !canAct ? "disabled" : "") : ""}
+        ${active && !enemyTurn && !movingEarly && !reacting ? `<button class="game-button game-end-turn" type="button" data-play="end" aria-label="End turn" aria-keyshortcuts="Space" title="End turn (Space)" ${battle.movement || !canAct || busy ? "disabled" : ""}>${icon("check",17)}<span>End turn</span><kbd aria-hidden="true">Space</kbd></button>` : ""}
       </div>
       <div class="game-hud-body">
         ${canAct && !battle.movement && !movingEarly && !reacting && selected?.hp>0 ? hotbar : ''}

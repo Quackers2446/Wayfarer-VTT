@@ -2,10 +2,16 @@ import {tokenAtPoint} from './grid-view.mjs';
 import {cellCenter} from './map-grid.mjs';
 import {tokenRadius} from './actor-space.mjs';
 
-export function createTokenHover() {
-  let view,point,tooltip;
+export function createTokenHover(onHover) {
+  let view,point,tooltip,hovered;
+  function setHovered(id){
+    if(hovered===id)return;
+    hovered=id;
+    onHover?.(id);
+  }
   const id='token-name-tooltip';
   function hide() {
+    setHovered(undefined);
     if(tooltip) tooltip.hidden=true;
     if(view?.surface?.getAttribute('aria-describedby')===id) view.surface.removeAttribute('aria-describedby');
   }
@@ -16,6 +22,7 @@ export function createTokenHover() {
     const x=(point.x-bounds.left)*map.width/bounds.width,y=(point.y-bounds.top)*map.height/bounds.height;
     const actor=tokenAtPoint(map,battle,x,y,visible);
     if(!actor) {hide();return;}
+    setHovered(actor.id);
     if(!tooltip) {
       tooltip=document.createElement('div');tooltip.id=id;tooltip.className='token-name-tooltip';tooltip.setAttribute('role','tooltip');document.body.append(tooltip);
     }
@@ -38,7 +45,8 @@ export function createTokenHover() {
   window.addEventListener('blur',clear);
   window.addEventListener('resize',clear);
   return {
-    sync(next) {hide();view=next;refresh();},
+    sync(next) {if(view?.surface!==next.surface)hide();view=next;refresh();},
+    get hovered(){return hovered;},
     refresh,
     clear() {clear();view=null;},
   };

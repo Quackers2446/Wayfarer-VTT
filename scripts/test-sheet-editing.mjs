@@ -67,6 +67,14 @@ const testCharacter = enrichCharacter({
 
 // 1. Verify sheetEditor autofills current values in value attributes
 const editorHtml = sheetEditor(testCharacter, sheetSkills);
+// Workbooks can supply a numeric casting modifier instead of an ability name.
+for (const spellcastingAbility of [3, 0, -1, null, undefined]) {
+  const numericEditor = characterPage({...testCharacter, spellcastingAbility}, "edit");
+  assert.match(numericEditor, /id="character-edit-form"/, "Imported numeric casting modifiers must not prevent editing");
+  assert.match(numericEditor, /<option value="" selected>Use sheet or class/, "Keep imported modifier unless the player chooses an ability");
+}
+assert.match(editorHtml, /<option value="wis" selected>Wisdom<\/option>/, "Select the named casting ability");
+assert.match(sheetEditor({...testCharacter, sheetEdits:{spellcastingAbility:"int"}}, sheetSkills), /<option value="int" selected>Intelligence<\/option>/, "Respect an explicitly chosen casting ability");
 assert.match(editorHtml, /name="characterClass"[^>]*value="Druid"/, "Class is autofilled in value");
 assert.match(editorHtml, /name="species"[^>]*value="Human"/, "Species is autofilled in value");
 assert.match(editorHtml, /name="level"[^>]*value="3"/, "Level is autofilled in value");

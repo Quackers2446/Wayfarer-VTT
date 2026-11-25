@@ -3,7 +3,7 @@ import {regionCells} from './encounters.mjs';
 import {mapFloor} from './map-walls.mjs';
 import {actorIsUp,canTakeTurn,incapacitated,distanceFt,lineClear,canStand,log,spendObjectAction,rollDice,applyDamage,d20,armorClass} from './combat.mjs';
 import {creatureSize,containsCell} from './actor-space.mjs';
-import {captureImpact,recordAction,withActionEvent} from './action-events.mjs';
+import {recordAction,withActionEvent} from './action-events.mjs';
 const fail=message=>{throw Error(message);};
 const potionFormula=name=>({'potion of healing':'2d4+2','healing potion':'2d4+2','potion of greater healing':'4d4+4','potion of superior healing':'8d4+8','potion of supreme healing':'10d4+20'})[name.toLowerCase()];
 function awake(battle,actor){if(!actorIsUp(actor)||incapacitated(actor))fail('Choose a conscious character.');if(battle.movement||battle.classReaction)fail('Resolve the pending reaction first.');if(battle.round&&!canTakeTurn(battle,actor))fail('Wait for this character’s turn.');}
@@ -54,10 +54,10 @@ export function placeBody(battle,actor,body,square,map,{thrown=false}={},random=
   if(thrown && target){
     const attack=d20(actor.ability?.str??0,{random,label:'Improvised body throw'}),critical=attack.kept===20,hit=critical||attack.kept!==1&&attack.total>=armorClass(target);
     recordAction(battle,actor,{outcome:critical?'Critical hit':hit?'Hit':'Miss',roll:attack.kept,total:attack.total,type:'bludgeoning'});
-    if(hit){const damage=rollDice('1d4'+((actor.ability?.str??0)>=0?'+':'')+(actor.ability?.str??0),{random,doubleDice:critical,label:'Body throw damage'});const result=applyDamage(battle,target,damage.total,'bludgeoning',critical,random,actor);captureImpact(battle,target,{amount:result.damage,absorbed:result.absorbed,defeated:result.defeated,critical});}
+    if(hit){const damage=rollDice('1d4'+((actor.ability?.str??0)>=0?'+':'')+(actor.ability?.str??0),{random,doubleDice:critical,label:'Body throw damage'});applyDamage(battle,target,damage.total,'bludgeoning',critical,random,actor);}
     log(battle,actor.name+' throws '+body.name+' at '+target.name+' — d20 '+attack.kept+' = '+attack.total+' vs AC '+armorClass(target)+': '+(critical?'Critical hit':hit?'Hit':'Miss')+'.');
   }
-  if(thrown){const damage=rollDice('1d4' ,{random,label:'Thrown body impact'});applyDamage(battle,body,damage.total,'bludgeoning',false,random,actor);captureImpact(battle,body,{amount:damage.total,defeated:body.dead});}
+  if(thrown){const damage=rollDice('1d4' ,{random,label:'Thrown body impact'});applyDamage(battle,body,damage.total,'bludgeoning',false,random,actor);}
   log(battle,actor.name+(thrown?' throws ':' places ')+body.name+' at square '+(square.x+1)+', '+(square.y+1)+(thrown?'. The body takes impact damage.':'.'));
  });
 }

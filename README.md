@@ -25,6 +25,7 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/) in your web browser.
 
 - On the **Character sheets** page, click **Import supplied sheets** to load sample workbooks from the adjacent `Character Sheets` directory.
 - On the **Play** page, click **Use supplied archive** to load map data and creature art from the adjacent `5etools-v*.zip`.
+- Local-only **Spell FX preview** gallery: [http://127.0.0.1:5173/spell-fx-gallery.html](http://127.0.0.1:5173/spell-fx-gallery.html) (not copied into `dist/client` or published).
 
 ---
 
@@ -116,6 +117,14 @@ npx wrangler d1 migrations apply DB --local --config dist/server/wrangler.json
 npx wrangler dev --local --config dist/server/wrangler.json
 ```
 
+### Google sign-in
+
+Create a Web application client in [Google Auth Platform](https://console.cloud.google.com/auth/overview), complete Branding and Audience, and add `https://wayfarer-vtt.pages.dev` under Authorized JavaScript origins. If the project uses a test audience, add the Google accounts you plan to test. Wayfarer uses the Google Identity Services popup, so this setup only needs the public OAuth client ID.
+
+Set `GOOGLE_CLIENT_ID` in the Cloudflare Pages production environment and apply `drizzle/0005_accounts.sql` to the bound D1 database if its account tables are absent. Then deploy the Pages build and verify sign-in from the authorized origin. Guests can continue playing while Google sign-in is awaiting configuration.
+
+The account syncs saved characters, token images, spell rules, profile details, and linked rooms. On the first sign-in, it imports the browser's guest library. Existing room ownership follows the account when the browser can prove ownership with its creator cookie. Editing the same item on two devices opens a conflict in Profile. Drafts, the 5etools ZIP, and Gemini credentials stay local.
+
 ### Rebuilding the Dice Renderer
 
 The client includes a local bundle of Three.js and cannon-es; it loads on the first dice animation and needs no external CDN. Rebuild it after editing `scripts/dice-renderer/scene.mjs` or `dist/dice-geometry.mjs`:
@@ -161,7 +170,7 @@ Checks: `node scripts/test-room-campaign.mjs` and `node scripts/test-room-campai
 
 ### Dashboard spell rules
 
-Workspace → Spell rules opens the dashboard-only editor. It reads spell descriptions from the bundled 5etools index and supports source selection, effect blocks, damage and healing components/upcasting, optional spellcasting ability modifiers, cantrip scaling at levels 5/11/17, saves, conditions, targeting shapes, persistent areas, turn/entry triggers, concentration, difficult terrain, and movable spheres. Reviewed PHB starter configurations cover Wall of Fire, Ice Storm and Flaming Sphere; other spells begin with an empty effect list so unimplemented effects are not invented. Drafts and reusable definitions persist locally and can be imported/exported as JSON. Preview casts use the actual rules engine with sample actors and configurable caster level, slot level and spellcasting modifier. Healing can optionally exclude undead and constructs, caps at maximum HP and revives unconscious creatures without resurrecting the dead.
+Workspace → Spell rules opens the dashboard-only editor. It reads spell descriptions from the bundled 5etools index and supports source selection, effect blocks, damage and healing components/upcasting, optional spellcasting ability modifiers, cantrip scaling at levels 5/11/17, saves, conditions, targeting shapes, persistent areas, turn/entry triggers, concentration, difficult terrain, and movable spheres. Reviewed PHB starter configurations cover Wall of Fire, Ice Storm and Flaming Sphere; other spells begin with an empty effect list so unimplemented effects are not invented. Drafts and reusable definitions persist locally and can be imported/exported as JSON. The test encounter is a private mini board that runs the real rules engine plus cast videos and persistent-zone loops (dice off so FX are immediate), with sample actors and configurable caster level, slot level and spellcasting modifier. Healing can optionally exclude undead and constructs, caps at maximum HP and revives unconscious creatures without resurrecting the dead.
 
 New rooms snapshot the saved rule library. The dashboard can publish a saved library to a known room between encounters, using revision checks. Existing areas retain their original definition until they expire. Editing is not exposed in the play interface; play exposes only normal targeting and ongoing spell controls. The schema is shared by browser validation and room saves. Unlisted interactions, heights and vertical movement still require manual adjudication.
 
@@ -178,3 +187,72 @@ Search fields show ranked local matches with source labels, including adventure/
 ### Play-interface behavior
 
 Wall and doorway tracing overlays appear only while editing fog geometry; saved geometry continues to block vision and movement during normal play. Characters can be added from Party or Multiplayer during combat, spawn near the participating party when a free visible space is available, roll initiative and join the encounter reward participants without resetting the active turn. Each square still costs the same diagonally or orthogonally; equal-cost routes prefer cardinal steps and fewer bends. In-game character sheets and their edit forms dismiss when a click starts and finishes outside the dialog, while chat/activity panels remain open.
+
+### Selective Foundry spell imports and native spell videos
+
+Dashboard → Spell rules → Import Foundry spells accepts individual spell JSON,
+arrays, actor exports with items, and newline-delimited text `.db` packs (up to
+10 MB). Binary packs must be exported from Foundry as JSON first. Matching uses
+source/name and edition; ambiguous matches are left for manual configuration.
+Imports report whether each spell is runnable or needs support. A batch button
+imports runnable spells while preserving existing saved overrides. Native bindings
+preserve existing implementations instead of replacing them with simplified
+metadata. Complete Bless/Bane Active Effect records run through native roll hooks:
+multiple targets, slot scaling, attack/save dice, concentration and expiration.
+Unsupported effects and module scripts remain reported as limitations; incomplete
+entries are disabled drafts. The supplied 538-spell compendium currently yields
+30 runnable entries (28 use existing implementations; Bless and Bane add imported
+modifier behavior). This is not a complete Foundry rules engine.
+
+The entire spell-specific free JB2A catalog is indexed: 314 video variants
+automatically map to 48 spell names, with aliases for SRD spell names. Generic
+weapon/UI/condition clips are not falsely assigned to spells. Fifty unmodified
+clips cover the automatic defaults and wall-ring variants locally; additional
+variants stream only when used from the pinned
+JB2A Git revision. Bursts, caster auras, rays, cones and straight walls have
+appropriate anchors and orientation. Wall of Fire picks the line or ring clip from the
+cast form; rays pick the nearest 5/15/30/60/90 ft variant for the shot distance and
+speed up shorter beams; flaming-sphere moves keep the sphere footprint. Persistent
+areas keep a looping overlay for the zone lifetime (wall/ring forms, movable spheres,
+auras, and ground zones), capped and shown only when every footprint cell is in
+current sight so fog cannot leak through a continuous clip; soft cell tints still
+mark the visible squares when the overlay is hidden.
+Animation presets and custom HTTPS WebM/MP4 clips can be selected
+on saved spell rules. Rules copied to rooms include their visual settings. Native
+playback follows map pan/zoom and reveals HP/results after the clip; video errors
+and stalled loads have a bounded fallback, and reduced-motion preferences skip
+playback. This is a small native integration, not compatibility with Sequencer,
+Automated Animations scripts, or the full 5e Animations configuration library.
+
+Animation attribution, upstream paths, hashes and the CC BY-NC-SA 4.0 license link
+are in `dist/assets/animations/credits.json` and linked from the spell editor and
+table tools. Files are unmodified; scaling and positioning happen during playback.
+The build verifies their hashes. The separate Foundry reference repositories are
+in the sibling `foundry-reference` directory, outside the app/deployment; JB2A uses
+a sparse checkout to avoid downloading the full media library.
+
+Regenerate the animation index with `node scripts/index-jb2a-animations.mjs PATH_TO_JB2A`.
+Only filenames and Git metadata are read; the full media library is not downloaded.
+Built-ins without a dedicated JB2A spell folder map through `dist/spell-animation-supplements.mjs`;
+download any missing Generic clips with `node scripts/bundle-remaining-spell-fx.mjs`.
+Persistent-zone Loop overlays live in `dist/zone-loop-catalog.mjs`; fetch new ones with
+`node scripts/bundle-zone-loops.mjs`.
+
+Checks: `node scripts/test-foundry-spell-import.mjs`,
+`node scripts/test-imported-active-effects.mjs`, `node scripts/test-spell-animation-index.mjs`,
+`node scripts/test-spell-rules.mjs`, `node scripts/test-concurrent-cues.mjs`.
+
+## Baked map walls (no AI)
+
+`scripts/build-map-walls.mjs` detects floor, walls and doors from the printed 5-ft grid of official adventure maps and writes `dist/assets/map-walls/<MODULE>.json`. It costs no AI tokens and runs once per module, not per player.
+
+```sh
+cd scripts/map-bake && npm install        # one time, installs sharp
+node scripts/build-map-walls.mjs --module LMoP --overlay /tmp/overlays --dry-run   # review overlays first
+node scripts/build-map-walls.mjs --module LMoP                                      # write the JSON
+```
+
+- The 5etools room polygons are used only to self-calibrate the detector per map; maps below 60% room coverage are skipped.
+- At runtime `dist/baked-walls.mjs` applies them when a map has no hand-edited `wallData` and no hand-calibrated walls (Cragmaw Hideout keeps its own). They are a draft: fog uses them, but `fogSettings.blockMovement` defaults to off so a detection error can never trap a token. Edit them in the wall editor like any other walls.
+- Images are fetched from cdn.5e.tools (or `<5etools>/img`) and cached in `scripts/map-bake/cache/`.
+- Test: `node scripts/test-map-detect.mjs`.

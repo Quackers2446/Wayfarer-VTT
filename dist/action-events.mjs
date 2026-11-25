@@ -53,7 +53,7 @@ export function withActionEvent(battle, actor, details, run) {
       total:result.total,breakdown:result.breakdown.slice(0,600),
       ...(result.kept != null ? {kept:result.kept,modifier:result.total-result.kept} : {}),
     }));
-    append(battle,actor,{...current.details,rolls,messages:current.messages.slice(-8).map(message=>message.slice(0,700)),impacts:current.impacts.slice(0,24),healthChanges:battle.actors.flatMap(actor=>{const before=healthBefore.get(actor.id),after=healthState(actor);return before && JSON.stringify(before)!==JSON.stringify(after) ? [{actor:actor.id,name:actor.name,side:actor.side,x:actor.x,y:actor.y,before,after}] : [];})});
+    append(battle,actor,{...current.details,rolls,messages:current.messages.slice(-8).map(message=>message.slice(0,700)),impacts:current.impacts.slice(0,24),healthChanges:battle.actors.flatMap(actor=>{const before=healthBefore.get(actor.id),after=healthState(actor);return before && JSON.stringify(before)!==JSON.stringify(after) ? [{actor:actor.id,name:actor.name,side:actor.side,x:actor.x,y:actor.y,creatureSize:creatureSize(actor),before,after}] : [];})});
     return result;
   } finally {capture = previous;}
 }

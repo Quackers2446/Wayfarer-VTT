@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {buildActionBar,filterActionBar,renderActionBar,renderActionResources} from "../dist/action-bar.mjs";
+import {buildActionBar,filterActionBar,renderActionBar,renderActionResources,toggleHotbarFilter} from "../dist/action-bar.mjs";
 import {makeActor,newBattle} from "../dist/combat.mjs";
 
 const monk=makeActor({side:"party",name:"Monk",hp:50,swings:2,resources:{ki:{name:"Ki",current:9,maximum:9}},
@@ -48,14 +48,23 @@ entries=buildActionBar(caster,battle,spells);
 assert.equal(find("spell:fireball").reason,"","A Pact slot can cover a spell without an ordinary slot");
 assert.match(find("spell:unprepared").reason,/not prepared/);
 assert.match(find("spell:unimplemented").reason,/manual ruling/);
-assert.deepEqual(filterActionBar(entries,"spell","slot:2").map(entry=>entry.level),[1,1,1]);
+assert.deepEqual(filterActionBar(entries,"spell","slot:1").map(entry=>entry.level),[1,1,1]);
+assert.deepEqual(filterActionBar(entries,"spell","slot:2").map(entry=>entry.level),[]);
+assert.deepEqual(filterActionBar(entries,"spell","slot:1,slot:3").map(entry=>entry.level).sort(),[1,1,1,3]);
 assert.ok(filterActionBar(entries,"spell","pact:3").some(entry=>entry.level===3));
+assert.equal(toggleHotbarFilter("","slot:1"),"slot:1");
+assert.equal(toggleHotbarFilter("slot:1","slot:3"),"slot:1,slot:3");
+assert.equal(toggleHotbarFilter("slot:1,slot:3","slot:1"),"slot:3");
+assert.equal(toggleHotbarFilter("slot:1,slot:3","slot:3"),"slot:1");
+assert.ok(filterActionBar(entries,"spell","","missile").every(entry=>/missile/i.test(entry.name)));
+assert.ok(renderActionBar(entries,caster,{tab:"spell",query:""}).includes('id="hotbar-search"'));
 caster.resources.pactMagic.current=0;
 entries=buildActionBar(caster,battle,spells);
 assert.match(find("spell:fireball").reason,/No spell slot/);
 assert.equal(find("spell:magic missile").reason,"","Upcasting remains possible with only a higher slot");
 entries=buildActionBar(caster,battle,spells,{filter:"pact:3"});
-assert.match(find("spell:magic missile").reason,/No Pact Magic slots/,'An exhausted selected pool must not silently switch to ordinary slots');
+assert.match(find("spell:fireball").reason,/No (spell slot|Pact Magic)/,'Pact-level filter keeps exhausted level 3 casts blocked');
+assert.equal(find("spell:magic missile").reason,"","Exact-level Pact filter does not lock lower-level ordinary slots");
 entries=buildActionBar(caster,battle,spells,{filter:"slot:1"});
 assert.match(find("spell:magic missile").reason,/No level 1 spell slots/,'An exhausted selected level must not silently upcast');
 battle.cast={bonus:true};
@@ -65,4 +74,22 @@ assert.equal(find("spell:cantrip").reason,"");
 const resources=renderActionResources(caster,battle);
 assert.ok(resources.includes('data-id="pact:3"'));
 assert.ok(resources.includes('data-id="slot:2"'));
-console.log("Hotbar budgets, Extra Attack, Ki requirements, persistent Flurry follow-ups, ownership, casting restrictions and slot filters verified.");
+
+// Non-SRD / entry-less catalog spells still get mechanical hotbar facts.
+const tipCaster=makeActor({side:"party",name:"Tip Caster",hp:20,slots:{}});
+Object.assign(battle,{actors:[tipCaster],order:[tipCaster.id],cast:null,action:null});
+const tipSpells=[
+  {mode:"spell",usable:true,data:{name:"Thunderclap",key:"thunderclap",reference:"xge|thunderclap",level:0,timing:"action"}},
+  {mode:"spell",usable:true,data:{name:"Thorn Whip",key:"thorn whip",reference:"phb|thorn whip",level:0,timing:"action"}},
+];
+entries=buildActionBar(tipCaster,battle,tipSpells);
+const thunder=find("spell:xge|thunderclap");
+assert.ok(thunder.stats.some(stat=>/1d6\+?\s*thunder/i.test(stat)),"Thunderclap shows damage: "+JSON.stringify(thunder.stats));
+assert.ok(thunder.stats.some(stat=>/con save/i.test(stat)),"Thunderclap shows save: "+JSON.stringify(thunder.stats));
+assert.ok(thunder.description && !/^cantrip$/i.test(thunder.description.trim()),"Thunderclap description is more than Cantrip: "+thunder.description);
+const whip=find("spell:phb|thorn whip");
+assert.ok(whip.stats.some(stat=>/1d6\+?\s*piercing/i.test(stat)),"Thorn Whip shows damage: "+JSON.stringify(whip.stats));
+assert.ok(whip.stats.some(stat=>/melee spell attack/i.test(stat)),"Thorn Whip shows attack: "+JSON.stringify(whip.stats));
+assert.match(renderActionBar(entries,tipCaster,{tab:"spell"}),/1d6\+ thunder|1d6 thunder/i);
+
+console.log("Hotbar budgets, Extra Attack, Ki requirements, persistent Flurry follow-ups, ownership, casting restrictions, slot filters and spell tip facts verified.");

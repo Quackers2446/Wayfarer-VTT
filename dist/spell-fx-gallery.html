@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Spell FX preview · Wayfarer (local)</title>
+  <link rel="icon" href="assets/wayfarer.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="spell-rule-editor.css">
+  <link rel="stylesheet" href="spell-fx-gallery.css">
+</head>
+<body>
+  <main id="spell-fx-mount" class="content" style="padding:24px"></main>
+  <script type="module">
+    import {mountSpellFxGallery} from './spell-fx-gallery.mjs';
+    mountSpellFxGallery(document.querySelector('#spell-fx-mount'));
+  </script>
+</body>
+</html>

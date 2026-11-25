@@ -1,3 +1,4 @@
+import {hasHestiasFury,hestiaName} from './hestias-fury.mjs';
 import {escape, plural, signed, text} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {tokenPortrait} from "./character-token.mjs";
@@ -5,6 +6,25 @@ import {sheetSkills} from "./character-rules.mjs";
 import {sheetEditor} from "./sheet-editor.mjs";
 import {featureRules} from "./class-feature-view.mjs";
 import {matchSpell, ruleKey, spellByKey, spellKey} from "./rules-library.mjs";
+
+function homebrewFeaturePanel(character) {
+  const features = character.homebrewFeatures ?? [];
+  return `<section class="sheet-box" aria-labelledby="homebrew-features-heading">
+    <header class="sheet-box-heading">
+      <h2 id="homebrew-features-heading">Homebrew features</h2>
+      <button class="button small outline" type="button" data-action="add-homebrew-feature">${icon("flame", 14)} Add homebrew feature</button>
+    </header>
+    <p class="sheet-rules-note">Custom class or subclass features. Resource pools track uses; the effects themselves still need a table ruling unless an existing play control covers them.</p>
+    ${features.length ? `<div class="homebrew-feature-list">${features.map((feature) => `<details class="class-feature-rule">
+      <summary><strong>${escape(feature.name)}</strong>
+        <span>${feature.className ? escape(feature.className) + " · " : ""}${feature.level != null ? "Level " + feature.level + " · " : ""}Manual</span>
+        <button type="button" class="icon-button-small delete-btn" data-action="remove-homebrew-feature" data-id="${escape(feature.id)}" aria-label="Remove ${escape(feature.name)}">${icon("trash", 14)}</button>
+      </summary>
+      <p>${escape(feature.description)}</p>
+      ${feature.resource ? `<p class="sheet-rules-note">${escape(feature.resource.name)} · ${feature.resource.current ?? feature.resource.maximum} / ${feature.resource.maximum} · ${feature.resource.rest === "short" ? "Short or long rest" : "Long rest"}</p>` : ""}
+    </details>`).join("")}</div>` : '<p class="sheet-empty">No homebrew features on this sheet yet.</p>'}
+  </section>`;
+}
 
 export function sheetPath(character, section = "overview") {
   return "#characters/" + encodeURIComponent(character.id) + (section === "overview" ? "" : "/" + section);
@@ -175,7 +195,7 @@ function rulesContent(character, embedded) {
     ["Size", rules.size], ["Darkvision", rules.darkvision ? `${rules.darkvision} ft` : ""],
     ["Other movement", joined(rules.extraSpeeds)], ["Total Hit Dice", hitDice],
     ["Base AC before gear and features", rules.baseAC], ["Base Passive Perception before training", rules.basePerception],
-    ["Damage resistances", joined(rules.resistances)], ["Trained skills", joined(rules.skillTraining)],
+    ["Damage resistances", joined(rules.resistances)], ["Damage immunity", hasHestiasFury(character) ? "Fire · "+hestiaName : ""], ["Trained skills", joined(rules.skillTraining)],
     ["Languages", joined(rules.languages)], ["Tools", joined(rules.tools)],
     ["Armor training", joined(rules.armor)], ["Weapon training", joined(rules.weapons)], ["Feats", joined(rules.feats)],
   ].filter(([,value]) => value != null && value !== "");
@@ -215,8 +235,9 @@ function inventoryContent() {
   return `<section class="sheet-box" aria-labelledby="inventory-heading">
     <header class="sheet-box-heading">
       <h2 id="inventory-heading">Inventory</h2>
-      <div style="display:flex; align-items:center; gap:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <button class="button small outline" type="button" data-action="add-item">${icon("plus", 14)} Add item</button>
+        <button class="button small outline" type="button" data-action="add-homebrew-item">${icon("flame", 14)} Add from homebrew</button>
         ${searchField("Search items")}
       </div>
     </header>
@@ -293,16 +314,21 @@ export function fillSheetResults(character, section) {
       <h3>${level === 0 ? "Cantrips" : "Level " + level}</h3>
       <ul>${spells.filter((spell) => spell.level === level).map((spell) => {
         const description = describe(spell.name);
-        const reference = (spell.source && spellByKey(spell.source.toLowerCase()+"|"+ruleKey(spell.name.split(" (")[0]))) || matchSpell(spell.name);
+        const bareName = spell.name.split(" (")[0];
+        const homebrewSource = spell.source && (/^HB$/i.test(String(spell.source)) || /^hb\|/i.test(String(spell.source)));
+        const keyed = spell.source && spellByKey(String(spell.source).toLowerCase()+"|"+ruleKey(bareName));
+        const reference = keyed || (homebrewSource ? null : matchSpell(spell.name));
         const spellName = reference ? `<button type="button" class="spell-link" data-action="spell" data-id="${escape(spellKey(reference))}"
             aria-label="View 5e spell ${escape(reference.name)}">${text(description.name)}</button>` : text(description.name);
-        return `<li><div>${spellName}${reference ? `<small class="spell-source">${escape(reference.source)}${spell.level !== reference.level ? " · Reference level " + reference.level : ""}</small>` : ""}
+        const sourceLabel = reference ? reference.source : (homebrewSource ? "HB" : "");
+        return `<li><div>${spellName}${sourceLabel ? `<small class="spell-source">${escape(sourceLabel)}${reference && spell.level !== reference.level ? " · Reference level " + reference.level : ""}</small>` : ""}
+          ${spell.castUsage?.itemOnly?`<small class="spell-source">${escape(spell.grantedBy)} · ${spell.castUsage.atWill?'At will':spell.castUsage.maximum+' per long rest'}</small>`:''}
           ${notes(description)}</div>
-          <div class="spell-row-actions">
+          ${spell.castUsage?.itemOnly?'':`<div class="spell-row-actions">
             <button type="button" class="tag ${spell.prepared ? 'tag-prepared' : 'tag-unprepared'}" data-action="toggle-prepared" data-index="${spell.originalIndex}" aria-label="Toggle prepared status for ${escape(description.name)}">${spell.prepared ? "Prepared" : "Unprepared"}</button>
             <button type="button" class="icon-button-small" data-action="edit-spell" data-index="${spell.originalIndex}" aria-label="Edit ${escape(description.name)}" title="Edit spell">${icon("edit", 13)}</button>
             <button type="button" class="icon-button-small delete-btn" data-action="delete-spell" data-index="${spell.originalIndex}" aria-label="Delete ${escape(description.name)}" title="Delete spell">${icon("trash", 13)}</button>
-          </div>
+          </div>`}
         </li>`;
       }).join("")}</ul>
     </section>`).join("")}</div>` : '<p class="sheet-empty">No matching spells. Click "Add spell" to add one.</p>');
@@ -320,7 +346,7 @@ export function characterPage(character, requestedSection, {embedded = false, to
         <button class="button small outline" type="button" data-action="add-attack">${icon("plus", 14)} Add action</button>
       </header>
       ${attackList(character.attacks)}
-      </section>${featureRules(character)}`,
+      </section>${homebrewFeaturePanel(character)}${featureRules(character)}`,
     skills: () => skillContent(character),
     inventory: inventoryContent,
     spells: () => spellContent(character),

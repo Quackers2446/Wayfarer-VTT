@@ -4,6 +4,7 @@ import {
 } from "./combat.mjs";
 import {captureImpact, recordAction, withActionEvent} from "./action-events.mjs";
 import {pactMagicResource} from "./class-features.mjs";
+import {weaponProperties} from './weapon-properties.mjs';
 
 export function migratePactResources(actor) {
   if(!actor.classRules?.pact || actor.resources?.pactMagic) return;
@@ -17,7 +18,7 @@ export function migratePactResources(actor) {
 
 export function classWeapons(actor,battle) {
   battle=turnView(battle,actor);
-  const attacks = [...actor.attacks];
+  const attacks = actor.attacks.map(weaponProperties);
   if (actor.astralArms && hasFeature(actor,"Arms of the Astral Self")) {
     const wisdom = actor.ability.wis ?? 0;
     attacks.push({name:"Astral Arms",bonus:wisdom+(actor.proficiency ?? 0),
@@ -164,7 +165,6 @@ function resolveClassAction(battle,actor,id,options,random) {
         if (save.total < dc) {
           const damage = rollDice("2d"+actor.classRules.martialDie,{random});
           const result = applyDamage(battle,enemy,damage.total,"force",false,random,actor);
-          captureImpact(battle,enemy,{amount:result.damage,type:"force",defeated:result.defeated});
           log(battle,enemy.name+" takes "+result.damage+" force damage from Astral Arms ("+damage.breakdown+").");
         }
       }
@@ -210,25 +210,36 @@ function resolveSkillCheck(battle,actor,name,map,random) {
   return result;
 }
 
-export function restParty(battle,long = false) {
+export function shortRestsLeft(battle){return Math.max(0,2-(battle.rest?.shortUsed??0));}
+export function restParty(battle,long = false,{advance=true}={}) {
   if (battle.round || battle.movement) throw new Error("Finish combat before resting.");
+  if(!long&&!shortRestsLeft(battle))throw new Error('Both short rests are spent. Take a long rest first.');
   const heroes = battle.actors.filter((actor) => actor.side === "party" && !actor.dead);
+  if(!heroes.some(actorIsUp))throw new Error('A conscious party member is required to rest.');
+  battle.rest??={};battle.rest.shortUsed=long?0:(battle.rest.shortUsed??0)+1;
   for (const actor of heroes) {
-    recordAction(battle,actor,{action:long ? "Long rest · 8 hours" : "Short rest · 1 hour",kind:"rest"});
+    withActionEvent(battle,actor,{action:long ? "Long rest · 8 hours" : "Short rest · 1 hour",kind:"rest"},()=>{
+    const beforeHp=actor.hp;
     for (const pool of Object.values(actor.resources ?? {})) {
       if (long || pool.rest === "short") pool.current = pool.maximum;
     }
     if (long) {
       heal(actor,actor.maxHp);
+      actor.tempHp=0;
       for (const pool of Object.values(actor.slots)) if (Number.isFinite(pool.maximum)) pool.current = pool.maximum;
     } else if (actor.classRules?.pact && !actor.resources?.pactMagic) {
       for (const pool of Object.values(actor.slots)) if (Number.isFinite(pool.maximum)) pool.current = pool.maximum;
     }
+    if(!long)heal(actor,Math.floor(actor.maxHp/2));
+    if(actor.hp>0)actor.prone=false;
     actor.reactionUsed = false;
     delete actor.astralArms;
     delete actor.astralVisage;
     delete actor.bladesong;
+    delete actor.sneakTurn;
+    log(battle,actor.name+' recovers '+(actor.hp-beforeHp)+' HP; '+(long?'long':'short')+'-rest resources refreshed.');
+    });
   }
-  advanceTime(battle,long ? 28800 : 3600);
+  if(advance)advanceTime(battle,long ? 28800 : 3600);
   log(battle,"The party finishes a "+(long ? "long" : "short")+" rest.");
 }
