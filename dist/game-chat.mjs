@@ -5,7 +5,7 @@ import {parseRollCommand, executeRoll, formatRollMessage, parseRollMessage, visi
 
 const timeFormat = new Intl.DateTimeFormat(undefined,{hour:"numeric",minute:"2-digit"});
 
-export function createGameChat(id, sender) {
+export function createGameChat(id, senderId) {
   const panel = document.createElement("aside");
   panel.className = "game-chat";
   panel.setAttribute("aria-label","Party chat");
@@ -43,6 +43,9 @@ export function createGameChat(id, sender) {
   const send = form.querySelector(".chat-send");
   const status = form.querySelector(".chat-status");
   const isLocal = id === "local";
+  // Multiplayer POSTs require the controller UUID. Mount only updates the display label.
+  const controllerId = isLocal ? null : senderId;
+  let displayName = isLocal ? (senderId || "Player") : "Player";
   let localSeq = 0;
   const playedRolls = new Set();
   const seenKey = "wayfarer-chat-seen:" + id;
@@ -61,6 +64,13 @@ export function createGameChat(id, sender) {
   const chatMessages=new Map(),activityMessages=new Map(),eventTimes=new Map();
   let includeActivity=Boolean(panel.querySelector('.chat-activity-toggle')?.checked),activitySource,lastActivity=0,timelineSignature='';
   const activityObserver=new MutationObserver(syncActivity);
+  // Ephemeral bubbles (voice-chip style) for new messages while the panel is closed.
+  const toastHost = document.createElement("div");
+  toastHost.className = "chat-toast-hud";
+  toastHost.setAttribute("aria-live", "polite");
+  toastHost.setAttribute("aria-label", "Recent chat");
+  const toastTimers = new Map();
+  let chatPrimed = false;
 
   function syncActivity(){
     for(const line of activitySource?.querySelectorAll('[data-event]')??[]){
@@ -120,6 +130,63 @@ export function createGameChat(id, sender) {
     toggle.setAttribute("aria-label",open ? "Minimize chat" : unread ? `Chat, ${unread} unread` : "Chat");
   }
 
+  function ensureToastHost() {
+    const screen = panel.closest(".game-screen") || slot?.closest?.(".game-screen") || document.querySelector(".game-screen");
+    const stage = screen?.querySelector(".game-stage");
+    if (stage && toastHost.parentElement !== stage) stage.append(toastHost);
+  }
+
+  function dismissToast(chip) {
+    const timer = toastTimers.get(chip);
+    if (timer) clearTimeout(timer);
+    toastTimers.delete(chip);
+    if (!chip.isConnected) return;
+    chip.classList.add("is-leaving");
+    setTimeout(() => chip.remove(), 220);
+  }
+
+  function clearToasts() {
+    for (const chip of [...toastHost.children]) dismissToast(chip);
+  }
+
+  function showToast(message) {
+    if (open || stopped || message.system) return;
+    if (message.time && Date.now() - message.time > 20000) return;
+    ensureToastHost();
+    const key = String(message.id);
+    if (toastHost.querySelector(`[data-toast="${CSS.escape(key)}"]`)) return;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chat-toast-chip";
+    chip.dataset.toast = key;
+    chip.setAttribute("aria-label", `Chat from ${message.author}: open chat`);
+    const photo = profilePhotoURL(message.profileId, message.photo);
+    const avatar = document.createElement("span");
+    avatar.className = "chat-toast-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    if (photo) {
+      const img = document.createElement("img");
+      img.src = photo;
+      img.alt = "";
+      img.loading = "lazy";
+      avatar.append(img);
+    } else {
+      avatar.textContent = String(message.author || "?").trim().charAt(0).toUpperCase() || "?";
+    }
+    const bodyWrap = document.createElement("span");
+    bodyWrap.className = "chat-toast-body";
+    const name = document.createElement("strong");
+    name.textContent = message.author || "Player";
+    const text = document.createElement("span");
+    text.textContent = visibleMessageText(message.body || "");
+    bodyWrap.append(name, text);
+    chip.append(avatar, bodyWrap);
+    chip.addEventListener("click", () => setOpen(true));
+    toastHost.prepend(chip);
+    while (toastHost.childElementCount > 4) dismissToast(toastHost.lastElementChild);
+    toastTimers.set(chip, setTimeout(() => dismissToast(chip), 4800));
+  }
+
   function setOpen(next) {
     open = next;
     slot?.classList.toggle("chat-open",open);
@@ -128,6 +195,7 @@ export function createGameChat(id, sender) {
     title.hidden = !open;
     content.hidden = !open;
     if (open) {
+      clearToasts();
       history.scrollTop = history.scrollHeight;
       rememberScroll();
       markSeen();
@@ -136,9 +204,10 @@ export function createGameChat(id, sender) {
     document.dispatchEvent(new CustomEvent('wayfarer:chat-visibility',{detail:open}));
   }
 
-  function appendMessages(messages) {
+  function appendMessages(messages, { toast = true } = {}) {
     if(!messages.length)return;
     for(const message of messages){
+      const isNew = !chatMessages.has(message.id);
       chatMessages.set(message.id,{...message,key:'chat:'+message.id,sequence:message.id,system:false});
       if (message.body && !playedRolls.has(message.id)) {
         playedRolls.add(message.id);
@@ -153,6 +222,7 @@ export function createGameChat(id, sender) {
           }}));
         }
       }
+      if (toast && isNew) showToast(message);
     }
     while(chatMessages.size>200)chatMessages.delete(chatMessages.keys().next().value);
     renderTimeline();
@@ -168,7 +238,9 @@ export function createGameChat(id, sender) {
       const messages = response.messages;
       cursor = messages.at(-1)?.id ?? cursor ?? 0;
       empty.textContent = "No messages yet.";
-      appendMessages(messages);
+      // First poll is history catch-up — don't flash a stack of old bubbles.
+      appendMessages(messages, { toast: chatPrimed });
+      chatPrimed = true;
     } catch {
       if (!stopped && cursor == null) empty.textContent = "Connecting to chat…";
     } finally {
@@ -229,7 +301,7 @@ export function createGameChat(id, sender) {
         }
         let rollResult;
         try {
-          rollResult = executeRoll(parsed, { name: sender });
+          rollResult = executeRoll(parsed, { name: displayName });
         } catch (err) {
           status.textContent = err.message;
           return;
@@ -243,17 +315,17 @@ export function createGameChat(id, sender) {
         if (isLocal) {
           const localId = ++localSeq;
           playedRolls.add(localId);
-          appendMessages([{ id: localId, author: sender, body: formatted, time: Date.now() }]);
+          appendMessages([{ id: localId, author: displayName, body: formatted, time: Date.now() }]);
           return;
         }
 
         submitting = true;
         try {
-          const draftMsg = { messageId: crypto.randomUUID(), sender, body: formatted };
+          const draftMsg = { messageId: crypto.randomUUID(), sender: controllerId, body: formatted };
           await sendChat(id, draftMsg);
           refresh();
-        } catch {
-          status.textContent = "Roll could not be sent to party. Try again.";
+        } catch (error) {
+          status.textContent = error?.message || "Roll could not be sent to party. Try again.";
         } finally {
           submitting = false;
           updateSend();
@@ -264,13 +336,13 @@ export function createGameChat(id, sender) {
 
     if (isLocal) {
       const localId = ++localSeq;
-      appendMessages([{ id: localId, author: sender, body: text, time: Date.now() }]);
+      appendMessages([{ id: localId, author: displayName, body: text, time: Date.now() }]);
       body.value = "";
       updateSend();
       return;
     }
 
-    if (draft?.body !== text) draft = {messageId:crypto.randomUUID(),sender,body:text};
+    if (draft?.body !== text) draft = {messageId:crypto.randomUUID(),sender:controllerId,body:text};
     submitting = true;
     updateSend();
     status.textContent = "";
@@ -280,8 +352,8 @@ export function createGameChat(id, sender) {
       if (body.value.trim() === text) body.value = "";
       draft = null;
       refresh();
-    } catch {
-      status.textContent = "Message could not be sent. Try again.";
+    } catch (error) {
+      status.textContent = error?.message || "Message could not be sent. Try again.";
     } finally {
       submitting = false;
       updateSend();
@@ -294,10 +366,11 @@ export function createGameChat(id, sender) {
   return {
     mount(container, name) {
       slot = container;
-      slot.append(panel);
+      if (panel.parentElement !== slot) slot.append(panel);
       slot.classList.toggle("chat-open",open);
-      author.textContent = "Sending as " + name;
-      sender = name;
+      displayName = name || displayName;
+      author.textContent = "Sending as " + displayName;
+      ensureToastHost();
       if (open) history.scrollTop = following ? history.scrollHeight : scrollTop;
     },
     get isOpen(){return open;},
@@ -319,6 +392,8 @@ export function createGameChat(id, sender) {
       stopped = true;
       activityObserver.disconnect();
       clearTimeout(timer);
+      clearToasts();
+      toastHost.remove();
       panel.remove();
     },
   };

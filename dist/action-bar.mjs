@@ -1,4 +1,4 @@
-import {turnView, canTakeTurn, actorIsUp, condition, currentActor, distanceFt, hasFeature, incapacitated, moveLeft, movementGroup, speedOf, supportedSpell} from "./combat.mjs";
+import {turnView, canTakeTurn, actorIsUp, concentrationRemaining, condition, currentActor, distanceFt, handsOccupied, hasFeature, incapacitated, moveLeft, movementGroup, speedOf, spellNeedsHands, supportedSpell} from "./combat.mjs";
 import {thrallsOf} from "./dominate.mjs";
 import {classActions} from "./class-actions.mjs";
 import {escape} from "./format.mjs";
@@ -134,6 +134,12 @@ export function entryReason(actor,battle,entry,canAct=true) {
   battle=turnView(battle,actor);
   if(entry.controlZone){const cast=entryReason(actor,battle,{...entry,controlZone:null},canAct),control=entryReason(actor,battle,{mode:'common',timing:'bonus',actionId:'control-spell-zone'},canAct);return cast&&control?cast:'';}
   if(entry.inspect) return "";
+  // Ending concentration is free and may happen on any turn (PHB).
+  if(entry.actionId==='end-concentration') {
+    if(!canAct) return "This character is controlled by another player.";
+    if(!actor.concentration) return "This character is not concentrating.";
+    return "";
+  }
   if(entry.mode==='dominate') {
     if(!canAct) return "This character is controlled by another player.";
     if(!actorIsUp(actor)) return "This character is unconscious or defeated.";
@@ -148,7 +154,7 @@ export function entryReason(actor,battle,entry,canAct=true) {
   if(entry.mode==="move") return battle.round && moveLeft(battle,actor)<=0 ? "No movement remains." : "";
   if(entry.mode==="passive") return entry.resource && !entry.toggled && !(actor.resources?.[entry.resource]?.current>=entry.cost) ? "Not enough "+(actor.resources?.[entry.resource]?.name ?? entry.resource)+" remaining." : "";
   if(!battle.round) {
-    if(entry.mode==="common" && !["help-up","interact","control-spell-zone","zone-beam"].includes(entry.actionId)) return "No turn budget is needed while exploring.";
+    if(entry.mode==="common" && !["help-up","interact","control-spell-zone","zone-beam","end-concentration","search","investigate","use-feature"].includes(entry.actionId)) return "No turn budget is needed while exploring.";
     if(entry.mode==="feature") return "Use this class ability during combat.";
   }
   if(entry.mode==="weapon" && battle.round) {
@@ -170,6 +176,7 @@ export function entryReason(actor,battle,entry,canAct=true) {
     const spell=entry.data;
     if(spell.prepared===false) return "This spell is not prepared.";
     if(!entry.usable) return entry.manual ? "This spell currently requires a manual ruling. See its rules in your character sheet." : "This spell’s effect is not automated yet. See its rules in your character sheet.";
+    if(handsOccupied(actor) && spellNeedsHands(spell)) return "Dragging occupies your hands. Only verbal-only spells can be cast.";
     if(battle.round && entry.timing==="bonus" && (battle.cast?.level || battle.cast?.bonus || battle.cast?.reaction)) return "Another spell has restricted bonus-action casting this turn.";
     if(battle.round && spell.level>0 && entry.timing!=="bonus" && battle.cast?.bonus) return "After a bonus-action spell, your action can only cast a cantrip.";
     if(spell.level>0) {
@@ -180,8 +187,10 @@ export function entryReason(actor,battle,entry,canAct=true) {
       if(!feature && (usage?.itemOnly || !ordinary && !(pact?.current>0 && pact.slotLevel>=spell.level))) return "No spell slot or feature use remains for this spell.";
     }
   }
+  if(entry.mode==="potion" && handsOccupied(actor)) return "Dragging occupies your hands. Drop the creature first.";
   if(entry.mode==="potion" && !entry.usable) return "This item has no uses left.";
   if(entry.mode==="common" && entry.actionId==="stand" && moveLeft(battle,actor)<speedOf(actor)/2) return "Standing requires half your movement speed.";
+  if(entry.mode==="weapon" && handsOccupied(actor)) return "Dragging occupies your hands. Drop the creature first.";
   if(entry.mode==="weapon" && !entry.usable) return "Complete this weapon’s attack bonus and damage in your sheet.";
   return "";
 }
@@ -215,7 +224,10 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
       return {name: entry.data.name, source};
     });
   if (toPrime.length) void primeSpells(toPrime);
-  entries.push({id:'common:interact',actionId:'interact',name:actor.carrying?'Carrying body':'Interact',mode:'common',tab:'common',timing:'free',instant:false,symbol:'fist',description:'Select a body or treasure. Loot, carry, place, throw, or help from one contextual menu.'});
+  entries.push({id:'common:interact',actionId:'interact',name:actor.carrying?'Carrying body':actor.dragging?'Dragging body':'Interact',mode:'common',tab:'common',timing:'free',instant:false,symbol:'fist',description:'Select a body or treasure. Loot, carry, drag, place, drop, throw, or help from one contextual menu.'});
+  entries.push({id:'common:search',actionId:'search',name:'Search',mode:'common',tab:'common',timing:'action',instant:true,symbol:'eye',description:'Search the room for traps, secrets, hidden creatures, and concealed loot. Always reports what you find — or that nothing stands out.'});
+  entries.push({id:'common:investigate',actionId:'investigate',name:'Investigate',mode:'common',tab:'common',timing:'action',instant:false,symbol:'eye',description:'Choose a hinted or suspicious feature for a closer look. May require a skill check.'});
+  entries.push({id:'common:use-feature',actionId:'use-feature',name:'Use',mode:'common',tab:'common',timing:'action',instant:false,symbol:'fist',description:'Use a revealed mechanism, lever, keyhole, or interactive object. Some uses need a matching item.'});
   for(const zone of battle.spellZones??[])if(zone.custom&&zone.caster===actor.id&&['sphere','movable'].includes(zone.rule.shape)){
     const spell=entries.find(entry=>entry.mode==='spell'&&entry.data.reference===zone.rule.reference);
     if(spell){spell.controlZone=zone.id;spell.stats=[...(spell.stats??[]),'Active sphere · control with a bonus action'];}
@@ -242,6 +254,13 @@ export function buildActionBar(actor,battle,list,{canAct=true,features=[],filter
     entries.push({id:"common:wake:"+target.id,actionId:"wake",targetId:target.id,name:"Wake "+target.name,mode:"common",tab:"common",timing:"action",instant:true,symbol:"heart",description:"Use your action to shake this adjacent ally awake."});
   }
   if(actor.nimbleEscape && !hasFeature(actor,"Cunning Action")) entries.push({id:"common:bonus-disengage",actionId:"bonus-disengage",name:"Disengage",mode:"common",tab:"common",timing:"bonus",instant:true,symbol:"shield",description:"Use a bonus action to avoid opportunity attacks."});
+  if(actor.concentration) {
+    const left=concentrationRemaining(battle,actor);
+    const rounds=left?.rounds;
+    entries.push({id:"common:end-concentration",actionId:"end-concentration",name:"End Concentration",mode:"common",tab:"spell",timing:"free",instant:true,symbol:"sparkles",
+      stats:[actor.concentration.name, rounds!=null ? rounds+(rounds===1?" round left":" rounds left") : null].filter(Boolean),
+      description:"Drop concentration on "+actor.concentration.name+" (no action required). The spell ends immediately, along with any zones or conditions it maintains."});
+  }
   if(actor.concentration?.bolt) entries.push({id:"common:witch-bolt",actionId:"witch-bolt",name:"Sustain Witch Bolt",mode:"common",tab:"spell",timing:"action",instant:true,symbol:"sparkles",description:"Deal the sustained damage of your current Witch Bolt without spending another spell slot."});
   for(const thrall of thrallsOf(battle,actor)) {
     const controlled=thrall.dominateControl?.from===actor.id;
@@ -314,6 +333,101 @@ function costs(entry,actor) {
   if(entry.resource && entry.cost) values.push(entry.cost+" "+(actor.resources?.[entry.resource]?.name ?? entry.resource));
   else if(entry.mode==="spell" && entry.level>0) values.push(entry.data.castUsage?.atWill ? "At will" : "Spell slot / feature use");
   return values;
+}
+
+const kindLabels={weapon:"Weapon",spell:"Spell",potion:"Item",feature:"Ability",passive:"Passive",
+  common:"Action",move:"Movement",dominate:"Dominate",reference:"Reference"};
+
+function pushFact(facts,label,value) {
+  if(value==null || value==="") return;
+  facts.push([label,String(value)]);
+}
+
+/** Structured detail payload for hotbar right-click inspect dialogs. */
+export function hotbarDetailModel(entry,actor={},extras={}) {
+  if(!entry) return null;
+  const data=entry.data ?? {};
+  const facts=[];
+  pushFact(facts,"Type",kindLabels[entry.mode] ?? titleCase(entry.mode));
+  pushFact(facts,"Timing",timingNames[entry.timing] ?? entry.timing);
+  if(entry.resource && entry.cost) {
+    pushFact(facts,"Cost",entry.cost+" "+(actor.resources?.[entry.resource]?.name ?? entry.resource));
+  }
+  if(entry.toggled!=null) pushFact(facts,"Armed",entry.toggled ? "On" : "Off");
+
+  if(entry.mode==="weapon") {
+    pushFact(facts,"Attack",(data.bonus>=0 ? "+" : "")+(data.bonus ?? ""));
+    pushFact(facts,"Damage",[data.damage,data.type].filter(Boolean).join(" "));
+    if(data.normalRange) pushFact(facts,"Range",data.normalRange+"/"+(data.longRange || data.normalRange)+" ft");
+    else pushFact(facts,"Reach",(data.reach || 5)+" ft");
+    const traits=[data.finesse && "Finesse",data.rangedWeapon && "Ranged",data.monkWeapon && "Monk weapon",
+      data.unarmed && "Unarmed",data.spellAttack && "Spell attack"].filter(Boolean);
+    if(traits.length) pushFact(facts,"Properties",traits.join(", "));
+    if(data.note) pushFact(facts,"Note",data.note);
+  } else if(entry.mode==="spell") {
+    pushFact(facts,"Level",entry.level ? "Level "+entry.level : "Cantrip");
+    for(const stat of entry.stats ?? []) {
+      if(/^(level \d|cantrip)/i.test(stat)) continue;
+      const range=/^Range\s+(.+)$/i.exec(stat);
+      if(range){pushFact(facts,"Range",range[1]);continue;}
+      if(Object.values(schoolNames).includes(stat)){pushFact(facts,"School",stat);continue;}
+      if(/spell attack/i.test(stat)){pushFact(facts,"Attack",stat);continue;}
+      if(/\bsave\b/i.test(stat)){pushFact(facts,"Save",stat);continue;}
+      if(/concentration/i.test(stat)){pushFact(facts,"Duration","Concentration");continue;}
+      if(/scales with level/i.test(stat)){pushFact(facts,"Scaling","Scales with level");continue;}
+      if(/\d+d\d|\bdamage\b|\b\w+ (acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|poison|psychic|radiant|slashing|thunder)\b/i.test(stat)){
+        pushFact(facts,"Damage",stat);continue;
+      }
+      pushFact(facts,"Detail",stat);
+    }
+    if(data.castUsage?.atWill) pushFact(facts,"Uses","At will");
+    else if(data.castUsage?.resource) pushFact(facts,"Uses",
+      (data.castUsage.cost ?? 1)+" "+(actor.resources?.[data.castUsage.resource]?.name ?? data.castUsage.resource));
+  } else if(entry.mode==="potion") {
+    pushFact(facts,"Healing",data.formula);
+    pushFact(facts,"Quantity",data.quantity);
+    if(entry.thrown) pushFact(facts,"Range","30 ft");
+  } else if(entry.mode==="feature") {
+    if(data.feature) pushFact(facts,"Feature",data.feature);
+    if(data.attack) pushFact(facts,"Attack","Makes an attack");
+    if(data.target) pushFact(facts,"Target",titleCase(data.target));
+    if(data.area) pushFact(facts,"Area",data.area+" ft");
+  } else if(entry.mode==="dominate") {
+    for(const stat of entry.stats ?? []) pushFact(facts,"Status",stat);
+  } else {
+    for(const stat of entry.stats ?? []) pushFact(facts,"Detail",stat);
+  }
+
+  // Collapse repeated Detail rows into unique values while preserving labeled facts.
+  const seen=new Set();
+  const compact=[];
+  for(const [label,value] of facts) {
+    const key=label+"|"+value;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    compact.push([label,value]);
+  }
+
+  const spellKey=entry.mode==="spell" ? (data.reference || null) :
+    entry.reactionRef || null;
+  const featureName=entry.mode==="feature" ? (data.feature || entry.name) :
+    entry.mode==="passive" ? (data.feature || entry.name) : null;
+
+  return {
+    id:entry.id,
+    mode:entry.mode,
+    name:entry.name,
+    symbol:entry.symbol || "book",
+    inspect:Boolean(entry.inspect),
+    spellKey,
+    featureName,
+    subtitle:[kindLabels[entry.mode] ?? titleCase(entry.mode), timingNames[entry.timing] ?? entry.timing]
+      .filter(Boolean).join(" · "),
+    facts:compact,
+    description:entry.description || "",
+    entries:extras.entries ?? null,
+    reason:entry.reason || "",
+  };
 }
 
 export function renderActionTile(entry,actor,selected,shortcut) {

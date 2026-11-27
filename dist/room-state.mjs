@@ -4,7 +4,7 @@ import {startingRegion,regionCells} from './encounters.mjs';
 
 // One canonical battle/character ledger belongs to a room. Scenes contain only
 // physical map data; they never contain another battle, party, XP or inventory.
-export const sceneFields=['terrain','markers','wallData','wallRevision','fogMemory','fogMemoryByActor','explored','alignedGrid','gridManual','gridOverlay','sceneReady','worldLootVersion','spellZones','showDmArtwork'];
+export const sceneFields=['terrain','markers','features','wallData','wallRevision','fogMemory','fogMemoryByActor','explored','alignedGrid','gridManual','gridOverlay','gridSquareFt','artworkFit','sceneReady','worldLootVersion','spellZones','showDmArtwork'];
 const clone=value=>structuredClone(value);
 const savedMap=map=>({...map,regions:map.regions.map(region=>({...region,entry:region.entry?{name:region.entry.name,entries:(region.entry.entries??[]).filter(entry=>entry?.type==='insetReadaloud')}:undefined}))});
 export function roomMapChoices(state,available=[]){
@@ -37,23 +37,26 @@ export function travelRoom(state,nextMap){
  if(state.currentMap.module!==nextMap.module)throw Error('Choose a map from this room’s adventure.');
  if(state.currentMap.key===nextMap.key)return clone(state);
  if(state.battle.round || state.battle.movement || state.battle.classReaction)throw Error('Finish combat and pending reactions before changing maps.');
- if(nextMap.sourceGrid)nextMap={...nextMap,...gridGeometry(nextMap,state.world.maps[nextMap.key]?.alignment ?? nextMap.sourceGrid)};
  const next=clone(state),scene=next.world.maps[nextMap.key];
  next.world.maps[state.currentMap.key].environment=scenery(state.battle);
  for(const field of sceneFields)delete next.battle[field];
- Object.assign(next.battle,{terrain:{},markers:[]},scene?.environment ?? {});
+ Object.assign(next.battle,{terrain:{},markers:[],features:[]},scene?.environment ?? {});
+ if(nextMap.sourceGrid){
+  const squareFt=next.battle.gridSquareFt ?? null;
+  nextMap={...nextMap,...gridGeometry(nextMap,scene?.alignment ?? nextMap.sourceGrid, squareFt)};
+ }
  next.currentMap=clone(nextMap);next.alignment=scene?.alignment ?? null;
  const active=roomBattle(next),party=active.actors.filter(actor=>actor.side==='party');
- const carried=new Set(party.map(actor=>actor.carrying).filter(Boolean));
- // Carried creatures travel with their carrier rather than remaining on the old map.
- for(const body of next.battle.actors)if(carried.has(body.id)){body.sceneKey=nextMap.key;if(!active.actors.some(actor=>actor.id===body.id))active.actors.push(body);}
+ const attached=new Set(party.flatMap(actor=>[actor.carrying,actor.dragging]).filter(Boolean));
+ // Carried/dragged creatures travel with their mover rather than remaining on the old map.
+ for(const body of next.battle.actors)if(attached.has(body.id)){body.sceneKey=nextMap.key;if(!active.actors.some(actor=>actor.id===body.id))active.actors.push(body);}
  for(const actor of party){actor.x=null;actor.y=null;}
  const entrance=startingRegion(nextMap),candidates=entrance?regionCells(nextMap,entrance):Array.from({length:nextMap.cols*nextMap.rows},(_,i)=>({x:i%nextMap.cols,y:Math.floor(i/nextMap.cols)}));
  for(const actor of party){
   const remembered=scene?.partyPositions?.[actor.id],cell=[...(remembered?.x!=null?[remembered]:[]),...candidates].find(cell=>canStand(active,actor,cell.x,cell.y,nextMap));
   if(!cell)throw Error('There is no open arrival space for the party on this map.');
   actor.x=cell.x;actor.y=cell.y;
-  const body=active.actors.find(body=>body.id===actor.carrying);if(body){body.x=actor.x;body.y=actor.y;}
+  const body=active.actors.find(body=>body.id===actor.carrying||body.id===actor.dragging);if(body){body.x=actor.x;body.y=actor.y;}
  }
  active.spellZones=(active.spellZones??[]).filter(zone=>{if(zone.custom){if(zone.expires!=null&&zone.expires<=(active.elapsed??0))return false;if(zone.concentration===false)return true;return active.actors.find(actor=>actor.id===zone.caster)?.concentration?.name===zone.name;}return !zone.caster || active.actors.find(actor=>actor.id===zone.caster)?.concentration;});
  return commitRoomState(next,nextMap,active,next.alignment);

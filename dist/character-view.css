@@ -10,9 +10,14 @@
   align-items: center;
   gap: 18px;
   padding: 25px 27px;
-  color: #fcf7e9;
-  background: linear-gradient(115deg, #20372a, #32493a 80%, #3d5140);
-  border: 1px solid #3b5240;
+  color: var(--theme-text, #fcf7e9);
+  background: linear-gradient(
+    115deg,
+    var(--theme-ground, #20372a),
+    var(--theme-panel, #32493a) 80%,
+    color-mix(in srgb, var(--theme-panel, #3d5140) 75%, var(--theme-line, #3d5140) 25%)
+  );
+  border: 1px solid var(--theme-line, #3b5240);
   border-radius: 13px;
 }
 
@@ -21,9 +26,9 @@
   place-items: center;
   width: 65px;
   height: 65px;
-  color: #f4dfaa;
-  background: #ffffff10;
-  border: 1px solid #bfae77;
+  color: var(--theme-accent, #f4dfaa);
+  background: color-mix(in srgb, var(--theme-text, #fff) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--theme-accent, #bfae77) 70%, var(--theme-line, #3b5240));
   border-radius: 12px;
   font: 600 1.6rem var(--display);
 }
@@ -35,7 +40,7 @@
 }
 
 .sheet-hero p {
-  color: #eceddf;
+  color: var(--theme-muted, #eceddf);
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
@@ -46,7 +51,7 @@
 .sheet-token-status:empty { display:none }
 .sheet-token-bar { display:flex; align-items:center; gap:10px; padding:4px 0 10px }
 .sheet-token-bar .sheet-token-controls { margin:0 }
-.sheet-token-bar .sheet-avatar { flex:none; width:36px; height:36px; border-radius:50%; background:#365849; font-size:.84rem }
+.sheet-token-bar .sheet-avatar { flex:none; width:36px; height:36px; border-radius:50%; background:var(--theme-panel, #365849); font-size:.84rem }
 .sheet-edition { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:.83rem }
 .sheet-edition select { border:1px solid var(--border); border-radius:6px; padding:5px 7px; color:var(--ink); background:#fbfaf2; font:inherit }
 .sheet-rules-note { padding:7px 14px; color:var(--muted); font-size:.86rem }
@@ -316,11 +321,19 @@
   .skill-list { grid-template-columns: repeat(2, minmax(0, 1fr)) }
   .skill-list div:nth-child(odd) { border-right: 1px solid var(--sheet-border) }
 }
+@media (max-width: 800px) {
+  .sheet-hero { gap: 12px; padding: 14px 16px }
+  .sheet-hero h1 { font-size: clamp(1.35rem, 4vw, 1.75rem); letter-spacing: -.02em; line-height: 1.15 }
+  .sheet-hero p { font-size: .86rem; margin-top: 3px; line-height: 1.35 }
+  .sheet-avatar { width: 48px; height: 48px; font-size: 1.2rem }
+  .level-badge { padding: 4px 8px; font-size: .78rem }
+}
 @media (max-width: 530px) {
-  .sheet-hero { grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; padding: 15px }
-  .sheet-avatar { width: 47px; height: 47px; font-size: 1.22rem }
-  .sheet-hero p { font-size: .875rem; margin-top: 3px }
-  .level-badge { grid-column: 2; justify-self: start; padding: 3px 7px; font-size: .79rem }
+  .sheet-hero { grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; padding: 10px 12px }
+  .sheet-avatar { width: 40px; height: 40px; font-size: 1.05rem; border-radius: 9px }
+  .sheet-hero h1 { font-size: 1.3rem }
+  .sheet-hero p { font-size: .8rem; margin-top: 2px }
+  .level-badge { grid-column: 2; justify-self: start; padding: 2px 6px; font-size: .72rem }
   .sheet-vitals { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; margin-top: 9px }
   .sheet-vital { grid-column: span 2; padding: 8px 9px }
   .sheet-vital.health { grid-column: 1 / -1 }

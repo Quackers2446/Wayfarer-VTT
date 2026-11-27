@@ -44,8 +44,14 @@ export function recordAction(battle, actor, event) {
 export function withActionEvent(battle, actor, details, run) {
   const previous = capture;
   const healthBefore = new Map(battle.actors.map(actor=>[actor.id,healthState(actor)]));
-  const current = {battle,actor,details:{...details},messages:[],rolls:[],impacts:[]};
+  // pending holds nested events that finished while this action was open. They flush after
+  // the parent so dice/cues stack chronologically (attack → damage → concentration, etc.).
+  const current = {battle,actor,details:{...details},messages:[],rolls:[],impacts:[],pending:[]};
   capture = current;
+  const flush = (batch) => {
+    if (previous?.battle === battle) previous.pending.push(...batch);
+    else for (const entry of batch) append(battle, entry.actor, entry.event);
+  };
   try {
     const result = run();
     const rolls = current.rolls.slice(0,24).map(({result,details}) => ({...details,
@@ -53,8 +59,15 @@ export function withActionEvent(battle, actor, details, run) {
       total:result.total,breakdown:result.breakdown.slice(0,600),
       ...(result.kept != null ? {kept:result.kept,modifier:result.total-result.kept} : {}),
     }));
-    append(battle,actor,{...current.details,rolls,messages:current.messages.slice(-8).map(message=>message.slice(0,700)),impacts:current.impacts.slice(0,24),healthChanges:battle.actors.flatMap(actor=>{const before=healthBefore.get(actor.id),after=healthState(actor);return before && JSON.stringify(before)!==JSON.stringify(after) ? [{actor:actor.id,name:actor.name,side:actor.side,x:actor.x,y:actor.y,creatureSize:creatureSize(actor),before,after}] : [];})});
+    const event = {...current.details,rolls,messages:current.messages.slice(-8).map(message=>message.slice(0,700)),impacts:current.impacts.slice(0,24),healthChanges:battle.actors.flatMap(actor=>{const before=healthBefore.get(actor.id),after=healthState(actor);return before && JSON.stringify(before)!==JSON.stringify(after) ? [{actor:actor.id,name:actor.name,side:actor.side,x:actor.x,y:actor.y,creatureSize:creatureSize(actor),before,after}] : [];})};
+    flush([{actor, event}, ...current.pending]);
+    current.pending.length = 0;
     return result;
+  } catch (error) {
+    // Nested saves that already resolved still surface even if the parent aborts afterward.
+    if (current.pending.length) flush(current.pending);
+    current.pending.length = 0;
+    throw error;
   } finally {capture = previous;}
 }
 

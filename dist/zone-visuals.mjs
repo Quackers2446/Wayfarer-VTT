@@ -155,13 +155,22 @@ function placeEntry(entry, view) {
   if (video.parentElement !== layer) layer.append(video);
 }
 
-/** Keyed BLFX clips use native alpha where decoded and a dark-background fallback on WebKit. */
+/** Prefer native WebM alpha. Screen-blend is a soft fallback for glowing clips when the
+ *  browser drops alpha onto a dark plate — it cannot fix a white matte, and it must not
+ *  replace working transparency (hardware video layers often ignore mix-blend-mode). */
 export function spellClipBlend(visual, key = '') {
-  if (visual?.url?.startsWith('/assets/animations/blfx-')) {
+  const url = visual?.url ?? '';
+  // Catalogue BLFX combat clips are true-alpha WebMs, but Chromium's hardware video
+  // layer often drops alpha and shows the RGB plate. Screen-blend hides that plate
+  // on the dark board the same way glowing JB2A plates do.
+  if (/\/assets\/animations\/combat-(?:arrow|dagger|greataxe|greatsword|greatclub|glaive|halberd|spikes|unarmed|astral-arms)/i.test(url)) return 'screen';
+  // Catalogue BLFX spell plates (keyed) — same Chromium alpha-drop as combat trails.
+  if (/\/assets\/animations\/spell-fx-poison\.webm/i.test(url)) return 'screen';
+  if (url.startsWith('/assets/animations/blfx-')) {
     const browser = globalThis.navigator?.userAgent ?? '';
     return /AppleWebKit\//.test(browser) && !/(?:Chrome|Chromium)\//.test(browser) ? 'dark-plate' : '';
   }
-  const label = `${key} ${visual?.id ?? ''} ${visual?.url ?? ''}`;
+  const label = `${key} ${visual?.id ?? ''} ${url}`;
   if (/fire|flaming|daggers|moonbeam|spirit|energy|aura|crusader|circle of power|light|radiant|storm|ice|frost|lightning|holy|sacred|wind|wall of/i.test(label))
     return 'screen';
   return '';

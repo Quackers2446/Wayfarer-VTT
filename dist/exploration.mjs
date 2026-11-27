@@ -2,6 +2,7 @@ import {visionData,rememberDynamicVision} from './dynamic-fog.mjs';
 import {actorIsUp, canSee, condition, distanceFt, keyAt, occupies, startInitiative} from "./combat.mjs";
 import {cellCenter, regionAt} from "./encounters.mjs";
 import {mapWalls} from "./map-walls.mjs";
+import {actorPartyId, isAttackablePc, isCombatFoe, sameParty} from "./parties.mjs";
 
 const roomGrids = new WeakMap();
 const roomNeighbors = [[-1,0],[1,0],[0,-1],[0,1]];
@@ -48,25 +49,63 @@ export function enemyInSight(battle, map, actor) {
 }
 
 export function engageEnemy(battle, map, actor, enemy, noticed = false, random = Math.random) {
-  if (!hostile(enemy) || !actorIsUp(actor)) return false;
+  if (!actorIsUp(actor) || !occupies(actor) || !enemy || !isCombatFoe(actor, enemy) || !actorIsUp(enemy) || !occupies(enemy)) return false;
   if (battle.round) return false;
-  const enemyRoom = roomId(map,enemy);
-  const participants = new Set(battle.actors.filter((entry) => entry.side === "party" && occupies(entry)).map(({id}) => id));
-  for (const entry of battle.actors.filter(hostile)) {
-    const sameArea = (enemyRoom && roomId(map,entry) === enemyRoom) || (enemy.origin && enemy.origin === entry.origin);
-    if (entry.id === enemy.id || noticesEnemy(battle,map,actor,entry) || (!mapWalls(map,battle) && sameArea)) participants.add(entry.id);
+  const pvp = isAttackablePc(actor, enemy);
+  const participants = new Set();
+  if (pvp) {
+    participants.add(actor.id);
+    participants.add(enemy.id);
+    // Pull in nearby same-party members so a scrap can include the full groups.
+    for (const entry of battle.actors.filter(entry => entry.side === 'party' && occupies(entry) && actorIsUp(entry))) {
+      if (!sameParty(entry, actor) && !sameParty(entry, enemy)) continue;
+      if (entry.id === actor.id || entry.id === enemy.id || distanceFt(entry, actor) <= 60 || distanceFt(entry, enemy) <= 60 ||
+        inSight(battle, map, entry, actor, 60) || inSight(battle, map, entry, enemy, 60)) {
+        participants.add(entry.id);
+      }
+    }
+  } else {
+    if (!hostile(enemy)) return false;
+    const party = actorPartyId(actor);
+    for (const entry of battle.actors.filter(entry => entry.side === 'party' && occupies(entry))) {
+      if (actorPartyId(entry) === party) participants.add(entry.id);
+    }
+    const enemyRoom = roomId(map,enemy);
+    for (const entry of battle.actors.filter(hostile)) {
+      const sameArea = (enemyRoom && roomId(map,entry) === enemyRoom) || (enemy.origin && enemy.origin === entry.origin);
+      if (entry.id === enemy.id || noticesEnemy(battle,map,actor,entry) || (!mapWalls(map,battle) && sameArea)) participants.add(entry.id);
+    }
   }
   startInitiative(battle,random,participants);
   return noticed
     ? enemy.name + " spotted " + actor.name + ". Initiative rolled."
-    : actor.name + " engaged " + enemy.name + ". Initiative rolled.";
+    : actor.name + (pvp ? " attacked " : " engaged ") + enemy.name + ". Initiative rolled.";
 }
 
 
-// Keep the party in combat while anyone (including a downed ally) is still nearby.
+// Keep combat while any living party still has someone near enemies.
+// One party fleeing must not end the encounter for rivals still in the fight.
+// PvP scraps do not auto-end by distance — players must mutually leave.
 export function partyEscaped(battle) {
   if(!battle.round || battle.movement || battle.classReaction) return false;
-  const party=battle.actors.filter(actor=>actor.side==='party' && !actor.dead && occupies(actor));
   const enemies=battle.actors.filter(actor=>hostile(actor) && battle.order.includes(actor.id));
-  return party.length>0 && enemies.length>0 && party.every(ally=>enemies.every(enemy=>distanceFt(ally,enemy)>90));
+  if (!enemies.length) return false;
+  const partyIds = new Set(battle.order.map(id => battle.actors.find(actor => actor.id === id))
+    .filter(actor => actor?.side === 'party').map(actor => actorPartyId(actor)));
+  if (!partyIds.size) return false;
+  let sawParty = false;
+  for (const partyId of partyIds) {
+    const party=battle.actors.filter(actor=>actor.side==='party' && actorPartyId(actor)===partyId && !actor.dead && occupies(actor) && battle.order.includes(actor.id));
+    if (!party.length) continue;
+    sawParty = true;
+    if (!party.every(ally => enemies.every(enemy => distanceFt(ally, enemy) > 90))) return false;
+  }
+  return sawParty;
+}
+
+/** True when every player character in a party is dead or at 0 HP (summons do not count). */
+export function partyDefeated(battle, partyId = null) {
+  const heroes = battle.actors.filter((actor) => actor.side === "party" && actor.resolveDeath && !actor.summoner &&
+    (partyId == null || actorPartyId(actor) === partyId));
+  return heroes.length > 0 && heroes.every((actor) => !actorIsUp(actor));
 }

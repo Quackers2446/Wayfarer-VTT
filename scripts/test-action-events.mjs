@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {captureImpact, recordAction, withActionEvent} from "../dist/action-events.mjs";
-import {d20, log, makeActor, newBattle, rollDice, rollStrike, startInitiative} from "../dist/combat.mjs";
+import {applyDamage, d20, log, makeActor, newBattle, rollDice, rollStrike, startConcentration, startInitiative} from "../dist/combat.mjs";
 
 const battle=newBattle();
 const hero=makeActor({name:"Adventurer",side:"party",x:2,y:2,hp:30,maxHp:30,initiative:100});
@@ -53,8 +53,22 @@ withActionEvent(battle,hero,{action:"Nested"},()=>{
   log(battle,"The hero continues.");
   captureImpact(battle,hero,{healing:true,amount:3});
 });
-assert.equal(battle.actionEvents.at(-2).name,"Armored foe");
-assert.equal(battle.actionEvents.at(-1).messages[0],"The hero continues.");
+// Parent commits first; nested reactions/saves follow so dice theatre stacks chronologically.
+assert.equal(battle.actionEvents.at(-2).messages[0],"The hero continues.");
+assert.equal(battle.actionEvents.at(-1).name,"Armored foe");
+{
+  const before = battle.actionEvents.length;
+  startConcentration(battle, foe, "Hex", 60);
+  withActionEvent(battle, hero, {action: "Strike", kind: "attack"}, () => {
+    applyDamage(battle, foe, 12, "slashing", false, () => .5, hero);
+  });
+  const attack = battle.actionEvents.at(-2);
+  const concentration = battle.actionEvents.at(-1);
+  assert.equal(attack.action, "Strike");
+  assert.equal(concentration.action, "Concentration");
+  assert.ok(concentration.id > attack.id, "Concentration save stacks after the attack that caused it");
+  assert.equal(battle.actionEvents.length, before + 2);
+}
 for(let i=0;i<80;i++) recordAction(battle,hero,{action:"Movement"});
 assert.equal(battle.actionEvents.length,48);
 assert.ok(battle.actionEvents.every((event,i,list)=>!i || event.id>list[i-1].id));

@@ -31,7 +31,7 @@ export function mapControls(hasToken) {
 
 export function mapHint() {
   return `<span class="map-hint"><span class="map-hint-mouse">Drag or scroll to pan · Ctrl + scroll to zoom</span>
-    <span class="map-hint-touch">Drag to pan · Pinch to zoom</span></span>`;
+    <span class="map-hint-touch">One finger pans · Pinch zooms</span></span>`;
 }
 
 export function createCamera(frame, controls, map, saved, onView) {
@@ -144,6 +144,7 @@ export function createCamera(frame, controls, map, saved, onView) {
 
   const pointers = new Map();
   let drag, pinch, pinchFrame, blockClick;
+  const moveThreshold = (pointerType) => pointerType === "touch" ? 10 : dragThreshold;
   frame.addEventListener("wheel", (event) => {
     if (pointers.size) {event.preventDefault(); return;}
     if (!event.ctrlKey && !event.metaKey) return;
@@ -153,7 +154,7 @@ export function createCamera(frame, controls, map, saved, onView) {
     if (delta) scale(zoom*Math.exp(-delta*.005),local(event));
   },{passive:false,signal});
   function startDrag(pointer) {
-    drag = {x:pointer.clientX,y:pointer.clientY,left:frame.scrollLeft,top:frame.scrollTop};
+    drag = {x:pointer.clientX,y:pointer.clientY,left:frame.scrollLeft,top:frame.scrollTop,pointerType:pointer.pointerType};
   }
   function pinchGeometry() {
     const [a,b] = pointers.values();
@@ -164,48 +165,56 @@ export function createCamera(frame, controls, map, saved, onView) {
   }
   function updatePinch() {
     pinchFrame = undefined;
+    if (pointers.size < 2 || !pinch) return;
     const {point,distance} = pinchGeometry();
-    if (!pinch.mode) {
-      const travel = Math.hypot(point.x-pinch.point.x,point.y-pinch.point.y);
-      const stretch = Math.abs(distance-pinch.distance)/2;
-      if (stretch >= dragThreshold && travel <= stretch*1.25) pinch.mode = "zoom";
-      else if (travel >= dragThreshold && travel > stretch*1.25) pinch.mode = "pan";
+    // Two fingers always pinch-zoom (midpoint stays on the same world point).
+    scale(pinch.zoom*distance/pinch.distance,point,pinch.world);
+  }
+  function capturePointers() {
+    for (const id of pointers.keys()) {
+      try { frame.setPointerCapture(id); } catch { /* already released */ }
     }
-    if (pinch.mode === "pan") aim(pinch.world,point);
-    if (pinch.mode === "zoom") scale(pinch.zoom*distance/pinch.distance,point,pinch.world);
   }
   function markDrag() {
     blockClick = true;
     frame.classList.add("board-panning");
-    for (const id of pointers.keys()) frame.setPointerCapture(id);
+    capturePointers();
   }
   frame.addEventListener("pointerdown", (event) => {
     if(event.target.closest?.('.wall-editor-host'))return;
     if (![0,1].includes(event.button) || pointers.size >= 2 || (pointers.size && event.pointerType !== "touch")) return;
+    // Touch: claim the gesture immediately so the page / browser doesn't steal one-finger pans.
+    if (event.pointerType === "touch") event.preventDefault();
     pointers.set(event.pointerId,event);
     if (pointers.size === 1) {
       blockClick = false;
       startDrag(event);
+      if (event.pointerType === "touch") capturePointers();
     } else {
+      // Second finger: leave one-finger pan and start pinch-zoom.
+      drag = null;
       const {point,distance} = pinchGeometry();
       pinch = {zoom,world:position(point),point,distance};
       markDrag();
     }
-  },{signal});
+  },{passive:false,signal});
   frame.addEventListener("mousedown", (event) => {if (event.button === 1) event.preventDefault();},{signal});
   window.addEventListener("pointermove", (event) => {
     if (!pointers.has(event.pointerId)) return;
+    if (event.cancelable) event.preventDefault();
     event.stopPropagation();
     pointers.set(event.pointerId,event);
     if (pinch) {
       if (pinchFrame === undefined) pinchFrame = requestAnimationFrame(updatePinch);
       return;
     }
+    if (!drag) return;
     const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
-    if (!blockClick && Math.hypot(dx,dy) < dragThreshold) return;
+    if (!blockClick && Math.hypot(dx,dy) < moveThreshold(drag.pointerType || event.pointerType)) return;
     if (!blockClick) markDrag();
+    // One finger / one pointer pans the map.
     frame.scrollTo(drag.left - dx,drag.top - dy);
-  },{capture:true,signal});
+  },{capture:true,passive:false,signal});
   function release(event) {
     if (!pointers.has(event.pointerId)) return;
     if (pinchFrame !== undefined) {
@@ -214,18 +223,37 @@ export function createCamera(frame, controls, map, saved, onView) {
       pinchFrame = undefined;
     }
     pointers.delete(event.pointerId);
+    if (pointers.size >= 2) {
+      const {point,distance} = pinchGeometry();
+      pinch = {zoom,world:position(point),point,distance};
+      return;
+    }
     pinch = null;
-    if (pointers.size) startDrag(pointers.values().next().value);
-    else frame.classList.remove("board-panning");
+    if (pointers.size === 1) startDrag(pointers.values().next().value);
+    else {
+      drag = null;
+      frame.classList.remove("board-panning");
+    }
   }
   for (const type of ["pointerup","pointercancel","lostpointercapture"]) {
     window.addEventListener(type,release,{capture:true,signal});
   }
   frame.addEventListener("click", (event) => {
-    if (!blockClick || !event.detail) return;
+    if (!blockClick) return;
     event.preventDefault();
     event.stopPropagation();
   },{capture:true,signal});
+  // Swallow the synthetic mouse click some browsers fire after a touch pan.
+  frame.addEventListener("pointerup", (event) => {
+    if (!blockClick || event.pointerType !== "touch") return;
+    const swallow = (click) => {
+      if (!frame.contains(click.target)) return;
+      click.preventDefault();
+      click.stopPropagation();
+    };
+    frame.addEventListener("click", swallow, {capture:true,once:true});
+    setTimeout(() => frame.removeEventListener("click", swallow, true), 500);
+  },{signal});
 
   return {
     state:() => ({zoom,center:frame.isConnected ? position() : lastCenter}),

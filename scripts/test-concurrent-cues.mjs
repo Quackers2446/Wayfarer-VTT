@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
-import {createCombatCues, cueDuration} from '../dist/combat-cues.mjs';
+import {createCombatCues, cueDuration, resolvePace} from '../dist/combat-cues.mjs';
 
 console.log('Testing concurrent combat cues and rapid dice execution...');
+
+assert.ok(resolvePace(1).revealAfter == null, 'Solo resolves wait for FX completion');
+assert.ok(resolvePace(3).revealAfter != null && resolvePace(3).stagger < resolvePace(1).stagger, 'Backlog shortens stagger and overlaps FX');
+assert.ok(resolvePace(6).motionScale === 0 && resolvePace(6).cueScale < resolvePace(2).cueScale, 'Deep backlog zeros motion gate and compresses cues');
 
 // Setup a mock DOM environment
 const mockElements = new Set();
@@ -37,9 +41,21 @@ class MockElement {
       const st = new MockElement('strong');
       const dv = new MockElement('div');
       dv.append(sm, st);
-      const btn = new MockElement('button');
-      btn.className = 'dice-skip';
-      el.append(dv, btn);
+      const actions = new MockElement('div');
+      actions.className = 'dice-heading-actions';
+      const skip = new MockElement('button');
+      skip.className = 'dice-skip';
+      const reaction = new MockElement('button');
+      reaction.className = 'dice-reaction';
+      reaction.hidden = true;
+      actions.append(skip, reaction);
+      el.append(dv, actions);
+      this.append(el);
+    }
+    if (html.includes('class="dice-reaction-panel"')) {
+      const el = new MockElement('div');
+      el.className = 'dice-reaction-panel';
+      el.hidden = true;
       this.append(el);
     }
   }
@@ -188,8 +204,9 @@ const event2 = {
 // Initialize scope
 combatCues.sync('battle-1', [], viewport);
 
-// Fresh events arriving in battle
+// Fresh events arriving in battle — backlog stagger overlaps resolves instead of await-complete
 combatCues.sync('battle-1', [event1, event2], viewport);
+await new Promise(resolve => setTimeout(resolve, 280));
 
 // Both cue elements should be created and in the layer at the same time
 const cueElements = layer.children.filter(c => c.className.includes('combat-cue'));
@@ -217,5 +234,31 @@ assert.equal(remainingCues.length, 1, 'Dismissing first cue leaves second cue in
 // Test 3: Cue duration validation
 assert.ok(cueDuration({outcome: 'Hit', side: 'party'}) > cueDuration({outcome: 'Hit', side: 'hostile'}));
 assert.equal(cueDuration({kind: 'move'}), 0);
+
+// Test 4: Backlog of non-dice events reveals with overlap (not serial await-complete)
+const backlog = [];
+for (let i = 0; i < 5; i++) {
+  backlog.push({
+    id: 10 + i,
+    actor: 'goblin-' + i,
+    name: 'Goblin ' + i,
+    action: 'Scimitar',
+    kind: 'attack',
+    outcome: 'Hit',
+    side: 'hostile',
+    x: 5,
+    y: 5,
+    visible: true,
+    messages: ['Hit for 4']
+  });
+}
+combatCues.reset();
+const backlogLayer = new MockElement('div');
+const backlogView = {...viewport, layer: backlogLayer, feed: new MockElement('div')};
+combatCues.sync('battle-backlog', [], backlogView);
+combatCues.sync('battle-backlog', backlog, backlogView);
+await new Promise(resolve => setTimeout(resolve, 220));
+const afterBacklog = backlogLayer.children.filter(c => c.className.includes('combat-cue'));
+assert.ok(afterBacklog.length >= 2, 'Backlog starts revealing overlapping cues without waiting for each FX to finish');
 
 console.log('Concurrent cues and anti-overlap tests passed successfully!');

@@ -5,13 +5,15 @@ import {sessionRequest} from '../worker/session.mjs';
 import {trainingMap,trainingActors} from '../dist/encounters.mjs';
 import {newBattle} from '../dist/combat.mjs';
 const sqlite=new DatabaseSync(':memory:');
-for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql','0006_profile_photos.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql','0006_profile_photos.sql','0007_session_voice.sql','0008_session_player_auth.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
 const DB={prepare(sql){let values=[];return{bind(...args){values=args;return this;},async first(column){const row=sqlite.prepare(sql).get(...values);return column ? row?.[column]??null : row??null;},async all(){return{results:sqlite.prepare(sql).all(...values)};},async run(){const result=sqlite.prepare(sql).run(...values);return{meta:{changes:Number(result.changes)}};}};},async batch(statements){return Promise.all(statements.map(statement=>statement.run()));}};
 const env={DB},origin='https://test.example',alice=crypto.randomUUID(),bob=crypto.randomUUID(),other=crypto.randomUUID();
 const cookies=new Map();
+function cookieHeader(as){const jar=cookies.get(as);return jar?.size?[...jar].map(([k,v])=>k+'='+v).join('; '):'';}
+function storeCookies(as,response){const jar=cookies.get(as)??new Map();cookies.set(as,jar);for(const header of response.headers.getSetCookie?.()??[]){const [pair]=header.split(';');const at=pair.indexOf('=');const name=pair.slice(0,at),value=pair.slice(at+1);if(value)jar.set(name,value);else jar.delete(name);}if(!(response.headers.getSetCookie?.()??[]).length){const cookie=response.headers.get('Set-Cookie');if(!cookie)return;const [pair]=cookie.split(';');const at=pair.indexOf('=');const name=pair.slice(0,at),value=pair.slice(at+1);if(value)jar.set(name,value);else jar.delete(name);}}
 async function api(path,{method='GET',body,as=alice}={}) {
- const request=new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...(cookies.has(as)?{Cookie:cookies.get(as)}:{})},...(body?{body:JSON.stringify(body)}:{})});
- const response=await sessionRequest(request,env);const cookie=response.headers.get('Set-Cookie');if(cookie)cookies.set(as,cookie.split(';')[0]);return response;
+ const request=new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...(cookieHeader(as)?{Cookie:cookieHeader(as)}:{})},...(body?{body:JSON.stringify(body)}:{})});
+ const response=await sessionRequest(request,env);storeCookies(as,response);return response;
 }
 async function create(name) {
  const state={battle:{...newBattle(),actors:trainingActors()},alignment:null,...(name?{room:{name,adventure:'training',adventureName:'Practice yard'}}:{})};

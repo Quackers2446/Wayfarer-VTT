@@ -2,15 +2,19 @@
 .homebrew-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
 .homebrew-heading h1{font-family:var(--display);font-size:2rem;letter-spacing:-.02em}
 .homebrew-heading p,.homebrew-selected p,.homebrew-hint,.homebrew-status{color:var(--muted);margin-top:6px;line-height:1.5}
-.homebrew-workspace{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px}
-.homebrew-library{align-self:start;position:sticky;top:12px;display:grid;gap:10px;padding:14px;border:1px solid #c5d0bc;border-radius:12px;background:linear-gradient(180deg,#f7f8f1,#eef2e6)}
-.homebrew-entry-list{display:grid;gap:6px;max-height:62vh;overflow:auto}
+.homebrew-workspace{display:grid;grid-template-columns:minmax(150px,190px) minmax(0,1fr);grid-template-areas:"tools tools" "list editor";gap:12px 18px;align-items:start}
+.homebrew-workspace-tools{grid-area:tools;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.homebrew-search-field{flex:0 1 260px;max-width:min(280px,100%);min-width:0}
+.homebrew-search-field input{height:38px;font-size:.88rem}
+.homebrew-library{grid-area:list;align-self:start;position:sticky;top:12px;display:grid;gap:8px;padding:10px;border:1px solid var(--border,#c5d0bc);border-radius:10px;background:var(--paper,#f7f8f1)}
+.homebrew-editor{grid-area:editor;min-width:0}
+.homebrew-entry-list{display:grid;gap:5px;max-height:min(52vh,480px);overflow:auto}
+.homebrew-empty{margin:4px 2px;font-size:.82rem;color:var(--muted);line-height:1.4}
 .homebrew-entry-list button{text-align:left;padding:10px 12px;border:1px solid #c3cdb8;border-radius:10px;background:#fffcf4;color:#21392a;cursor:pointer}
 .homebrew-entry-list button:hover{border-color:#6f9274}
 .homebrew-entry-list button[aria-pressed=true]{background:#d7e6cc;border-color:#3b654b;box-shadow:inset 0 0 0 1px #3b654b55}
 .homebrew-entry-list strong{display:block}
 .homebrew-entry-list span{display:block;margin-top:4px;font-size:.78rem;color:#516456}
-.homebrew-editor{min-width:0}
 .homebrew-selected{margin-bottom:12px}
 .homebrew-selected h2{font-family:var(--display);font-size:1.45rem}
 .homebrew-form label{display:grid;gap:5px;font-size:.84rem;font-weight:600;color:#2c4334}
@@ -32,14 +36,15 @@
 .homebrew-list li{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #d9d9ca;border-radius:8px;background:#fffcf4}
 .homebrew-hint code{font-size:.85em}
 @media(max-width:1000px){
-  .homebrew-workspace{grid-template-columns:220px minmax(0,1fr)}
+  .homebrew-workspace{grid-template-columns:minmax(140px,170px) minmax(0,1fr)}
   .homebrew-fields,.homebrew-attack{grid-template-columns:repeat(2,minmax(0,1fr))}
   .homebrew-abilities{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 @media(max-width:650px){
   .homebrew-heading{flex-direction:column}
-  .homebrew-workspace{grid-template-columns:minmax(0,1fr)}
+  .homebrew-workspace{grid-template-columns:minmax(0,1fr);grid-template-areas:"tools" "list" "editor"}
   .homebrew-library{position:static}
-  .homebrew-entry-list{max-height:220px}
+  .homebrew-search-field{flex:1 1 100%;max-width:none}
+  .homebrew-entry-list{max-height:180px}
   .homebrew-fields,.homebrew-attack,.homebrew-abilities{grid-template-columns:minmax(0,1fr)}
 }

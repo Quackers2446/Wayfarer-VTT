@@ -211,10 +211,11 @@ function resolveSkillCheck(battle,actor,name,map,random) {
 }
 
 export function shortRestsLeft(battle){return Math.max(0,2-(battle.rest?.shortUsed??0));}
-export function restParty(battle,long = false,{advance=true}={}) {
+export function restParty(battle,long = false,{advance=true,partyId}={}) {
   if (battle.round || battle.movement) throw new Error("Finish combat before resting.");
   if(!long&&!shortRestsLeft(battle))throw new Error('Both short rests are spent. Take a long rest first.');
-  const heroes = battle.actors.filter((actor) => actor.side === "party" && !actor.dead);
+  const heroes = battle.actors.filter((actor) => actor.side === "party" && !actor.dead &&
+    (partyId == null || (actor.partyId || 'party-1') === partyId));
   if(!heroes.some(actorIsUp))throw new Error('A conscious party member is required to rest.');
   battle.rest??={};battle.rest.shortUsed=long?0:(battle.rest.shortUsed??0)+1;
   for (const actor of heroes) {

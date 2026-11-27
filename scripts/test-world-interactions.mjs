@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {makeActor,newBattle,startInitiative,applyDamage,endInitiative,exploreToken,speedOf,heal} from '../dist/combat.mjs';
-import {takeLoot,carryBody,placeBody,lootContents,syncRewardSheets,releaseRevivedBodies} from '../dist/world-interactions.mjs';
+import {takeLoot,carryBody,dragBody,dropBody,placeBody,lootContents,syncRewardSheets,releaseRevivedBodies} from '../dist/world-interactions.mjs';
+import {rollStrike,castSpell,handsOccupied,spellNeedsHands} from '../dist/combat.mjs';
 import {xpForCR} from '../dist/encounter-rewards.mjs';
 import {automaticRoom} from '../dist/scene-data.mjs';
 const map={key:'qa',cols:40,rows:20,width:400,height:200,size:10,offsetX:0,offsetY:0,regions:[]};
@@ -35,4 +36,19 @@ function fixture(){const battle=newBattle(),hero=makeActor({id:'party:a',name:'H
 {
  const {battle,hero,foe}=fixture();foe.hp=0;foe.resolveDeath=true;carryBody(battle,hero,foe,map);heal(foe,3);releaseRevivedBodies(battle,map);assert.equal(foe.carriedBy,null);assert.equal(hero.carrying,null);assert.equal(foe.hp,3);
 }
-console.log('CR XP and final-blow shares; once-only rewards; persistent item/coin loot; potion pickup; body carry/move/place/throw; weight, range and action limits; source treasure parsing verified.');
+{
+ const {battle,hero,foe}=fixture();foe.hp=0;foe.resolveDeath=true;foe.creatureSize='H';
+ assert.throws(()=>carryBody(battle,hero,foe,map),/Drag instead|heavy/);
+ dragBody(battle,hero,foe,map);assert.equal(hero.dragging,foe.id);assert.equal(foe.draggedBy,hero.id);assert.equal(speedOf(hero),15);assert(handsOccupied(hero));
+ exploreToken(battle,hero,5,2,map,()=>false);assert.equal(foe.x,5);assert.equal(foe.y,2);
+ const dummy=makeActor({id:'dummy',name:'Dummy',side:'hostile',x:6,y:2,hp:5,maxHp:5,ac:10});battle.actors.push(dummy);
+ startInitiative(battle,()=>.5);battle.round=1;battle.order=[hero.id,dummy.id];battle.turn=0;
+ assert.throws(()=>rollStrike(battle,hero,dummy,{name:'Sword',bonus:5,damage:'1d8+2'},{map}),/Dragging|hands/);
+ assert.throws(()=>castSpell(battle,hero,dummy,{name:'Fire Bolt',key:'fire bolt',edition:'2014',level:0,components:{v:true,s:true}},0,{map}),/Dragging|Somatic/);
+ assert.equal(spellNeedsHands({components:{v:true}}),false);
+ assert.equal(spellNeedsHands({components:{v:true,s:true}}),true);
+ endInitiative(battle);
+ dropBody(battle,hero,foe,map);assert.equal(hero.dragging,null);assert.equal(foe.draggedBy,null);assert.equal(speedOf(hero),30);assert(!handsOccupied(hero));
+ assert(Math.abs(foe.x-hero.x)<=1&&Math.abs(foe.y-hero.y)<=1);
+}
+console.log('CR XP and final-blow shares; once-only rewards; persistent item/coin loot; potion pickup; body carry/move/place/throw; drag/drop with half speed and hand locks; weight, range and action limits; source treasure parsing verified.');

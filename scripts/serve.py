@@ -59,14 +59,39 @@ class CampaignHandler(SimpleHTTPRequestHandler):
             if include_body:
                 shutil.copyfileobj(handle, self.wfile)
 
+    def send_api_unavailable(self):
+        # Static serve.py has no D1/worker. Chat, voice, rooms, and account APIs need
+        # the Cloudflare worker (deployed Pages or `wrangler pages dev` / `wrangler dev`).
+        payload = json.dumps({
+            "message": "Multiplayer APIs are unavailable on the static local server. "
+                       "Use the deployed Wayfarer site, or run the Cloudflare worker "
+                       "(npx wrangler pages dev dist/client --d1 DB=… / wrangler dev)."
+        }).encode()
+        self.send_response(503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_HEAD(self):
-        if urlsplit(self.path).path == "/local-archive":
+        path = urlsplit(self.path).path
+        if path.startswith("/api/"):
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+        if path == "/local-archive":
             self.send_archive(False)
         else:
             super().do_HEAD()
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path.startswith("/api/"):
+            self.send_api_unavailable()
+            return
         if path == "/local-archive":
             self.send_archive(True)
             return
@@ -86,6 +111,30 @@ class CampaignHandler(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
+    def do_POST(self):
+        if urlsplit(self.path).path.startswith("/api/"):
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            if length:
+                self.rfile.read(length)
+            self.send_api_unavailable()
+            return
+        self.send_error(501)
+
+    def do_PUT(self):
+        if urlsplit(self.path).path.startswith("/api/"):
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            if length:
+                self.rfile.read(length)
+            self.send_api_unavailable()
+            return
+        self.send_error(501)
+
+    def do_DELETE(self):
+        if urlsplit(self.path).path.startswith("/api/"):
+            self.send_api_unavailable()
+            return
+        self.send_error(501)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
@@ -94,4 +143,5 @@ if __name__ == "__main__":
     handler = partial(CampaignHandler, directory=str(PROJECT / "dist"))
     with ThreadingHTTPServer(("127.0.0.1", args.port), handler) as server:
         print(f"Local Wayfarer available at http://127.0.0.1:{server.server_port}/", flush=True)
+        print("Note: /api (chat, voice, rooms) needs the Cloudflare worker — not this static server.", flush=True)
         server.serve_forever()

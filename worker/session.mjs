@@ -1,11 +1,19 @@
 import {accounts} from './accounts.mjs';
 import {validRuleSet} from './spell-rule-schema.mjs';
 import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';
+import {newPlayerCredential,playerCredentialHash,matchesPlayerCredential} from './player-auth.mjs';
 const api = "/api/sessions";
 const sessionId = "[\\da-f]{8}-(?:[\\da-f]{4}-){3}[\\da-f]{12}";
-const sessionPath = new RegExp(`^/api/sessions/(${sessionId})(/artwork|/chat|/players|/tokens/([\\da-f]{64}))?$`);
+const sessionPath = new RegExp(`^/api/sessions/(${sessionId})(/artwork|/chat|/players|/voice|/tokens/([\\da-f]{64}))?$`);
 const uuid = new RegExp(`^${sessionId}$`);
 const chatHistory = 200;
+const voiceSignalHistory = 240;
+const voiceOnlineMs = 12000;
+const stunServers = [
+  {urls: "stun:stun.cloudflare.com:3478"},
+  {urls: "stun:stun.l.google.com:19302"},
+  {urls: "stun:stun1.l.google.com:19302"},
+];
 const tokenIdPattern = /^[\da-f]{64}$/;
 const maxMapBytes = 512 * 1024;
 const maxStateBytes = 768 * 1024;
@@ -16,11 +24,138 @@ const imageTypes = new Set(["image/png","image/jpeg","image/webp"]);
 const headers = {"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"};
 const bytes = (text) => new TextEncoder().encode(text).byteLength;
 
-function reply(value, status = 200) {
-  return Response.json(value,{status,headers});
+function reply(value, status = 200, extraHeaders = {}) {
+  return Response.json(value,{status,headers:{...headers,...extraHeaders}});
 }
 
 const fail = (status,message) => reply({message},status);
+
+/** Short-lived TURN credentials are reusable across joins in the same isolate. */
+let turnCache = {at: 0, value: null};
+let turnUsageCache = {at: 0, gb: null, ok: false};
+const TURN_CACHE_MS = 5 * 60 * 1000;
+const TURN_USAGE_CACHE_MS = 15 * 60 * 1000;
+const TURN_FREE_GB = 1000;
+const GiB = 1024 ** 3;
+
+function turnCapGb(env) {
+  const raw = Number(env.TURN_USAGE_CAP_GB);
+  // Default 750 GiB ≈ 75% of the shared 1,000 GB Realtime free tier.
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, TURN_FREE_GB) : 750;
+}
+
+function stunOnly(reason, extra = {}) {
+  return {iceServers: stunServers, turn: false, turnReason: reason, ...extra};
+}
+
+/** Monthly Realtime TURN egress in GiB via GraphQL analytics (Account Analytics token). */
+async function turnUsageGb(env) {
+  const accountId = env.CF_ACCOUNT_ID;
+  const apiToken = env.CLOUDFLARE_API_TOKEN;
+  if (!accountId || !apiToken) return {ok: false, gb: null};
+  if (turnUsageCache.ok && Date.now() - turnUsageCache.at < TURN_USAGE_CACHE_MS) {
+    return {ok: true, gb: turnUsageCache.gb};
+  }
+  const now = new Date();
+  const from = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01T00:00:00Z`;
+  const to = now.toISOString();
+  try {
+    const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: {Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json"},
+      body: JSON.stringify({
+        query: `query TurnEgress($accountId: String!, $from: String!, $to: String!) {
+          viewer {
+            accounts(filter: {accountTag: $accountId}) {
+              callsTurnUsageAdaptiveGroups(
+                filter: {date_geq: $from, date_leq: $to}
+                limit: 10000
+              ) { sum { egressBytes } }
+            }
+          }
+        }`,
+        variables: {accountId, from, to},
+      }),
+    });
+    if (!response.ok) return {ok: false, gb: null};
+    const body = await response.json();
+    const groups = body?.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups;
+    if (!Array.isArray(groups) || body?.errors?.length) return {ok: false, gb: null};
+    const bytes = groups.reduce((sum, row) => sum + Number(row?.sum?.egressBytes ?? 0), 0);
+    if (!Number.isFinite(bytes)) return {ok: false, gb: null};
+    const gb = bytes / GiB;
+    turnUsageCache = {at: Date.now(), gb, ok: true};
+    return {ok: true, gb};
+  } catch {
+    return {ok: false, gb: null};
+  }
+}
+
+async function turnIceServers(env) {
+  const keyId = env.TURN_KEY_ID, token = env.TURN_KEY_API_TOKEN;
+  if (env.TURN_DISABLED === "1" || env.TURN_DISABLED === "true") {
+    return stunOnly("disabled");
+  }
+  if (!keyId || !token) return stunOnly("missing");
+
+  const cap = turnCapGb(env);
+  const usage = await turnUsageGb(env);
+  if (usage.ok && usage.gb >= cap) {
+    return stunOnly("capped", {turnUsageGb: Math.round(usage.gb * 10) / 10, turnCapGb: cap});
+  }
+
+  if (turnCache.value?.turn && Date.now() - turnCache.at < TURN_CACHE_MS) {
+    return {
+      ...turnCache.value,
+      ...(usage.ok ? {turnUsageGb: Math.round(usage.gb * 10) / 10, turnCapGb: cap} : {}),
+    };
+  }
+  try {
+    const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${keyId}/credentials/generate-ice-servers`, {
+      method: "POST",
+      headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
+      body: JSON.stringify({ttl: 86400}),
+    });
+    if (!response.ok) return stunOnly("error");
+    const body = await response.json();
+    const fromCf = Array.isArray(body?.iceServers) ? body.iceServers.filter(Boolean) : [];
+    if (!fromCf.length) return stunOnly("error");
+    // Keep public STUN as a fast path; Cloudflare TURN covers hard NAT / symmetric cases.
+    const urls = new Set(fromCf.flatMap((server) => [].concat(server.urls ?? [])));
+    const iceServers = [
+      ...stunServers.filter((server) => !urls.has(server.urls)),
+      ...fromCf,
+    ];
+    turnCache = {at: Date.now(), value: {iceServers, turn: true}};
+    return {
+      iceServers,
+      turn: true,
+      ...(usage.ok ? {turnUsageGb: Math.round(usage.gb * 10) / 10, turnCapGb: cap} : {}),
+    };
+  } catch {
+    return stunOnly("error");
+  }
+}
+
+/** Bind voice/player seat to signed-in account or guest HttpOnly credential — never trust a bare controller UUID. */
+async function authorizePlayerSeat(request, env, session, controller) {
+  if (typeof controller !== "string" || !uuid.test(controller)) return {error: fail(400, "The player ID was invalid.")};
+  const account = await accounts.identity(request, env);
+  if (account) {
+    if (controller !== account.id) return {error: fail(403, "Reload Wayfarer to use your signed-in profile.")};
+    return {account, controller};
+  }
+  if (await env.DB.prepare("SELECT id FROM account_users WHERE id=?").bind(controller).first()) {
+    return {error: fail(403, "Sign in to use this player profile.")};
+  }
+  const presented = await playerCredentialHash(request);
+  const auth = await env.DB.prepare("SELECT credential_hash FROM session_player_auth WHERE session_id=? AND controller=?")
+    .bind(session, controller).first();
+  if (!auth || !matchesPlayerCredential(auth.credential_hash, presented)) {
+    return {error: fail(403, "Join the room from this browser before using that player seat.")};
+  }
+  return {controller};
+}
 const record = (value) => value && typeof value === "object" && !Array.isArray(value);
 const positive = (value) => Number.isFinite(value) && value > 0;
 const alignmentShape = (value) => record(value) && positive(value.width) && positive(value.height) &&
@@ -49,7 +184,7 @@ function validVision(v){return v==null || record(v) && (v.enabled==null || typeo
 function validWalls(v){return v==null || record(v) && ['walls','doors'].every(type=>v[type]==null || Array.isArray(v[type]) && v[type].length<=2000 && v[type].every(s=>record(s) && ['x1','y1','x2','y2'].every(k=>Number.isFinite(s[k]) && Math.abs(s[k])<=90000) && (type!=='doors' || typeof s.id==='string' && ['open','closed','locked','secret'].includes(s.state))));}
 function validFogSettings(v){return v==null || record(v) && ['sharedVision','remember','blockMovement'].every(k=>v[k]==null || typeof v[k]==='boolean') && optionalRange(v,'opacity',0,1) && optionalRange(v,'exploredOpacity',0,1) && optionalRange(v,'softness',0,5);}
 
-const sceneKeys=new Set(['terrain','markers','wallData','wallRevision','fogMemory','fogMemoryByActor','explored','alignedGrid','gridManual','gridOverlay','sceneReady','worldLootVersion','spellZones']);
+const sceneKeys=new Set(['terrain','markers','features','wallData','wallRevision','fogMemory','fogMemoryByActor','explored','alignedGrid','gridManual','gridOverlay','gridSquareFt','artworkFit','sceneReady','worldLootVersion','spellZones','showDmArtwork']);
 function validState(state) {
   const battle = state?.battle;
   const alignment = state?.alignment;
@@ -57,13 +192,17 @@ function validState(state) {
     (state.world==null || state.currentMap && record(state.world) && state.world.version===1 && record(state.world.maps) && Object.keys(state.world.maps).length<=128 && Object.values(state.world.maps).every(scene=>record(scene) && scene.battle==null && scene.actors==null && (scene.map==null || validMap(scene.map)) && (scene.environment==null || record(scene.environment) && Object.keys(scene.environment).every(key=>sceneKeys.has(key)) && validWalls(scene.environment.wallData)))) && record(battle) && Array.isArray(battle.actors) && battle.actors.length <= 500 &&
     battle.actors.every((actor) => record(actor) && typeof actor.id === "string" && typeof actor.name === "string" &&
       validVision(actor.vision) && [actor.hp,actor.maxHp,actor.ac,actor.speed].every(Number.isFinite) && ["party","hostile","neutral"].includes(actor.side) &&
+      (actor.partyId == null || actor.side === "party" && typeof actor.partyId === "string" && /^party-\d+$/.test(actor.partyId) && actor.partyId.length <= 16) &&
       [actor.tempHp,actor.successes,actor.failures].every((value) => value == null || Number.isFinite(value)) &&
       (actor.tokenImage == null || actor.side === "party" && typeof actor.tokenImage === "string" && tokenIdPattern.test(actor.tokenImage)) &&
       (actor.initiativeRoll == null || Number.isFinite(actor.initiativeRoll)) &&
       [actor.x,actor.y].every((value) => value == null || Number.isInteger(value)) &&
       [actor.attacks,actor.spells].every(Array.isArray) && record(actor.slots)) &&
     Array.isArray(battle.order) && battle.order.every((id) => typeof id === "string") &&
-    (battle.controllers==null || record(battle.controllers)&&Object.keys(battle.controllers).length<=4&&Object.entries(battle.controllers).every(([id,controller])=>battle.actors.some(actor=>actor.id===id&&actor.side==='party')&&typeof controller==='string'&&uuid.test(controller))) &&
+    (battle.parties==null || Array.isArray(battle.parties) && battle.parties.length<=4 && battle.parties.every(party=>record(party)&&typeof party.id==='string'&&/^party-\d+$/.test(party.id)&&typeof party.name==='string'&&party.name.length>0&&party.name.length<=40)) &&
+    (battle.truceVotes==null || record(battle.truceVotes)&&Object.keys(battle.truceVotes).length<=16&&Object.entries(battle.truceVotes).every(([id,vote])=>battle.actors.some(actor=>actor.id===id&&actor.side==='party')&&vote===true)) &&
+    (battle.combatKind==null || ['pvp','encounter'].includes(battle.combatKind)) &&
+    (battle.controllers==null || record(battle.controllers)&&Object.keys(battle.controllers).length<=8&&Object.entries(battle.controllers).every(([id,controller])=>battle.actors.some(actor=>actor.id===id&&actor.side==='party')&&typeof controller==='string'&&uuid.test(controller))) &&
     validWalls(battle.wallData) && validFogSettings(battle.fogSettings) &&
     (battle.fogEnabled==null || typeof battle.fogEnabled==='boolean') &&
     (battle.fogMemoryByActor==null || record(battle.fogMemoryByActor) && Object.keys(battle.fogMemoryByActor).length<=500 && Object.entries(battle.fogMemoryByActor).every(([id,m])=>battle.actors.some(a=>a.id===id && a.side==='party') && record(m) && validFogMemory(m))) &&
@@ -285,6 +424,39 @@ async function sessionPlayers(request, env, id) {
     return fail(400,"Enter a username of up to 24 characters.");
   }
 
+  let guestAuthCookie = null;
+  if (!account) {
+    const existingAuth = await env.DB.prepare("SELECT credential_hash FROM session_player_auth WHERE session_id=? AND controller=?")
+      .bind(id, controller).first();
+    if (existingAuth) {
+      const presented = await playerCredentialHash(request);
+      if (!matchesPlayerCredential(existingAuth.credential_hash, presented)) {
+        // Probe used to reserve auth without Set-Cookie; reclaim only if this seat never finished joining.
+        const seated = await env.DB.prepare("SELECT 1 AS ok FROM session_players WHERE session_id=? AND controller=?")
+          .bind(id, controller).first();
+        if (seated) {
+          return fail(403, "This player seat is already claimed in another browser.");
+        }
+        const issued = await newPlayerCredential(request);
+        guestAuthCookie = issued.cookie;
+        await env.DB.prepare("UPDATE session_player_auth SET credential_hash=? WHERE session_id=? AND controller=?")
+          .bind(issued.hash, id, controller).run();
+      }
+    } else if (choosingName) {
+      // Issue the seat cookie only when a username is chosen — never on the anonymous probe.
+      const issued = await newPlayerCredential(request);
+      guestAuthCookie = issued.cookie;
+      await env.DB.prepare(`INSERT INTO session_player_auth (session_id,controller,credential_hash)
+        SELECT id,?,? FROM game_sessions WHERE id=? ON CONFLICT DO NOTHING`)
+        .bind(controller, issued.hash, id).run();
+      const claimed = await env.DB.prepare("SELECT credential_hash FROM session_player_auth WHERE session_id=? AND controller=?")
+        .bind(id, controller).first();
+      if (!claimed || !matchesPlayerCredential(claimed.credential_hash, issued.hash)) {
+        return fail(403, "This player seat is already claimed in another browser.");
+      }
+    }
+  }
+
   const now = Date.now();
   if (choosingName) {
     await env.DB.prepare(`INSERT INTO session_players (session_id,controller,username,username_key,joined_at,last_seen)
@@ -297,15 +469,127 @@ async function sessionPlayers(request, env, id) {
     if (!await env.DB.prepare("SELECT id FROM game_sessions WHERE id=?").bind(id).first()) {
       return fail(404,"This session could not be found. Check the invitation link.");
     }
-    if (choosingName) return fail(409,"That username is already taken in this session.");
-    return reply({player:null,players:[]});
+    if (choosingName) {
+      // Keep the newly issued cookie so a username retry does not orphan the seat.
+      return reply({message:"That username is already taken in this session."}, 409,
+        guestAuthCookie ? {"Set-Cookie": guestAuthCookie} : {});
+    }
+    return reply({player:null,players:[]}, 200, guestAuthCookie ? {"Set-Cookie": guestAuthCookie} : {});
   }
   const {results} = await env.DB.prepare(`SELECT s.controller AS id, s.username, s.last_seen, p.image_id AS photo FROM session_players s
     LEFT JOIN account_photos p ON p.user_id=s.controller
     WHERE s.session_id=? ORDER BY s.joined_at, s.controller`).bind(id).all();
   if(account)await accounts.addRoom(env,account,id);
   const players = results.map(({id,username,last_seen,photo}) => ({id,username,online:now - last_seen < 60000,...(photo?{photo}:{})}));
-  return reply({player:player.username,players});
+  return reply({player:player.username,players}, 200, guestAuthCookie ? {"Set-Cookie": guestAuthCookie} : {});
+}
+
+async function voiceMembers(env, id, now = Date.now()) {
+  const {results} = await env.DB.prepare(`SELECT v.controller AS id, p.username, v.muted, v.deafened, v.last_seen AS lastSeen
+    FROM session_voice v LEFT JOIN session_players p ON p.session_id=v.session_id AND p.controller=v.controller
+    WHERE v.session_id=? ORDER BY v.joined_at, v.controller`).bind(id).all();
+  return results.map(({id,username,muted,deafened,lastSeen}) => ({
+    id, username: username || "Player", muted: Boolean(muted), deafened: Boolean(deafened),
+    lastSeen, online: now - lastSeen < voiceOnlineMs,
+  }));
+}
+
+async function sessionVoice(request, env, id, url) {
+  if (request.method === "GET") {
+    const controller = url.searchParams.get("controller");
+    const after = url.searchParams.get("after");
+    if (after !== null && (!/^\d+$/.test(after) || !Number.isSafeInteger(Number(after)))) {
+      return fail(400, "The voice cursor was invalid.");
+    }
+    const seat = await authorizePlayerSeat(request, env, id, controller);
+    if (seat.error) return seat.error;
+    if (!await env.DB.prepare("SELECT id FROM game_sessions WHERE id=?").bind(id).first()) {
+      return fail(404, "This session could not be found.");
+    }
+    const members = await voiceMembers(env, id);
+    if (after === null) return reply({members, signals: [], after: 0});
+    const {results} = await env.DB.prepare(`SELECT sequence AS id, from_controller AS "from", kind, payload, sent_at AS time
+      FROM session_voice_signals WHERE session_id=? AND to_controller=? AND sequence>? ORDER BY sequence LIMIT 80`)
+      .bind(id, seat.controller, Number(after)).all();
+    const signals = results.map(({payload, ...row}) => {
+      try {return {...row, payload: JSON.parse(payload)};} catch {return null;}
+    }).filter(Boolean);
+    return reply({members, signals, after: signals.at(-1)?.id ?? Number(after)});
+  }
+  if (request.method !== "POST") return fail(405, "This action is unavailable.");
+  const raw = await boundedBody(request, 65536);
+  if (!raw) return fail(413, "The voice message is too large.");
+  let input;
+  try {input = JSON.parse(await raw.text());} catch {return fail(400, "The voice message could not be read.");}
+  const seat = await authorizePlayerSeat(request, env, id, input?.controller);
+  if (seat.error) return seat.error;
+  const controller = seat.controller;
+  if (!await env.DB.prepare("SELECT id FROM game_sessions WHERE id=?").bind(id).first()) {
+    return fail(404, "This session could not be found.");
+  }
+  const player = await env.DB.prepare("SELECT username FROM session_players WHERE session_id=? AND controller=?")
+    .bind(id, controller).first();
+  if (!player) return fail(403, "Join the room before using voice.");
+  const now = Date.now();
+  const action = input.action;
+  if (action === "leave") {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM session_voice WHERE session_id=? AND controller=?").bind(id, controller),
+      env.DB.prepare("DELETE FROM session_voice_signals WHERE session_id=? AND (from_controller=? OR to_controller=?)")
+        .bind(id, controller, controller),
+    ]);
+    return reply({members: await voiceMembers(env, id, now)});
+  }
+  if (action === "ice") {
+    const ice = await turnIceServers(env);
+    return reply({...ice, members: await voiceMembers(env, id, now)});
+  }
+  if (!["join", "state", "heartbeat", "signal"].includes(action)) return fail(400, "Unknown voice action.");
+  const muted = input.muted === true ? 1 : 0;
+  const deafened = input.deafened === true ? 1 : 0;
+  if (action === "join") {
+    await env.DB.prepare(`INSERT INTO session_voice (session_id,controller,muted,deafened,joined_at,last_seen)
+      VALUES (?,?,?,?,?,?) ON CONFLICT(session_id,controller) DO UPDATE SET muted=excluded.muted, deafened=excluded.deafened, last_seen=excluded.last_seen`)
+      .bind(id, controller, muted, deafened, now, now).run();
+  } else if (action === "state") {
+    const live = await env.DB.prepare(`UPDATE session_voice SET last_seen=?, muted=?, deafened=?
+      WHERE session_id=? AND controller=? RETURNING controller`).bind(now, muted, deafened, id, controller).first();
+    if (!live) return fail(409, "Join voice before updating it.");
+  } else {
+    const live = await env.DB.prepare(`UPDATE session_voice SET last_seen=? WHERE session_id=? AND controller=? RETURNING controller`)
+      .bind(now, id, controller).first();
+    if (!live) return fail(409, "Join voice before updating it.");
+  }
+  if (action === "signal") {
+    const signal = input.signal;
+    const kind = signal?.kind;
+    const to = signal?.to;
+    const signalId = signal?.signalId;
+    // ICE end-of-candidates uses a null payload; other kinds require a body.
+    const payloadAllowed = kind === "ice" ? signal.payload !== undefined : signal.payload != null;
+    if (typeof signalId !== "string" || !uuid.test(signalId) || typeof to !== "string" || !uuid.test(to) ||
+        !["offer", "answer", "ice", "bye"].includes(kind) || !payloadAllowed) {
+      return fail(400, "The voice signal was invalid.");
+    }
+    const payload = JSON.stringify(signal.payload);
+    if (bytes(payload) > 48000) return fail(413, "The voice signal is too large.");
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO session_voice_signals (session_id,signal_id,from_controller,to_controller,kind,payload,sent_at)
+        VALUES (?,?,?,?,?,?,?) ON CONFLICT (session_id,signal_id) DO NOTHING`)
+        .bind(id, signalId, controller, to, kind, payload, now),
+      env.DB.prepare(`DELETE FROM session_voice_signals WHERE session_id=? AND sequence <= (
+        SELECT sequence FROM session_voice_signals WHERE session_id=? ORDER BY sequence DESC LIMIT 1 OFFSET ?
+      )`).bind(id, id, voiceSignalHistory),
+      env.DB.prepare("DELETE FROM session_voice_signals WHERE session_id=? AND sent_at < ?").bind(id, now - 60000),
+    ]);
+  }
+  await env.DB.prepare("DELETE FROM session_voice WHERE session_id=? AND last_seen < ?").bind(id, now - 45000).run();
+  const members = await voiceMembers(env, id, now);
+  if (action === "join") {
+    const ice = await turnIceServers(env);
+    return reply({members, ...ice});
+  }
+  return reply({members});
 }
 
 async function sessionChat(request, env, id, after) {
@@ -370,6 +654,9 @@ async function removeRoom(request,env,id){
   const statements=[
     env.DB.prepare(`DELETE FROM account_rooms WHERE room_id=? AND ${live}`).bind(id,id,input.revision),
     env.DB.prepare(`DELETE FROM session_chat WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
+    env.DB.prepare(`DELETE FROM session_voice_signals WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
+    env.DB.prepare(`DELETE FROM session_voice WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
+    env.DB.prepare(`DELETE FROM session_player_auth WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
     env.DB.prepare(`DELETE FROM session_players WHERE session_id=? AND ${live}`).bind(id,id,input.revision),
   ];
   if(!env.BUCKET)statements.push(
@@ -450,6 +737,7 @@ export async function sessionRequest(request, env) {
     // The unlisted, randomly generated session ID is the guest's invitation and access credential.
     if (match?.[3]) return await sessionToken(request,env,match[1],match[3]);
     if (match?.[2] === "/players") return await sessionPlayers(request,env,match[1]);
+    if (match?.[2] === "/voice") return await sessionVoice(request,env,match[1],url);
     if (match?.[2] === "/chat") return await sessionChat(request,env,match[1],url.searchParams.get("after"));
     if (match?.[2] && request.method === "GET") {
       const id = match[1];

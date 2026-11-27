@@ -8,11 +8,12 @@ import { loadSpellRules, setSpellRuleContext, customSpellRule } from './spell-ru
 import { customSpellCells, moveCustomSphere, fireZoneBeam } from './custom-spells.mjs';
 import { directional, needsEndpoint } from './spell-shapes.mjs';
 import { allowsWallRing, formRule } from './spell-animation-library.mjs';
-import { armReaction, disarmReaction, isArmed, reactionSpells } from './reactions.mjs';
+import { armReaction, disarmReaction, isArmed, reactionSpells, canOfferManualReaction, manualReactionOptions, resolveManualReaction } from './reactions.mjs';
 import { resetSceneBoard } from "./board-reset.mjs";
 import { commitRoomState, normalizeRoomState, roomBattle, travelRoom, roomMapChoices } from "./room-state.mjs";
 import { prepareMonsterRewards } from "./encounter-rewards.mjs";
-import { withinReach, takeLoot, lootContents, carryBody, placeBody, syncRewardSheets, bodyWeight, initializeTreasure, releaseRevivedBodies } from "./world-interactions.mjs";
+import { withinReach, takeLoot, lootContents, carryBody, dragBody, dropBody, placeBody, syncRewardSheets, bodyWeight, initializeTreasure, releaseRevivedBodies, searchRegion, investigateFeature, useFeature, featureCardModel, applyPassiveFeatureHints, triggerFeaturesAt, recordFeatureDiscovery } from "./world-interactions.mjs";
+import { featuresInRegion, visibleFeaturePips, setFeatureState, syncMarkerForFeature } from "./room-features.mjs";
 import { createFloatingPanels } from "./floating-panels.mjs";
 import { createWallEditor } from './wall-editor.mjs';
 import { applyBakedWalls } from './baked-walls.mjs';
@@ -24,7 +25,7 @@ import { creatureSize, tokenSize, actorCells, containsCell, touchesArea } from '
 import { drawMonsterArtwork, monsterArtwork } from "./monster-art.mjs";
 import { characterTokenArtwork, localTokenBlob, uploadSessionToken } from "./character-token.mjs";
 import { enrichCharacter } from "./character-rules.mjs";
-import { alignArtwork, fitsCurrentGrid, gridGeometry, migrateGridState } from "./map-grid.mjs";
+import { alignArtwork, artworkFitIsDefault, defaultSquareFeet, fitsCurrentGrid, gridGeometry, migrateGridState, normalizeArtworkFit } from "./map-grid.mjs";
 import { areaKey, populateScene, rosterTokens } from "./scene-populate.mjs";
 import { gameScreen } from "./game-screen.mjs";
 import { createHealthPresentation } from "./health-presentation.mjs";
@@ -32,20 +33,26 @@ import { createCombatCues } from "./combat-cues.mjs";
 import { createTokenHover } from "./token-hover.mjs";
 import { createTokenMotion } from './token-motion.mjs';
 import { createGameChat } from "./game-chat.mjs";
+import { createSpatialVoice } from "./spatial-voice.mjs";
 import { withActionEvent } from "./action-events.mjs";
 import { fogOfWarEnabled } from "./game-settings.mjs";
-import { buildActionBar, entryReason, renderActionBar, renderActionResources, toggleHotbarFilter, parseHotbarFilters } from "./action-bar.mjs";
+import { buildActionBar, entryReason, hotbarDetailModel, renderActionBar, renderActionResources, toggleHotbarFilter, parseHotbarFilters } from "./action-bar.mjs";
 import { classActions, classSkillCheck, classWeapons, migratePactResources, shortRestsLeft, syncClassResources, useClassAction } from "./class-actions.mjs";
-import { canRescue, discoverStory, rescueSildar, storyPanel, storyVersion } from "./adventure-story.mjs";
+import { canRescue, createStoryToasts, discoverStory, rescueSildar, storyPanel, storyVersion } from "./adventure-story.mjs";
 import { enemyTurnPending, runEnemyTurns } from "./enemy-turn.mjs";
 import { DOMINATE_ORDERS, issueDominateCommand, seizeDominateControl } from "./dominate.mjs";
-import { enemyInSight, engageEnemy, noticesEnemy, partyEscaped, partyVision, rememberVision } from "./exploration.mjs";
+import { enemyInSight, engageEnemy, noticesEnemy, partyDefeated, partyEscaped, partyVision, rememberVision } from "./exploration.mjs";
+import {
+  DEFAULT_PARTY_ID, MAX_PARTY_SIZE, actorPartyId, assignParty, canCreateParty, createParty, ensureParties,
+  isAttackablePc, isCombatFoe, isPvpCombat, partyFull, partyLabel, partyMembers, sameParty
+} from "./parties.mjs";
 import { exploredCells, hasExplored, saveExplored, forgetExploration } from "./fog-memory.mjs";
 import { addDoor, addWall, doorAt, mapFloor, mapWalls, removeDoor, removeWall, segKey, toggleDoor } from "./map-walls.mjs";
 import { escape, plural, signed, text } from "./format.mjs";
 import { icon } from "./icons.mjs";
 import { attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord } from "./rules-library.mjs";
 import { cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap } from "./encounters.mjs";
+import { cellsNearSpawn, createSpawnMarker, findSpawn, removeSpawnMarker, spawnMarkers } from "./spawn-points.mjs";
 import { listHomebrew } from "./homebrew-store.mjs";
 import { monsterStatBlock } from "./homebrew-schema.mjs";
 import { defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt } from "./grid-view.mjs";
@@ -56,8 +63,8 @@ import {
 } from "./multiplayer.mjs";
 import {
   actorIsUp, applyDamage, armorClass, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion, helpUp, throwHealingPotion,
-  endInitiative, endTurn, fallingDamage, hasFeature, incapacitated, joinInitiative, keyAt, moveLeft,
-  exploreToken, heal, lineClear, log, movementGroup, moveToken, newBattle, occupies, opportunity, placeToken, canStand, previewMovement, recordSpell, resolveDeflection, resolveOpportunity, rollDice,
+  endConcentration, endInitiative, endTurn, fallingDamage, hasFeature, incapacitated, joinInitiative, keyAt, moveLeft,
+  exploreToken, heal, lineClear, log, movementGroup, moveToken, newBattle, occupies, opportunity, placeToken, canStand, previewMovement, recordSpell, resolveDeflection, resolveOpportunity, requestTruce, rollDice,
   rollStrike, sneakAttackStatus, slotRank, spellCells, spellTargetCount, startInitiative, supportedSpell, sustainWitchBolt, turnAction, wakeCreature,
 } from "./combat.mjs";
 
@@ -104,11 +111,30 @@ let table;
 let tableOpen = false;
 let partyOpen = false;
 let restOpen=false;
+let defeatedDismissed = false;
 let tableMessage = "";
 let needsHostSignIn = false;
 let showInvitation;
 let category = "move";
 let hotbarTab = "all", hotbarFilter = "", hotbarSearch = "", hotbarSelection = "", hotbarActor = "", hotbarExpanded = false, hotbarTools = false;
+/** Mobile/compact: actions sheet opens from character select; closes when aiming. */
+let actionsSheetOpen = false;
+function compactPlayUi() {
+  return typeof matchMedia === "function" && matchMedia("(max-width: 820px)").matches;
+}
+let compactUiMatch = compactPlayUi();
+if (typeof matchMedia === "function") {
+  const compactQuery = matchMedia("(max-width: 820px)");
+  const onCompactChange = () => {
+    const next = compactQuery.matches;
+    if (next === compactUiMatch) return;
+    compactUiMatch = next;
+    if (!next) actionsSheetOpen = false;
+    if (context?.game && root()) redraw();
+  };
+  if (typeof compactQuery.addEventListener === "function") compactQuery.addEventListener("change", onCompactChange);
+  else compactQuery.addListener?.(onCompactChange);
+}
 let eventLogMode = 'compact';
 try { const saved = localStorage.getItem('wayfarer-log-mode-v1'); if (['compact', 'expanded', 'collapsed'].includes(saved)) eventLogMode = saved; } catch { }
 let eventLogPlacement = 'chat';
@@ -157,9 +183,61 @@ function restoreEventLogScroll() {
 
 let toolsOpen = false;
 let storyOpen = false;
+const storyToasts = createStoryToasts();
 let scheduledEnemyBattle;
 const combatCues = createCombatCues();
+let reactionPause = null;
 let localChat;
+let revealHudTimer = 0;
+let revealPaintFrame = 0;
+
+function openReactionPause(event, resume, showChoices) {
+  const choices = () => manualReactionOptions(battle, event, {canControl, map});
+  const render = (message = '') => {
+    const options = choices();
+    const rows = options.map(option =>
+      `<button type="button" class="dice-reaction-choice" data-reaction-id="${escape(option.id)}">` +
+      `<strong>${escape(option.actorName)}</strong> · ${escape(option.name)}` +
+      (option.level ? ` <span class="dice-reaction-slot">slot ${option.slot}</span>` : '') +
+      `<small>${escape(option.note)}</small></button>`
+    ).join('');
+    showChoices(
+      `<div class="dice-reaction-menu">` +
+      `<p>${escape(message || 'Choose a reaction, then combat continues.')}</p>` +
+      (rows || '<p class="dice-reaction-empty">No reactions available right now.</p>') +
+      `<button type="button" class="dice-reaction-continue">Continue without reacting</button>` +
+      `</div>`
+    );
+    const panel = document.querySelector('.dice-reaction-panel');
+    panel?.querySelector('.dice-reaction-continue')?.addEventListener('click', () => {
+      reactionPause = null;
+      resume();
+    }, {once: true});
+    for (const button of panel?.querySelectorAll('.dice-reaction-choice') ?? []) {
+      button.addEventListener('click', () => {
+        const option = options.find(entry => entry.id === button.dataset.reactionId);
+        if (!option) return;
+        interact(() => {
+          const result = resolveManualReaction(battle, option, event, {map});
+          if (result.needsTarget) {
+            status = result.message;
+            throw new Error(result.message);
+          }
+          status = result.message;
+        }).then(() => {
+          reactionPause = null;
+          resume();
+          if (root() && context?.game) redraw();
+        }).catch(() => {
+          render(status || 'That reaction could not be used.');
+        });
+      }, {once: true});
+    }
+  };
+  reactionPause = {event, resume};
+  render();
+}
+
 document.addEventListener('wayfarer:chat-roll', event => {
   const rollEvent = event.detail;
   if (!rollEvent) return;
@@ -190,9 +268,17 @@ const tokenHover = createTokenHover(id => {
   });
 });
 let animatedBoard;
+let voiceSyncFrame = 0;
 function paintAnimationFrame() {
   if (animatedBoard && animatedBoard.camera === camera && context?.game) { const { drawingMap, state, options } = animatedBoard; camera.paint((canvas, view) => drawGrid(canvas, view, drawingMap, state, options)); }
   else paintBoard();
+  // Voice proximity does not need 60fps DOM during token slides — positions only.
+  if (table?.voice && !voiceSyncFrame) {
+    voiceSyncFrame = requestAnimationFrame(() => {
+      voiceSyncFrame = 0;
+      table?.voice?.syncPositions?.({battle, tokenPositions: tokenMotion.positions, selected: selectedId});
+    });
+  }
 }
 const tokenMotion = createTokenMotion(paintAnimationFrame);
 let queuedMove = null;
@@ -204,6 +290,8 @@ try {
 } catch { }
 let rooms = knownRooms(), roomsLoading = false, roomsError = '', roomListRequest = 0, deletingRoom = '';
 const roomDraft = { name: '', username: '', prepared: false, party: null, adventure: 'training' };
+let spawnNameDraft = 'Party 1 start';
+let selectedSpawnId = '';
 async function refreshRooms() {
   const request = ++roomListRequest; rooms = knownRooms(); roomsLoading = true; roomsError = '';
   try {
@@ -265,7 +353,7 @@ async function createAdventureRoom() {
 let pathPreview;
 let previewMessage = "";
 let interactionPosition = null;
-let objectTarget = null, bodyPlacement = '', potionUse = 'drink';
+let objectTarget = null, bodyPlacement = '', potionUse = 'drink', featureTargetId = '';
 let spellEnd=null,spellHotSide='left',spellWallForm='wall',controlledZone=null;
 let spellSquare;
 let castSlot = "";
@@ -277,6 +365,8 @@ const sceneJobs = new WeakMap();
 let repaintScheduled = false;
 let detectedGrid;
 let gridDraft;
+let artFitDraft;
+let calibrateGrid = false;
 const gridFields = ["width", "height", "x", "y"];
 const gridModes = { artwork: "Artwork only", printed: "Artwork guides", tactical: "5-foot cells" };
 const activeMapKey = "wayfarer-active-map-v1";
@@ -299,8 +389,8 @@ async function decodeMapImage(blob, entry) {
     const image = new Image();
     image.src = url;
     await image.decode();
-    if (entry && Math.abs(image.naturalWidth / image.naturalHeight / (entry.width / entry.height) - 1) > .06) {
-      throw new Error("This image does not match the map’s aspect ratio. Choose the image for this map variant.");
+    if (entry && Math.abs(image.naturalWidth / image.naturalHeight / (entry.width / entry.height) - 1) > .15) {
+      throw new Error("This image’s aspect ratio is too far from this map. Crop it closer, or pick the matching map variant.");
     }
     return image;
   } finally {
@@ -320,16 +410,41 @@ const wallEditor = createWallEditor({
 const displayVision = () => viewerVision(battle, map, table ? controller : null).visible;
 const fogActive = () => !wallEditor.active && (battle.fogEnabled ?? fogOfWarEnabled);
 
+function viewerParty() {
+  const mine = battle.actors.find((actor) => actor.side === "party" && (table ? battle.controllers?.[actor.id] === controller : actor.id === selectedId))
+    ?? selectedActor()
+    ?? battle.actors.find((actor) => actor.side === "party");
+  return mine?.side === "party" ? actorPartyId(mine) : null;
+}
+
 function visibleTokens(sight = context?.game ? displayVision() : null, { includeDefeated = false } = {}) {
   if (!sight) return null;
-  return new Set(battle.actors.filter((actor) => actor.side === "party" ||
-    (!condition(actor, "Invisible") && occupies(actor) || includeDefeated && defeatedCreature(actor)) &&
-    (!fogActive() || touchesArea(actor, sight))).map(({ id }) => id));
+  const myParty = viewerParty();
+  return new Set(battle.actors.filter((actor) => {
+    if (actor.side === "party" && (!myParty || sameParty({side: "party", partyId: myParty}, actor))) return true;
+    const revealed = (!condition(actor, "Invisible") && occupies(actor) || includeDefeated && defeatedCreature(actor)) &&
+      (!fogActive() || touchesArea(actor, sight));
+    return revealed;
+  }).map(({ id }) => id));
 }
 
 function visibleMarkers(sight = context?.game ? displayVision() : null) {
   const entries = battle.markers ?? [];
   return sight ? entries.filter((marker) => (!marker.hidden || marker.revealed) && (!fogActive() || sight.has(keyAt(marker.x, marker.y)))) : entries;
+}
+
+function boardFeatureMarkers(sight = context?.game ? displayVision() : null) {
+  const dm = !table || table.role === "dm" || !fogActive();
+  const pips = visibleFeaturePips(battle, { dm, sight, fogOn: fogActive() });
+  return pips.map((feature) => ({
+    id: feature.id,
+    type: feature.state === "hinted" ? "hint" : (feature.kind === "creature_hint" ? "creature" : feature.kind === "secret" || feature.kind === "mechanism" || feature.kind === "lore" ? "object" : feature.kind),
+    name: feature.name,
+    x: feature.x,
+    y: feature.y,
+    hinted: feature.state === "hinted",
+    feature: true,
+  }));
 }
 
 function repaintCreatureArt() {
@@ -430,18 +545,54 @@ function paintBoard() {
   const tokenImages = collectArtwork(visible);
   paintTokenPreviews(tokenImages);
   const alignmentOpen = element.querySelector("#grid-settings")?.open;
-  const drawingMap = alignmentOpen && gridDraft ? { ...map, ...gridGeometry(map, gridDraft) } : map;
+  const liveAlignment = alignmentOpen ? (gridDraft ?? map.printedGrid) : null;
+  const drawingMap = liveAlignment ? { ...map, ...gridGeometry(map, liveAlignment) } : map;
+  const liveArtFit = alignmentOpen ? (artFitDraft ?? battle.artworkFit) : battle.artworkFit;
   const previewCursor=cursor?.movement && (tool!=="move" || !["move","interact"].includes(category) || bodyPlacement) ? null : cursor;
   const options = {
     room: context.game && tool !== "room" ? null : room, selected: actor?.id, target: selectedTarget, hovered: context.game ? tokenHover.hovered : undefined, cursor:previewCursor, art,
     tokenPositions: context.game ? tokenMotion.positions : null, movementLabels: context.game ? tokenMotion.labels : null,
     path: pathPreview, visible, fog: fogActive() && sight ? { ...vision, memory: viewerMemory(battle, map, table ? controller : null), settings: fogSettings(battle) } : null,
     wallEditor: wallEditor.active ? wallEditor : null,
-    footprint, showRegions: !context.game || !art || tool === "room",
-    markers: visibleMarkers(sight), tokenImages, overlay: alignmentOpen && gridDraft ? "printed" : battle.gridOverlay ?? "artwork",
+    footprint, showRegions: alignmentOpen || !context.game || !art || tool === "room",
+    markers: (() => {
+      const shown = visibleMarkers(sight);
+      const ids = new Set(shown.map((marker) => marker.id));
+      for (const spawn of spawnMarkers(battle)) if (!ids.has(spawn.id)) shown.push(spawn);
+      for (const pip of boardFeatureMarkers(sight)) {
+        if (ids.has(pip.id)) {
+          const existing = shown.find((marker) => marker.id === pip.id);
+          if (existing && pip.hinted) existing.hinted = true;
+          continue;
+        }
+        ids.add(pip.id);
+        shown.push(pip);
+      }
+      return shown;
+    })(), tokenImages, overlay: alignmentOpen ? "printed" : battle.gridOverlay ?? "artwork",
   };
-  options.backgroundKey = {};
-  const paintState = { ...battle, actors: battle.actors.map(actor => displayedActor(actor)) };
+  // Stable string key — a fresh object every paint defeated the layered board cache and
+  // forced full artwork/fog/marker redraws on every token-motion frame (huge on giant maps).
+  // Vision positions stay OUT of this key; fog is redrawn on the token overlay instead.
+  const fit = liveArtFit ?? null;
+  const fogSettingsKey = options.fog?.settings
+    ? [options.fog.settings.opacity, options.fog.settings.exploredOpacity, options.fog.settings.softness, options.fog.settings.remember ? 1 : 0].join(",")
+    : "";
+  options.backgroundKey = [
+    map.key,
+    options.overlay,
+    options.showRegions ? 1 : 0,
+    options.room?.id ?? "",
+    options.fog ? "fog:" + (options.fog.memory?.revision ?? 0) + ":" + fogSettingsKey : "nofog",
+    battle.wallRevision ?? 0,
+    fit ? [fit.scale, fit.offsetX, fit.offsetY].join(",") : "",
+    Object.keys(battle.terrain || {}).length,
+    (battle.spellZones || []).map((zone) => zone.id || zone.name || "").join(","),
+    options.markers.map((marker) => [marker.id, marker.x, marker.y, marker.type, marker.hinted ? 1 : 0, marker.revealed ? 1 : 0].join(":")).join("|"),
+    options.footprint ? [...options.footprint].join(",") : "",
+    options.wallEditor ? "walls" : "",
+  ].join("/");
+  const paintState = { ...battle, artworkFit: liveArtFit, actors: battle.actors.map(actor => displayedActor(actor)) };
   animatedBoard = { camera, drawingMap, state: paintState, options };
   camera.paint((canvas, view) => drawGrid(canvas, view, drawingMap, paintState, options));
   const frame = element.querySelector('.board-frame')?.parentElement;
@@ -456,9 +607,14 @@ function paintBoard() {
   } : null);
 }
 
+function currentSquareFt() {
+  if (battle.gridSquareFt === 10 || battle.gridSquareFt === 5) return battle.gridSquareFt;
+  return defaultSquareFeet(map.sourceGrid);
+}
+
 function setAlignment(alignment) {
   if (!map.sourceGrid) return false;
-  const geometry = gridGeometry(map, alignment);
+  const geometry = gridGeometry(map, alignment, currentSquareFt());
   if (!fitsCurrentGrid(geometry, battle)) return false;
   Object.assign(map, geometry);
   return true;
@@ -468,23 +624,102 @@ function alignmentDescription() {
   return battle.gridManual ? "Saved alignment" : detectedGrid ? "Fitted to artwork" : "Adventure alignment";
 }
 
+function alignmentBaseline() {
+  return detectedGrid ?? map.sourceGrid;
+}
+
+function scaleFromAlignment(alignment) {
+  const baseline = alignmentBaseline();
+  if (!baseline?.width || !alignment?.width) return 100;
+  return Math.round((alignment.width / baseline.width) * 1000) / 10;
+}
+
+function alignmentFromScale(scalePct, current = gridDraft ?? map.printedGrid ?? map.sourceGrid) {
+  const baseline = alignmentBaseline();
+  const factor = scalePct / 100;
+  return {
+    width: baseline.width * factor,
+    height: baseline.height * factor,
+    x: current?.x ?? baseline.x,
+    y: current?.y ?? baseline.y,
+  };
+}
+
 function updateAlignmentFields() {
   const description = root()?.querySelector("#grid-align-source");
   if (description) description.textContent = alignmentDescription();
+  const alignment = gridDraft ?? map.printedGrid;
   for (const field of gridFields) {
     const element = root()?.querySelector("#grid-align-" + field);
-    if (element) element.value = formatPixels(map.printedGrid[field]);
+    if (element && alignment) element.value = formatPixels(alignment[field]);
   }
+  const scale = root()?.querySelector("#grid-align-scale");
+  if (scale && alignment) scale.value = formatPixels(scaleFromAlignment(alignment));
+}
+
+function previewAlignment(alignment, { from } = {}) {
+  const feedback = root()?.querySelector("#grid-align-feedback");
+  if (alignment && fitsCurrentGrid(gridGeometry(map, alignment), battle)) {
+    gridDraft = alignment;
+    if (feedback) feedback.textContent = "Previewing the adjusted guides. Save when the orange lines match the printed squares.";
+    if (from !== "fields") {
+      for (const name of gridFields) {
+        const element = root()?.querySelector("#grid-align-" + name);
+        if (element) element.value = formatPixels(alignment[name]);
+      }
+    }
+    if (from !== "scale") {
+      const scale = root()?.querySelector("#grid-align-scale");
+      if (scale) scale.value = formatPixels(scaleFromAlignment(alignment));
+    }
+    paintBoard();
+    return true;
+  }
+  if (feedback) feedback.textContent = "Enter positive spacing and keep saved pieces inside the grid.";
+  paintBoard();
+  return false;
+}
+
+function currentArtworkFit() {
+  return normalizeArtworkFit(artFitDraft ?? battle.artworkFit);
 }
 
 function alignImage(image) {
   if (!map.sourceGrid) return;
   detectedGrid = null;
-  try { detectedGrid = alignArtwork(image, map); } catch { }
+  try { detectedGrid = alignArtwork(image, map, currentSquareFt(), currentArtworkFit()); } catch { }
   if (!battle.gridManual && !gridDraft) {
     if (!setAlignment(detectedGrid ?? map.sourceGrid)) detectedGrid = null;
     updateAlignmentFields();
   }
+}
+
+function previewArtworkFit(fit) {
+  const next = normalizeArtworkFit(fit);
+  if (!(next.scale > 0)) {
+    const feedback = root()?.querySelector("#art-fit-feedback");
+    if (feedback) feedback.textContent = "Enter a positive image scale.";
+    return false;
+  }
+  artFitDraft = next;
+  const feedback = root()?.querySelector("#art-fit-feedback");
+  if (feedback) feedback.textContent = "Previewing image placement. Rooms and monsters stay put — move the picture under them, then save.";
+  const scale = root()?.querySelector("#art-fit-scale");
+  const x = root()?.querySelector("#art-fit-x");
+  const y = root()?.querySelector("#art-fit-y");
+  if (scale && document.activeElement !== scale) scale.value = formatPixels(next.scale * 100);
+  if (x && document.activeElement !== x) x.value = formatPixels(next.x);
+  if (y && document.activeElement !== y) y.value = formatPixels(next.y);
+  paintBoard();
+  return true;
+}
+
+function readArtworkFit() {
+  const scale = root()?.querySelector("#art-fit-scale")?.valueAsNumber;
+  const x = root()?.querySelector("#art-fit-x")?.valueAsNumber;
+  const y = root()?.querySelector("#art-fit-y")?.valueAsNumber;
+  if (![scale, x, y].every(Number.isFinite) || !(scale > 0)) return null;
+  return normalizeArtworkFit({ x, y, scale: scale / 100 });
 }
 
 function updateArtwork() {
@@ -545,6 +780,11 @@ async function loadArtwork(entry, file, sharedURL) {
       customArtwork = file;
       if (!table) alignImage(image);
       artworkNote = sharedURL ? "Shared map artwork." : file ? "Using your map image." : (entry.playerAsset && !useDm) ? "Player map artwork (hidden DM notes)" + (entry.artist ? " by " + entry.artist : "") + "." : (entry.playerAsset && useDm) ? "DM map artwork with annotations" + (entry.artist ? " by " + entry.artist : "") + "." : entry.artist ? "Map artwork by " + entry.artist + "." : "Map artwork loaded from 5etools.";
+      if (file && map.sourceGrid && !table) {
+        calibrateGrid = true;
+        if ((battle.gridOverlay ?? "artwork") === "artwork") battle.gridOverlay = "printed";
+        artworkNote = "Using your map image. Move the picture under the rooms (image scale / shift), then save placement. Grid guides are optional.";
+      }
     } else {
       artworkNote = "Map artwork is unavailable. Showing the schematic.";
     }
@@ -555,7 +795,10 @@ async function loadArtwork(entry, file, sharedURL) {
       : "Map artwork is unavailable. Showing the schematic.";
   } finally {
     clearTimeout(timeout);
-    if (current()) updateArtwork();
+    if (current()) {
+      if (calibrateGrid) redraw();
+      else updateArtwork();
+    }
   }
 }
 
@@ -569,7 +812,7 @@ function useMap(entry,{fresh=false}={}) {
   camera = null;
   artworkNote = "";
   customArtwork = null;
-  detectedGrid = null; gridDraft = null;
+  detectedGrid = null; gridDraft = null; artFitDraft = null;
   map = entry;moduleId=entry.module;setSpellRuleContext(loadSpellRules());
   storyOpen = false;
   let saved;
@@ -639,12 +882,38 @@ function requireControl(actor) {
   if (actor?.side === "hostile") throw new Error("The game controls " + actor.name + ".");
   if (!canControl(actor)) throw new Error("Wait for " + (actor?.name ?? "the active character") + " to act.");
 }
+function onlinePlayerIds(players) {
+  const online = new Set((players ?? []).filter((player) => player.online).map((player) => player.id));
+  // Never drop our own claims on a brief heartbeat glitch.
+  online.add(controller);
+  return online;
+}
+function hasOfflineClaims(players) {
+  if (!table || !battle?.controllers) return false;
+  const online = onlinePlayerIds(players);
+  return Object.values(battle.controllers).some((owner) => owner && !online.has(owner));
+}
+function clearOfflineClaims(players) {
+  if (!battle?.controllers) return [];
+  const online = onlinePlayerIds(players);
+  const released = [];
+  for (const actor of battle.actors.filter((entry) => entry.side === "party")) {
+    const owner = battle.controllers[actor.id];
+    if (!owner || online.has(owner)) continue;
+    delete battle.controllers[actor.id];
+    released.push(actor.name);
+  }
+  return released;
+}
 function revealStory(previous) {
   if (storyVersion(battle) <= previous || battle.round) return;
-  storyOpen = true;
-  tableOpen = toolsOpen = false;
-  tool = "move";
-  gridDraft = null;
+  // Don't yank the Story journal open — toast new passages so play keeps moving.
+  // Loading into an already-filled journal seeds "seen" instead of replaying the trail.
+  if (previous === 0 && (battle.story?.discoveries?.length ?? 0) > 1) {
+    storyToasts.remember(battle);
+    return;
+  }
+  storyToasts.reveal(battle);
 }
 function mapPoint(square) {
   const [x, y] = cellCenter(map, square);
@@ -698,11 +967,14 @@ function combatSelection(actor, visible) {
   const targets = battle.actors.filter((entry) => occupies(entry) && (!visible || visible.has(entry.id)));
   let target = targets.find((entry) => entry.id === targetId);
   if (!target && weapons && choice && actorIsUp(actor) && occupies(actor)) {
-    const enemies = targets.filter((entry) => entry.side === "hostile" && actorIsUp(entry))
-      .sort((a, b) => distanceFt(actor, a) - distanceFt(actor, b));
     const weapon = choice.data;
     const range = weapon?.normalRange ? weapon.longRange || weapon.normalRange : weapon?.reach || 5;
-    target = enemies.find((enemy) => distanceFt(actor, enemy) <= range && lineClear(battle, actor, enemy, map)) ?? enemies[0];
+    const foes = targets.filter((entry) => isCombatFoe(actor, entry) && actorIsUp(entry))
+      .sort((a, b) => {
+        const rivalBias = (isAttackablePc(actor, a) && !sameParty(actor, a) ? 0 : 1) - (isAttackablePc(actor, b) && !sameParty(actor, b) ? 0 : 1);
+        return (a.side === "hostile" ? 0 : 1) - (b.side === "hostile" ? 0 : 1) || rivalBias || distanceFt(actor, a) - distanceFt(actor, b);
+      });
+    target = foes.find((enemy) => distanceFt(actor, enemy) <= range && lineClear(battle, actor, enemy, map)) ?? foes.find(entry => entry.side === "hostile") ?? null;
   }
   return { list, index, choice, targets, target };
 }
@@ -727,7 +999,7 @@ function restPanel(){
  const disabled=permission||waiting||selection||busy;
  const progress=policy?battle.rest?.encounterProgress?.[policy.id]??0:0;
  const checks=hours=>policy?Math.floor((progress+hours*3600)/(policy.intervalHours*3600)):0;
- return `<header class="rest-panel-heading"><h2>Rest the party</h2><button type="button" class="game-button" data-play="game-rest" aria-label="Close rest panel">${icon('close',16)}</button></header><p>${shortRestsLeft(battle)} / 2 short rests remaining. A completed long rest restores both.</p>
+ return `<header class="rest-panel-heading"><h2>Rest the party</h2><button type="button" class="game-button" data-play="game-rest" aria-label="Close rest panel">${icon('close',16)}</button></header><p>${shortRestsLeft(battle)} / 2 short rests remaining. <br> A completed long rest restores both.</p>
  ${choices.policies.length?field('Dungeon encounter table','rest-table',choices.policies.length>1?[option('','Choose a table',!policy),...choices.policies.map(p=>option(p.id,p.caption,p.id===policy?.id))]:choices.policies.map(p=>option(p.id,p.caption,true))):''}
  <p class="rest-danger-note">${escape(waiting||restRiskSummary(policy))}</p>${policy?.minArea?`<p>Source restriction: areas ${policy.minArea} and beyond. Safe areas do not make checks.</p>`:''}${policy?.areaIds?'<p>This source table applies only in its authored room.</p>':''}
  <div class="rest-choice"><h3>Short rest · 1 hour</h3><p>Recover half maximum HP and short-rest resources. Spell slots recover only when their class rules allow it.${policy?' Up to '+checks(1)+' encounter checks at this location.':''}</p>${actionButton('Short rest ('+shortRestsLeft(battle)+'/2 left)','short-rest',{disabled:Boolean(disabled||restBlocked(battle))})}</div>
@@ -789,6 +1061,7 @@ function playOptions(actor) {
       ${actor.stable || turnView(battle, actor).deathRolled ? "" : actionButton("Roll death save", "death", { primary: true })}` : "";
   if (incapacitated(actor)) return "<p>" + (condition(actor, "Asleep") ? "Asleep" : "Paralyzed") + "</p>";
   if (context.game && category === 'interact') return worldInteractionPanel(actor);
+  if (context.game && (category === 'investigate' || category === 'use-feature')) return featureExplorationPanel(actor, category);
   if(context.game&&category==='spell-zone-choice'){
     const entry=hotbarEntries(actor).find(entry=>entry.id===hotbarSelection),castReason=entry&&entryReason(actor,battle,{...entry,controlZone:null},canControl(actor)),controlReason=entryReason(actor,battle,{mode:'common',timing:'bonus',actionId:'control-spell-zone'},canControl(actor));
     return '<div class="item-action-choices">'+actionButton('Control sphere · Bonus action','sphere-control',{disabled:Boolean(controlReason)})+actionButton('Cast again · Action','sphere-recast',{disabled:Boolean(castReason)})+'</div><p>Control the active sphere without another spell slot, or cast a replacement.</p>';
@@ -840,7 +1113,11 @@ function playOptions(actor) {
       effect.custom&&needsEndpoint(formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined))?'Choose a start point, then the wall endpoint.':effect.custom&&directional(formRule(effect.definition,allowsWallRing(effect.definition)?spellWallForm:undefined))||effect.cone?'Choose the direction of the effect on the map.':effect.teleport ? "Choose an unoccupied destination on the map." :
         "Choose a point on the map. The square can be empty."}</p>` : ""}
     ${pickTarget ? field("Target", "target-select", [option("", "Choose target", !target),
-        ...spellTargets.map((entry) => option(entry.id, entry.name, entry.id === target?.id))]) : ""}
+        ...spellTargets.map((entry) => {
+          const tag = entry.side === 'party' && actor && !sameParty(actor, entry) ? ' · ' + partyLabel(actorPartyId(entry)) :
+            entry.side === 'party' && actor && entry.id !== actor.id ? ' · PC' : entry.side === 'hostile' ? '' : '';
+          return option(entry.id, entry.name + tag, entry.id === target?.id);
+        })]) : ""}
     ${sneak?`<p class="game-spell-note">${sneak.eligible?'+'+sneak.dice+'d6 Sneak Attack on hit':'Sneak Attack: '+escape(sneak.reason)}</p>`:''}
     ${auxiliary ? `<div class="play-field-row">${Array.from({ length: auxiliary }, (_, index) =>
           field((effect.beams ? "Beam " : effect.missiles ? "Dart " : "Target ") + (index + 2), "extra-target-" + index,
@@ -947,6 +1224,7 @@ function setupControls() {
     ${eligible.length ? `<div class="play-inline">
       ${field("Party member", "play-party", [option("", "Choose character", !selectedParty),
   ...eligible.map((character) => option(character.id, character.name, character.id === selectedParty))])}
+      ${spawnField("play-spawn", selectedSpawnId)}
       ${actionButton("Add token", "add-party", { disabled: !selectedParty })}
     </div>` : battle.actors.some((actor) => actor.side === "party") ? "" : '<p><a class="text-link" href="#characters">Import a party member</a> to place your character on the map.</p>'}
     ${hasArchive() ? `<form id="creature-form" class="play-inline">
@@ -960,10 +1238,14 @@ function setupControls() {
 
 function sceneMarkers(region) {
   const markers = (battle.markers ?? []).filter((marker) => marker.origin === areaKey(region));
-  if (!markers.length) return "";
+  const features = featuresInRegion(battle, areaKey(region));
+  if (!markers.length && !features.length) return "";
   return '<ul class="scene-markers">' + markers.map((marker) => `<li>
     ${actionButton(marker.name, "inspect-marker", { id: marker.id })}
     ${marker.hidden && !marker.revealed ? actionButton("Reveal", "reveal-marker", { id: marker.id }) : ""}
+  </li>`).join("") + features.filter((feature) => !markers.some((marker) => marker.id === feature.id)).map((feature) => `<li>
+    <span>${escape(feature.name)} · ${escape(feature.state)}</span>
+    ${feature.state === "hidden" || feature.state === "hinted" ? actionButton("Reveal", "reveal-feature", { id: feature.id }) : ""}
   </li>`).join("") + "</ul>";
 }
 
@@ -1098,23 +1380,45 @@ function formatPixels(value) {
 function gridSettings() {
   if (!map.sourceGrid) return "";
   const alignment = gridDraft ?? map.printedGrid;
+  const artFit = currentArtworkFit();
+  const squareFt = currentSquareFt();
   const fields = [
     ["Square width", "width", 'min="1"'], ["Square height", "height", 'min="1"'],
     ["Horizontal offset", "x", ""], ["Vertical offset", "y", ""],
   ];
   return `<details id="grid-settings" class="grid-settings">
-    <summary>Grid alignment</summary>
+    <summary>Map image placement &amp; grid</summary>
     <div class="grid-settings-body">
+      <p class="play-hint">Rooms, monsters, and markers stay fixed. Move the uploaded picture underneath them.</p>
+      <form id="art-fit-form" class="play-form">
+        <div class="play-field-row">
+          ${input("Image scale (%)", "art-fit-scale", formatPixels(artFit.scale * 100), "number", 'min="25" max="400" step="0.1"')}
+          ${input("Shift right (px)", "art-fit-x", formatPixels(artFit.x), "number", 'step="any"')}
+          ${input("Shift down (px)", "art-fit-y", formatPixels(artFit.y), "number", 'step="any"')}
+        </div>
+        <p id="art-fit-feedback" role="status" class="play-hint">${calibrateGrid || artFitDraft ? "Previewing image placement. Save when rooms sit on the right parts of the picture." : ""}</p>
+        <div class="play-action-row">
+          <button type="submit" class="button primary small">Save image placement</button>
+          ${actionButton("Reset image placement", "reset-art-fit")}
+        </div>
+      </form>
       ${field("Grid display", "grid-overlay", Object.entries(gridModes).map(([mode, label]) =>
     option(mode, label, (battle.gridOverlay ?? "artwork") === mode)))}
-      <p class="play-hint"><strong id="grid-align-source">${alignmentDescription()}</strong> · Adjust the guides in image pixels. Movement uses 5-foot cells.</p>
+      ${field("Printed square", "grid-square-ft", [
+        option(5, "5 feet (1 tactical cell)", squareFt === 5),
+        option(10, "10 feet (2×2 tactical cells)", squareFt === 10),
+      ])}
+      <p class="play-hint"><strong id="grid-align-source">${alignmentDescription()}</strong> · Optional: match orange guides to printed squares. Each printed square is ${squareFt} ft; movement still uses 5-foot cells.</p>
       <form id="grid-align-form" class="play-form">
+        <div class="play-field-row grid-scale-row">
+          ${input("Square scale (%)", "grid-align-scale", formatPixels(scaleFromAlignment(alignment)), "number", 'min="25" max="400" step="0.1"')}
+        </div>
         <div class="play-field-row">${fields.map(([label, key, limit]) =>
       input(label + " (px)", "grid-align-" + key, formatPixels(alignment[key]), "number", limit + ' step="any" required')).join("")}</div>
-        <p id="grid-align-feedback" role="status" class="play-hint"></p>
+        <p id="grid-align-feedback" role="status" class="play-hint">${gridDraft ? "Previewing the adjusted guides. Save when the orange lines match the printed squares." : ""}</p>
         <div class="play-action-row">
-          <button type="submit" class="button primary small">Save alignment</button>
-          ${actionButton("Reset to automatic", "reset-grid")}
+          <button type="submit" class="button primary small">Save grid alignment</button>
+          ${actionButton("Reset grid to automatic", "reset-grid")}
         </div>
       </form>
     </div>
@@ -1138,7 +1442,7 @@ function playPage() {
   const tools = [
     ["room", "Inspect room"],
     ["move", battle.round ? "Move token" : "Place token"],
-
+    ["spawn", "Place spawn point"],
     ["difficult", "Difficult terrain"],
     ["clear", "Clear terrain"]
   ];
@@ -1146,6 +1450,7 @@ function playPage() {
     <header class="play-header"><div><h1>New adventure room</h1><p>Choose where to start and who’s coming with you.</p></div><a class="text-link" href="#play">Back to rooms</a></header>
     ${roomCreationForm(moduleOptions,ready)}
     ${ready?`<details class="room-advanced"><summary>Advanced encounter setup</summary>
+    <div class="room-advanced-body">
     <div class="play-action-row">
       ${actionButton(pending || sceneJobs.has(battle) ? "Preparing…" : "Preview encounter", "enter-game", { disabled: pending || sceneJobs.has(battle) })}
     </div>
@@ -1163,25 +1468,16 @@ function playPage() {
             ${field("Grid tool", "grid-tool", tools.map(([id, label]) => option(id, label, tool === id)))}
             ${mapControls(Boolean(cameraToken()))}
             ${mapHint()}
-            <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span><span><i class="map-marker-key"></i> Room marker</span></div>
+            <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span><span><i class="map-marker-key"></i> Room marker</span><span><i class="map-spawn-key"></i> Spawn</span></div>
           </div>
+          ${tool === "spawn" ? spawnToolPanel() : ""}
           ${!isTraining ? `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` : ""}
           ${gridSettings()}
           <p class="play-status" role="status">${escape(status)}</p>
         </section>
-        <section class="play-panel">
-          <div class="play-heading"><h2>Combat log</h2>
-            <form id="dice-form" class="dice-form">
-              <label><span class="sr-only">Dice expression</span><input id="dice-expression" value="${escape(diceFormula)}" placeholder="1d20+5" required></label>
-              <button class="button outline small" type="submit">${icon("dice", 16)} Roll dice</button>
-            </form>
-          </div>
-          ${diceResult ? `<p class="dice-result">${escape(diceResult)}</p>` : ""}
-          ${battle.log.length ? `<ol class="play-log">${battle.log.slice().reverse().map((entry) => "<li>" + escape(entry) + "</li>").join("")}</ol>` :
-      '<p class="play-hint">Roll initiative to begin. The log records rolls, damage, and turn changes.</p>'}
-        </section>
       </div>
       <div class="play-rail">${tokenPanel()}${roomPanel()}</div>
+    </div>
     </div></details>`:""}</section>`;
 }
 
@@ -1226,22 +1522,36 @@ function redraw() {
   if (selectedEntry?.mode === 'dominate') category = 'dominate';
   if (hotbarSelection && !selectedEntry) { hotbarSelection = ''; category = 'move'; resetActionSelection(); }
   prepareHealth();
+  ensureParties(battle);
+  const myPartyId = viewerParty();
+  const partyWiped = Boolean(context.game && partyDefeated(battle, myPartyId));
+  if (!partyWiped) defeatedDismissed = false;
+  const selectedNow = selectedActor();
+  const pvpLeave = Boolean(context.game && isPvpCombat(battle) && selectedNow && canControl(selectedNow) && battle.order.includes(selectedNow.id) && !selectedNow.dead);
+  const compact = compactPlayUi();
+  if (!compact) actionsSheetOpen = false;
+  const showActionsSheet = !compact || actionsSheetOpen;
+  const aiming = Boolean(hotbarTools || pendingSquare || (selectedEntry && selectedEntry.mode !== 'move') || ['investigate','use-feature','interact','spell-zone','spell-zone-choice','zone-beam'].includes(category));
+  const aimMessage = aiming ? aimBannerCopy(hotbarActorNow, selectedEntry || (pendingSquare ? { mode: 'move', name: 'Move' } : null)) : '';
   element.innerHTML = context.game ? gameScreen({
-    map, battle, roomName: table?.state?.room?.name, saveStatus: table?.writing ? 'Saving…' : table?.online ? 'Saved' : 'Offline', selected: displayedActor(selectedActor()), party: battle.actors.filter((actor) => actor.side === "party").map(actor => displayedActor(actor)),
+    map, battle, roomName: table?.state?.room?.name, saveStatus: table?.writing ? 'Saving…' : table?.online ? 'Saved' : 'Offline', selected: displayedActor(selectedNow), party: battle.actors.filter((actor) => actor.side === "party").map(actor => displayedActor(actor)),
     visibleInitiative: visibleTokens(),
-    category, actions: gameOptions(selectedActor()), tacticalTools: tableTools(), status,
-    hotbar: hotbarActorNow ? renderActionBar(barEntries, hotbarActorNow, { tab: hotbarTab, filter: hotbarFilter, query: hotbarSearch, selected: hotbarSelection, expanded: hotbarExpanded, utilitiesOpen: hotbarTools }) : '',
-    actionPanelOpen: Boolean(hotbarTools || selectedEntry && selectedEntry.mode !== 'move' || pendingSquare || battle.classReaction || battle.movement || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && canRescue(battle, map, hotbarActorNow)),
+    category, actions: gameOptions(selectedNow), tacticalTools: tableTools(), status,
+    hotbar: hotbarActorNow ? renderActionBar(barEntries, hotbarActorNow, { tab: hotbarTab, filter: hotbarFilter, query: hotbarSearch, selected: hotbarSelection, expanded: hotbarExpanded || (compact && showActionsSheet), utilitiesOpen: hotbarTools }) : '',
+    actionPanelOpen: Boolean(hotbarTools || selectedEntry && selectedEntry.mode !== 'move' || pendingSquare || battle.classReaction || battle.movement || ['investigate','use-feature','interact'].includes(category) || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && canRescue(battle, map, hotbarActorNow)),
     resourceControls: renderActionResources(hotbarActorNow, battle, hotbarFilter),
     logOpen: eventLogPlacement !== 'hidden' && eventLogMode !== 'collapsed' && (eventLogPlacement !== 'chat' || !table || Boolean(table?.chat?.isOpen)), logHistory: table?.state?.battle.log ?? battle.log, eventLogMode, eventLogPlacement, toolsOpen, destination: previewMessage, cursor, hasToken: Boolean(cameraToken()),
     storyOpen, storyContent: storyOpen ? storyPanel(battle, map) : "",
-    rescueAvailable: canControl(selectedActor()) && canRescue(battle, map, selectedActor()),
-    canAct: canControl(selectedActor()), controllers: table ? battle.controllers ?? {} : null, controller,
+    rescueAvailable: canControl(selectedNow) && canRescue(battle, map, selectedNow),
+    canAct: canControl(selectedNow), controllers: table ? battle.controllers ?? {} : null, controller,
     restOpen,restContent:restOpen?restPanel():'',
     partyOpen, partyContent: partyManagement(), chatOpen: (table?.chat ?? localChat)?.isOpen ?? false,
     tableOpen, tableContent: tableOpen ? tablePanel(table, context.characters, battle, tableMessage, needsHostSignIn, controller) : "",
     shared: Boolean(table), players: table?.players, busy: Boolean(table?.writing),
     adventureName: context.adventures.find(({ id }) => id === map.module)?.name,
+    defeated: partyWiped && !defeatedDismissed,
+    pvpLeave, truceVoted: Boolean(selectedNow && battle.truceVotes?.[selectedNow.id]),
+    compact, actionsSheetOpen: showActionsSheet, aiming, aimMessage,
   }) : playPage();
   const nextHotbar = element.querySelector('.game-hotbar');
   if (hotbarScroll && nextHotbar?.dataset.hotbarView === hotbarScroll.view) {
@@ -1261,11 +1571,24 @@ function redraw() {
     activeChat.mount(chatSlot, character?.name || table?.player || selectedActor()?.name || "Player");
     activeChat.setActivity(eventLogPlacement === 'chat' && eventLogMode !== 'collapsed', element.querySelector('.game-live-log'), (table?.state?.battle ?? battle).actionEvents ?? (table?.state?.battle ?? battle).monsterEvents ?? []);
   }
+  const voiceSlot = element.querySelector(".game-voice-slot");
+  if (table?.voice && voiceSlot) {
+    table.voice.mount(voiceSlot);
+    table.voice.sync({battle, players: table.players ?? [], tokenPositions: tokenMotion.positions, selected: selectedId});
+  }
   floatingPanels.mount(element.querySelector(".game-screen"));
+  if (context.game) storyToasts.mount(element.querySelector(".game-stage"));
   if (context.game) void prepareMonsterRewards(battle).catch(() => { });
   if (advancedOpen) element.querySelector(".room-advanced")?.setAttribute("open", "");
   if (archiveOpen && !hasArchive()) element.querySelector(".play-archive")?.setAttribute("open", "");
-  if (gridOpen) element.querySelector("#grid-settings")?.setAttribute("open", "");
+  if (gridOpen || calibrateGrid) {
+    const settings = element.querySelector("#grid-settings");
+    settings?.setAttribute("open", "");
+    if (calibrateGrid) {
+      settings?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      calibrateGrid = false;
+    }
+  }
   const frame = element.querySelector(".board-frame");
   if (context.game && focusedGameMap !== map.key) {
     const center = cameraToken();
@@ -1285,7 +1608,24 @@ function redraw() {
   const committedBattle=table?.state?roomBattle(table.state,map):battle;
   if (context.game) tokenMotion.sync(table?.id ?? map.key, committedBattle);
   combatCues.sync(table?.id ?? battle, committedBattle.actionEvents ?? committedBattle.monsterEvents ?? [], cueLayer ? {
-    onReveal: event => { healthPresentation.reveal(event); requestAnimationFrame(() => { if (root() && context?.game) redraw(); }); },
+    onReveal: event => {
+      healthPresentation.reveal(event);
+      // Giant maps (e.g. Against the Giants) cannot survive a full DOM/camera rebuild per cue.
+      // Paint the board immediately; coalesce expensive HUD redraws.
+      if (!revealPaintFrame) {
+        revealPaintFrame = requestAnimationFrame(() => {
+          revealPaintFrame = 0;
+          if (root() && context?.game) paintBoard();
+        });
+      }
+      clearTimeout(revealHudTimer);
+      revealHudTimer = setTimeout(() => {
+        revealHudTimer = 0;
+        if (root() && context?.game) redraw();
+      }, 160);
+    },
+    canOfferReaction: event => canOfferManualReaction(committedBattle, event, {canControl, map}),
+    onReactionPause: (event, {resume, showChoices}) => openReactionPause(event, resume, showChoices),
     layer: cueLayer, frame, grid: frame.querySelector("#play-grid"), map, battle: committedBattle,
     sight: viewerVision(committedBattle, map, table ? controller : null).visible,
     memory: viewerMemory(committedBattle, map, table ? controller : null),
@@ -1314,6 +1654,7 @@ function tableTools() {
   const tools = [
     ["move", "Move token"],
     ["room", "Inspect room"],
+    ["spawn", "Place spawn point"],
     ["difficult", "Difficult terrain"],
     ["clear", "Clear terrain"]
   ];
@@ -1325,6 +1666,7 @@ function tableTools() {
     field('Chat & activity', 'activity-placement', [['chat', 'One panel (chat + log)'], ['separate', 'Stacked panels'], ['hidden', 'Hide activity log']].map(([value, label]) => option(value, label, eventLogPlacement === value)));
   const mapBody = (table ? field('Adventure map', 'room-map', maps.map(entry => option(entry.key, entry.title, entry.key === map.key)), battle.round || table.writing ? 'disabled' : '') : '') +
     field("Grid tool", "grid-tool", tools.map(([value, label]) => option(value, label, tool === value))) +
+    (tool === "spawn" ? spawnToolPanel() : "") +
     gridSettings() + (tool === "room" ? roomPanel() : "");
   const encounter = (battle.round ? actionButton("End initiative", "end-initiative", { disabled: Boolean(battle.movement) }) : "") +
     actionButton("Reset encounter / board", "reset", { disabled: Boolean(battle.movement || battle.classReaction || table?.writing) }) +
@@ -1338,14 +1680,27 @@ function tableTools() {
 }
 
 function partyManagement() {
-  const members = battle.actors.filter(a => a.side === 'party'), eligible = context.characters.filter(c => !members.some(a => a.id === 'party:' + c.id));
-  return `<h2>Party · ${members.length} / 4</h2><p>Import a character sheet, choose the character below, then add them to this adventure.</p>
+  ensureParties(battle);
+  const members = battle.actors.filter(a => a.side === 'party');
+  const eligible = context.characters.filter(c => !members.some(a => a.id === 'party:' + c.id));
+  const parties = battle.parties;
+  const openParty = parties.find(party => !partyFull(battle, party.id)) ?? parties[0];
+  const partyOptions = parties.map(party => option(party.id, `${party.name} · ${partyMembers(battle, party.id).length}/${MAX_PARTY_SIZE}`, party.id === openParty?.id));
+  return `<h2>Parties · ${members.length} characters</h2>
+ <p>Up to ${MAX_PARTY_SIZE} characters per party, and up to two parties on the same dungeon map. Rival parties share the map and can fight each other.</p>
  <button type="button" class="button primary small" data-action="upload">${icon('plus', 16)} Import character sheet</button>
- ${members.length >= 4 ? '<p class="party-help">This party is full (four characters).</p>' : eligible.length ? `<form id="game-party-form" class="play-form">
+ ${canCreateParty(battle) ? `<div class="play-action-row"><button type="button" class="button outline small" data-play="create-party">Create rival party</button></div>` : '<p class="party-help">Two parties are already racing this dungeon.</p>'}
+ ${eligible.length ? `<form id="game-party-form" class="play-form">
  <label class="play-field" for="session-character">Choose an imported character<select id="session-character">${eligible.map(c => option(c.id, c.name, false)).join('')}</select></label>
- <button class="button primary small" type="submit">Add to this party</button></form>` : `<p class="party-help">${context.characters.length ? 'All your imported characters are already in this party.' : 'No character sheets imported yet. Use Import character sheet above to get started.'}</p>`}
+ <label class="play-field" for="session-party">Join party<select id="session-party">${partyOptions.join('')}</select></label>
+ ${spawnField("session-spawn", selectedSpawnId)}
+ <button class="button primary small" type="submit">Add to party</button></form>` : `<p class="party-help">${context.characters.length ? 'All your imported characters are already in this adventure.' : 'No character sheets imported yet. Use Import character sheet above to get started.'}</p>`}
  ${battle.round ? '<p class="party-help">New characters roll initiative and join this encounter.</p>' : ''}
- <h3>Current party</h3><ul class="party-members">${members.map(a => `<li><strong>${escape(a.name)}</strong><span>${a.hp} / ${a.maxHp} HP${table ? (battle.controllers?.[a.id] ? ' · Claimed' : ' · Available to claim') : ''}</span></li>`).join('') || '<li>No characters yet.</li>'}</ul>
+ ${parties.map(party => {
+   const roster = partyMembers(battle, party.id);
+   return `<h3>${escape(party.name)} · ${roster.length}/${MAX_PARTY_SIZE}</h3>
+ <ul class="party-members">${roster.map(a => `<li><strong>${escape(a.name)}</strong><span>${a.hp} / ${a.maxHp} HP${table ? (battle.controllers?.[a.id] ? ' · Claimed' : ' · Available to claim') : ''}</span></li>`).join('') || '<li>No characters yet.</li>'}</ul>`;
+ }).join('')}
  <p class="party-help">${table ? 'After adding a character, use Claim beneath their portrait on the left to choose who plays them.' : 'Select a portrait on the left to open their sheet, or Control to play as them.'}</p><p role="status">${escape(status)}</p>`;
 }
 
@@ -1361,7 +1716,7 @@ function dynamicFogTools() {
   ${aiForecasting ? '<button type="button" class="button outline small" data-play="cancel-ai-forecast">Cancel scan</button>' : ''}
   ${aiForecastMessage ? `<p class="play-hint ai-forecast-msg" role="status">${escape(aiForecastMessage)}</p>` : ''}
   <p class="play-hint">Place points freely on the map. Nearby vertices snap together. All room players share wall edits and fog settings.</p>
-  <form id="fog-settings"><label><input type="checkbox" name="sharedVision" ${settings.sharedVision ? 'checked' : ''}> Share party vision</label>
+  <form id="fog-settings"><label><input type="checkbox" name="sharedVision" ${settings.sharedVision ? 'checked' : ''}> Share vision within your party</label>
   <label><input type="checkbox" name="remember" ${settings.remember ? 'checked' : ''}> Remember explored areas</label>
   <label><input type="checkbox" name="blockMovement" ${settings.blockMovement ? 'checked' : ''}> Walls block movement</label>
   <label>Fog opacity (%)<input type="number" name="opacity" min="10" max="100" value="${Math.round(settings.opacity * 100)}" required></label>
@@ -1496,13 +1851,14 @@ function resetActionSelection() {
   hotbarSelection = ''; hotbarTools = false;
   combatChoice = ""; castSlot = ""; targetId = ""; spellSquare = null; extraTargets.clear();
   pathPreview = null; previewMessage = ""; pendingSquare = null;
-  featureChoice = "";
+  featureChoice = ""; featureTargetId = '';
   combatCues.aimPreview(null);
 }
 
 function canRollInitiative() {
   const available = (side) => battle.actors.some((actor) => actor.side === side && actorIsUp(actor) && occupies(actor));
-  return available("party") && available("hostile");
+  const parties = new Set(battle.actors.filter(actor => actor.side === 'party' && actorIsUp(actor) && occupies(actor)).map(actorPartyId));
+  return (available("party") && available("hostile")) || parties.size >= 2;
 }
 
 function advanceCombat() {
@@ -1511,7 +1867,7 @@ function advanceCombat() {
   checkSpellTethers(battle, map);
   const message = runEnemyTurns(battle, map);
   if (message && !status && (!context.game || !battle.round)) status = message;
-  if (battle.round && !battle.movement &&
+  if (battle.round && !battle.movement && !isPvpCombat(battle) &&
     !battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && actorIsUp(actor) && occupies(actor))) {
     endInitiative(battle);
     status = context.game ? "Encounter cleared. Free movement restored." : "Encounter cleared.";
@@ -1546,18 +1902,16 @@ function checkGameCell(x, y, region, token) {
   }
   if (category === 'interact' && bodyPlacement) { requireControl(actor); const body = battle.actors.find(body => body.id === actor.carrying); placeBody(battle, actor, body, { x, y }, map, { thrown: bodyPlacement === 'throw' }); bodyPlacement = ''; status = battle.log.at(-1); return; }
   if (category === 'move' || category === 'interact') {
-    const corpse = token?.hp === 0 ? token : !token && battle.actors.find(body => body.dead && !body.carriedBy && body.x != null && containsCell(body, x, y));
+    const corpse = token?.hp === 0 ? token : !token && battle.actors.find(body => body.dead && !body.carriedBy && !body.draggedBy && body.x != null && containsCell(body, x, y));
     const treasure = !token && visibleMarkers().find(marker => marker.type === 'treasure' && !marker.looted && marker.x === x && marker.y === y);
     if ((corpse || treasure) && (!fogActive() || displayVision().has(keyAt(x, y)))) { requireControl(actor); interactionPosition = null; objectTarget = { type: corpse ? 'body' : 'treasure', id: (corpse ?? treasure).id }; bodyPlacement = ''; category = 'interact'; hotbarSelection = 'common:interact'; return; }
   }
   if (!battle.round && token?.side === "party" && category === "move" && canControl(token)) {
-    selectedId = token.id;
-    detectNearby(token);
+    selectPartyMember(token);
     return;
   }
   if (battle.round && category === "move" && token?.side === "party" && canControl(token) && movementGroup(battle).includes(token)) {
-    selectedId = token.id;
-    resetActionSelection();
+    selectPartyMember(token);
     return;
   }
   requireControl(actor);
@@ -1578,6 +1932,10 @@ function checkGameCell(x, y, region, token) {
   if (token && (!visibleTokens()?.has(token.id) || token.id === actor?.id && category === "move")) return;
   if (token) {
     if (!battle.round && token.side === "hostile" && !effect?.exploration) beginCombat(actor, token, false);
+    else if (!battle.round && isAttackablePc(actor, token) && ['weapon', 'custom'].includes(category) && !effect?.exploration) {
+      targetId = token.id;
+      if (!beginCombat(actor, token, false)) throw new Error("Could not start combat with that character.");
+    }
     else {
       targetId = token.id;
       if (hotbarSelection && category === 'feature') executeClassSelection(root().querySelector('#class-action-form'), token);
@@ -1594,6 +1952,13 @@ function checkGameCell(x, y, region, token) {
   else exploreToken(battle, actor, x, y, map, (moving) => {
     rememberVision(battle, map);
     discoverStory(battle, map, moving);
+    const sprung = triggerFeaturesAt(battle, moving, map);
+    if (sprung.length) {
+      log(battle, moving.name + " triggers " + sprung.map((feature) => feature.name).join(", ") + "!");
+      return true;
+    }
+    const hinted = applyPassiveFeatureHints(battle, map, moving);
+    if (hinted.length) log(battle, moving.name + " senses something odd nearby.");
     return detectNearby(moving);
   });
   room = regionAt(map, ...cellCenter(map, actor)) ?? null;
@@ -1647,6 +2012,8 @@ async function launchGame(hostOptions = null, characters = context.characters) {
   if (!battle.story) {
     discoverStory(battle, map, selected);
     revealStory(0);
+  } else {
+    storyToasts.remember(battle);
   }
   if (!battle.round) battle.actors.filter((entry) => entry.side === "party").some(detectNearby);
   advanceCombat();
@@ -1710,11 +2077,15 @@ async function selectModule(id, preferred) {
   }
 }
 
-function freeCell(region, actor) {
+function freeCell(region, actor, spawn = null) {
   const cells = region ? regionCells(map, region) : [];
   const allowed = ({ x, y }) => canStand(battle, actor, x, y, map);
+  if (spawn) {
+    const near = cellsNearSpawn(spawn, map, allowed);
+    if (near) return near;
+  }
   if(battle.round && actor.side==='party'){
-    const allies=battle.actors.filter(other=>other.side==='party'&&occupies(other)&&(!battle.encounterParticipants?.length||battle.encounterParticipants.includes(other.id)));
+    const allies=battle.actors.filter(other=>other.side==='party'&&sameParty(actor,other)&&occupies(other)&&(!battle.encounterParticipants?.length||battle.encounterParticipants.includes(other.id)));
     for(let radius=1;radius<=6;radius++)for(const ally of allies)for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){
       if(Math.max(Math.abs(dx),Math.abs(dy))!==radius)continue;
       const candidate={x:ally.x+dx,y:ally.y+dy};if(allowed(candidate)&&lineClear(battle,ally,candidate,map))return candidate;
@@ -1730,18 +2101,46 @@ function freeCell(region, actor) {
   throw new Error("The grid has no free squares.");
 }
 
-function add(actor, area = room) {
+function add(actor, area = room, partyId = DEFAULT_PARTY_ID, spawnId = null) {
   if(battle.actors.some(existing=>existing.id===actor.id))throw new Error("This character is already in the room.");
-  if (actor.side === "party" && battle.actors.filter(({ side }) => side === "party").length >= 4) {
-    throw new Error("The party already has four characters.");
+  if (actor.side === "party") {
+    ensureParties(battle);
+    const id = partyId || DEFAULT_PARTY_ID;
+    if (!battle.parties.some(party => party.id === id) && canCreateParty(battle)) createParty(battle, partyLabel(id));
+    if (partyFull(battle, id)) throw new Error((battle.parties.find(party => party.id === id)?.name || "This party") + " already has four characters.");
+    assignParty(actor, id);
   }
-  const { x, y } = freeCell(area, actor);
+  const spawn = findSpawn(battle, spawnId);
+  const { x, y } = freeCell(area, actor, spawn);
   placeToken(battle, actor, x, y, map);
   actor.origin = areaKey(area);
+  if (spawn) actor.spawnId = spawn.id;
   battle.actors.push(actor);
   if(battle.round && actor.side!=="neutral")joinInitiative(battle,actor);
   selectedId = actor.id;
   tool = "move";
+}
+
+function spawnField(id = "play-spawn", selected = selectedSpawnId) {
+  const spawns = spawnMarkers(battle);
+  if (!spawns.length) return "";
+  return field("Spawn point", id, [
+    option("", "Default entrance", !selected),
+    ...spawns.map((marker) => option(marker.id, marker.name, marker.id === selected)),
+  ]);
+}
+
+function spawnToolPanel() {
+  const spawns = spawnMarkers(battle);
+  return `<div class="spawn-tool-panel">
+    ${input("Spawn name", "spawn-point-name", spawnNameDraft, "text", 'maxlength="40" placeholder="Party 1 start"')}
+    <p class="play-hint">Click a square to place or rename a spawn marker. Characters can pick one when joining.</p>
+    ${spawns.length ? `<ul class="spawn-point-list">${spawns.map((marker) => `<li>
+      <strong>${escape(marker.name)}</strong>
+      <span>@ ${marker.x + 1}, ${marker.y + 1}</span>
+      <button type="button" class="button outline small" data-play="remove-spawn" data-id="${escape(marker.id)}">Remove</button>
+    </li>`).join("")}</ul>` : '<p class="play-hint">No spawn points yet.</p>'}
+  </div>`;
 }
 
 function canUseMapSquare(x, y) {
@@ -1756,8 +2155,10 @@ function canUseMapSquare(x, y) {
 }
 
 function checkCell(x, y, region) {
-  if (root()?.querySelector("#grid-settings")?.open && gridDraft) {
-    status = "Save the grid alignment to use the adjusted squares.";
+  if (root()?.querySelector("#grid-settings")?.open && (gridDraft || artFitDraft)) {
+    status = artFitDraft && !gridDraft
+      ? "Save the image placement so rooms stay lined up with your map."
+      : "Save the grid alignment to use the adjusted squares.";
     return;
   }
   if (x < 0 || x >= map.cols || y < 0 || y >= map.rows) return;
@@ -1767,6 +2168,17 @@ function checkCell(x, y, region) {
     selectRoom(region);
     const marker = visibleMarkers().find((entry) => entry.x === x && entry.y === y);
     if (marker) document.dispatchEvent(new CustomEvent("wayfarer:marker", { detail: marker }));
+    return;
+  }
+  if (tool === "spawn") {
+    const marker = createSpawnMarker(battle, {
+      x,
+      y,
+      name: spawnNameDraft || root()?.querySelector("#spawn-point-name")?.value || "Spawn",
+      origin: areaKey(region ?? room),
+    });
+    selectedSpawnId = marker.id;
+    status = `Spawn “${marker.name}” set at ${x + 1}, ${y + 1}.`;
     return;
   }
   const token = battle.actors.find((actor) => occupies(actor) && containsCell(actor, x, y));
@@ -1919,7 +2331,9 @@ function applyTableState(connection, snapshot) {
   if (!battle.actors.some(actor => actor.id === selectedId && canControl(actor))) {
     selectedId = owned?.id ?? battle.actors.find(actor => actorIsUp(actor) && canControl(actor))?.id ?? "";
   }
-  if (storyBefore > 0 || !showInvitation) revealStory(storyBefore);
+  // Remote catch-up: mark existing journal entries seen. Live discoveries still toast via revealStory.
+  if (storyBefore === 0) storyToasts.remember(battle);
+  else if (storyBefore > 0 || !showInvitation) revealStory(storyBefore);
   if (turn !== selectedActor()?.id || round !== battle.round) {
     resetActionSelection();
     category = "move";
@@ -1963,10 +2377,19 @@ async function pollPlayers(connection) {
   connection.readingPlayers = true;
   try {
     const result = await syncSessionPlayers(connection.id, controller);
-    if (table === connection && !connection.writing && !camera?.gesturing() &&
-      JSON.stringify(result.players) !== JSON.stringify(connection.players)) {
-      connection.players = result.players;
-      redraw();
+    if (table !== connection) return;
+    const playersChanged = JSON.stringify(result.players) !== JSON.stringify(connection.players);
+    connection.players = result.players;
+    if (playersChanged && !connection.writing && !camera?.gesturing()) redraw();
+    // Away players temporarily lose claims so anyone else can Claim — or combat auto-skips.
+    if (!connection.writing && !camera?.gesturing() && hasOfflineClaims(result.players)) {
+      void interact(() => {
+        const released = clearOfflineClaims(connection.players);
+        if (released.length) {
+          log(battle, released.join(", ") + (released.length === 1 ? " was" : " were") +
+            " released (player away). Claim them or wait for the turn to skip.");
+        }
+      });
     }
   } catch {
     // A failed heartbeat leaves the last visible roster in place until the next poll.
@@ -2008,6 +2431,7 @@ async function connectTable(connection, username) {
     resetActionSelection();
     applyTableState(connection, snapshot);
     connection.chat ??= createGameChat(connection.id, controller);
+    connection.voice ??= createSpatialVoice(connection.id, controller);
     recentSession(connection.id);
     rooms = rememberRoom(connection.id, map, connection.state);
     tableOpen = showInvitation === connection.id;
@@ -2032,6 +2456,7 @@ function leaveTable() {
   clearTimeout(table.timer);
   clearTimeout(table.playerTimer);
   table.chat?.destroy();
+  void table.voice?.destroy();
   artworkRequest?.abort();
   ({ map, battle, maps,moduleId,art, artworkNote, customArtwork, detectedGrid, room, selectedId, tool } = table.solo);
   table = null;
@@ -2278,8 +2703,31 @@ function canSelectPartyMember(actor) {
 
 function selectPartyMember(actor) {
   if(!canSelectPartyMember(actor))return;
+  const same = selectedId === actor.id;
   selectedId=actor.id;tool="move";category="move";resetActionSelection();
+  if (compactPlayUi()) actionsSheetOpen = same ? !actionsSheetOpen : true;
   if(!battle.round)detectNearby(actor);
+}
+
+function aimBannerCopy(actor, entry) {
+  if (hotbarTools) return "Map tools open — tap the board to edit, or cancel.";
+  if (!actor || !entry || entry.mode === "move") {
+    if (pendingSquare) return `Move ${actor?.name ?? "character"} here — confirm or cancel.`;
+    return "";
+  }
+  const name = entry.name.replace(/^Cunning Action · /, "");
+  if (category === "spell") {
+    if (spellSquare && !spellEnd) return `${name}: tap the wall endpoint on the map.`;
+    if (spellSquare) return `${name}: confirm the cast, or cancel.`;
+    return `${name}: tap a target or square on the map.`;
+  }
+  if (category === "weapon" || category === "potion" || category === "feature" || category === "dominate")
+    return `${name}: tap a target on the map.`;
+  if (category === "spell-zone" || category === "spell-zone-choice") return `${name}: choose a destination on the map.`;
+  if (category === "zone-beam") return `${name}: tap a creature for the beam.`;
+  if (category === "interact") return `${name}: select a body or treasure nearby.`;
+  if (category === "investigate" || category === "use-feature") return `${name}: choose what to examine.`;
+  return `Using ${name}.`;
 }
 
 document.addEventListener("click", (event) => {
@@ -2359,6 +2807,7 @@ document.addEventListener("click", (event) => {
   }
   const button = event.target.closest("[data-play]");
   if (button?.dataset.play === 'new-room') { location.hash = '#play/new'; return; }
+  if (button?.dataset.play === 'continue-defeated') { defeatedDismissed = true; redraw(); return; }
   if (!button || pending) return;
   const { play, id } = button.dataset;
   if(play==="party-portrait"){
@@ -2373,7 +2822,14 @@ document.addEventListener("click", (event) => {
     }else{
       lastPortraitClick=pointerClick?{id,scope:table,time:event.timeStamp,x:event.clientX,y:event.clientY}:null;
       const actor=battle.actors.find(entry=>entry.id===id);
-      if(actor?.id!==selectedId && canSelectPartyMember(actor))void interact(()=>selectPartyMember(actor));
+      if(!canSelectPartyMember(actor)) return;
+      // Compact: tapping the selected character toggles the actions sheet (no table write needed).
+      if(actor.id===selectedId){
+        selectPartyMember(actor);
+        redraw();
+      }else{
+        void interact(()=>selectPartyMember(actor));
+      }
     }
     return;
   }
@@ -2410,9 +2866,21 @@ document.addEventListener("click", (event) => {
     grid?.scrollBy({ left: (id === 'back' ? -1 : 1) * Math.max(150, grid.clientWidth * .7), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     return;
   }
-  if (play === 'hotbar-tools') { const open = !hotbarTools; resetActionSelection(); hotbarTools = open; category = 'move'; tool = 'move'; redraw(); return; }
+  if (play === 'hotbar-tools') { const open = !hotbarTools; resetActionSelection(); hotbarTools = open; category = 'move'; tool = 'move'; if (open && compactPlayUi()) actionsSheetOpen = true; redraw(); return; }
   if (play === 'hotbar-expand') { hotbarExpanded = !hotbarExpanded; redraw(); return; }
-  if (play === 'hotbar-cancel') { resetActionSelection(); category = 'move'; tool = 'move'; redraw(); return; }
+  if (play === 'actions-open') { actionsSheetOpen = true; redraw(); return; }
+  if (play === 'actions-close') { actionsSheetOpen = false; redraw(); return; }
+  if (play === 'actions-back') {
+    // Return to the actions sheet without canceling the current aim (selection stays highlighted).
+    actionsSheetOpen = true;
+    redraw();
+    return;
+  }
+  if (play === 'hotbar-cancel') {
+    resetActionSelection(); category = 'move'; tool = 'move';
+    if (compactPlayUi()) actionsSheetOpen = true;
+    redraw(); return;
+  }
   if (play === 'hotbar-tab' || play === 'hotbar-filter') {
     resetActionSelection(); category = 'move'; tool = 'move';
     if (play === 'hotbar-tab') { hotbarTab = id; hotbarFilter = ''; }
@@ -2450,9 +2918,11 @@ document.addEventListener("click", (event) => {
           if (entry.actionId === 'arm-stun') actor.stunArmed = !actor.stunArmed;
           if (entry.actionId === 'arm-reaction' && entry.reactionRef) armReaction(actor, entry.reactionRef);
           if (entry.actionId === 'disarm-reaction' && entry.reactionRef) disarmReaction(actor, entry.reactionRef);
-        } else if (entry.actionId === 'help-up') helpUp(battle, actor, battle.actors.find(target => target.id === entry.targetId), map);
+        }         else if (entry.actionId === 'help-up') helpUp(battle, actor, battle.actors.find(target => target.id === entry.targetId), map);
         else if (entry.actionId === 'wake') wakeCreature(battle, actor, battle.actors.find(target => target.id === entry.targetId));
         else if (entry.actionId === 'witch-bolt') sustainWitchBolt(battle, actor, map);
+        else if (entry.actionId === 'end-concentration') endConcentration(battle, actor);
+        else if (entry.actionId === 'search') searchRegion(battle, actor, map);
         else turnAction(battle, actor, entry.actionId);
         status = battle.log.at(-1) ?? '';
       }, { cosmetic: entry.mode === 'passive' });
@@ -2466,6 +2936,8 @@ document.addEventListener("click", (event) => {
       if(entry.mode==='spell'){spellSquare=null;spellEnd=null;spellWallForm='wall';const rule=customSpellRule(entry.data.reference||entry.data.key);spellHotSide=rule?.shape==='ring'||spellWallForm==='ring'?'inside':'left';}
       if(entry.controlZone){controlledZone=entry.controlZone;category='spell-zone-choice';}
       if (entry.actionId === 'interact') { category = 'interact'; objectTarget = null; bodyPlacement = ''; }
+      if (entry.actionId === 'investigate') { category = 'investigate'; featureTargetId = ''; }
+      if (entry.actionId === 'use-feature') { category = 'use-feature'; featureTargetId = ''; }
       if (entry.mode === 'potion') potionUse = 'drink';
       if (entry.mode === 'spell') {
         const levelFilters = parseHotbarFilters(hotbarFilter).filter(part => /^(slot|pact):/.test(part));
@@ -2473,12 +2945,28 @@ document.addEventListener("click", (event) => {
           || levelFilters.find(part => part.startsWith('pact:') && Number(part.slice(5)) >= entry.level);
         if (exact) castSlot = exact.startsWith('pact:') ? exact : exact.slice(5);
       }
+      // Compact: leave the action sheet so the map stays clear while aiming/confirming.
+      if (compactPlayUi()) actionsSheetOpen = false;
       redraw();
     }
     return;
   }
   if (play === "dice-effects") { combatCues.toggleDice(); redraw(); return; }
   if(play==='game-rest'){restOpen=!restOpen;partyOpen=false;toolsOpen=false;tableOpen=false;storyOpen=false;if(restOpen&&map.module!=='training')void loadRestEncounters().then(()=>{if(root())redraw();}).catch(error=>{status=error.message;if(root())redraw();});redraw();return;}
+  if (play === 'try-again') {
+    void interact(async () => {
+      const leader = battle.actors.find((actor) => actor.side === 'party' && canControl(actor)) ?? selectedActor();
+      requireControl(leader);
+      battle = await resetSceneBoard(battle, map, { populate: populateScene, training: trainingActors, reviveParty: true });
+      tokenMotion.reset(); queuedMove = null; objectTarget = null; bodyPlacement = '';
+      resetActionSelection(); category = 'move'; tool = 'move';
+      selectedId = battle.actors.find((actor) => actor.side === 'party' && actorIsUp(actor) && canControl(actor))?.id
+        ?? battle.actors.find((actor) => actor.side === 'party' && actorIsUp(actor))?.id ?? '';
+      defeatedDismissed = false;
+      status = 'Encounter reset. Try again.'; log(battle, status);
+    }, { remaining: 0 });
+    return;
+  }
   if (play === 'game-chat') {
     restOpen = false; partyOpen = false; toolsOpen = false; tableOpen = false; storyOpen = false;
     if (eventLogPlacement === 'hidden') setActivityPlacement('chat');
@@ -2487,7 +2975,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (play === 'game-party') { restOpen=false; partyOpen = !partyOpen; toolsOpen = false; tableOpen = false; storyOpen = false; redraw(); return; }
-  if (play === 'game-tools') { restOpen=false; partyOpen = false; toolsOpen = !toolsOpen; tableOpen = false; storyOpen = false; if (!toolsOpen) { tool = 'move'; gridDraft = null; } redraw(); return; }
+  if (play === 'game-tools') { restOpen=false; partyOpen = false; toolsOpen = !toolsOpen; tableOpen = false; storyOpen = false; if (!toolsOpen) { tool = 'move'; gridDraft = null; artFitDraft = null; } redraw(); return; }
   if (play === 'edit-walls') { toolsOpen = false; tool = 'move'; resetActionSelection(); wallEditor.setMode('draw'); redraw(); return; }
   if(play==='sphere-control'){category='spell-zone';redraw();return;}
   if(play==='sphere-recast'){category='spell';controlledZone=null;spellSquare=null;redraw();return;}
@@ -2516,14 +3004,14 @@ document.addEventListener("click", (event) => {
   if (play === "game-table") { restOpen=false;
     partyOpen = false;
     tableOpen = !tableOpen;
-    if (tableOpen) { toolsOpen = false; storyOpen = false; tool = "move"; gridDraft = null; }
+    if (tableOpen) { toolsOpen = false; storyOpen = false; tool = "move"; gridDraft = null; artFitDraft = null; }
     redraw();
     return;
   }
   if (play === "game-story") { restOpen=false;
     partyOpen = false;
     storyOpen = !storyOpen;
-    if (storyOpen) { toolsOpen = false; tableOpen = false; tool = "move"; gridDraft = null; }
+    if (storyOpen) { toolsOpen = false; tableOpen = false; tool = "move"; gridDraft = null; artFitDraft = null; }
     redraw();
     return;
   }
@@ -2545,9 +3033,29 @@ document.addEventListener("click", (event) => {
   if (play === "art") { root().querySelector("#play-art").click(); return; }
   if (play === 'potion-use') { potionUse = id === 'throw' ? 'throw' : 'drink'; redraw(); return; }
   if (play === 'world-select') { interactionPosition = null; objectTarget = { type: button.dataset.type, id }; bodyPlacement = ''; redraw(); return; }
-  if (['world-loot', 'world-carry', 'world-place', 'world-throw', 'world-help'].includes(play)) {
+  if (play === 'feature-select') { featureTargetId = id; redraw(); return; }
+  if (play === 'feature-investigate' || play === 'feature-use') {
+    interact(() => {
+      const actor = selectedActor();
+      requireControl(actor);
+      const feature = (battle.features ?? []).find((entry) => entry.id === featureTargetId);
+      if (play === 'feature-investigate') investigateFeature(battle, actor, feature, map);
+      else useFeature(battle, actor, feature, map);
+      status = battle.log.at(-1) ?? '';
+    });
+    return;
+  }
+  if (['world-loot', 'world-carry', 'world-drag', 'world-drop', 'world-place', 'world-throw', 'world-help'].includes(play)) {
     if (play === 'world-place' || play === 'world-throw') { bodyPlacement = play === 'world-throw' ? 'throw' : 'place'; status = 'Choose an open map square ' + (bodyPlacement === 'throw' ? 'within 20 feet.' : 'within 5 feet.'); redraw(); return; }
-    void interact(() => { const actor = selectedActor(); requireControl(actor); const source = worldObject(); if (play === 'world-loot') takeLoot(battle, actor, source, map); if (play === 'world-carry') carryBody(battle, actor, source, map); if (play === 'world-help') helpUp(battle, actor, source, map); status = battle.log.at(-1); }); return;
+    void interact(() => {
+      const actor = selectedActor(); requireControl(actor); const source = worldObject();
+      if (play === 'world-loot') takeLoot(battle, actor, source, map);
+      if (play === 'world-carry') carryBody(battle, actor, source, map);
+      if (play === 'world-drag') dragBody(battle, actor, source, map);
+      if (play === 'world-drop') dropBody(battle, actor, source, map);
+      if (play === 'world-help') helpUp(battle, actor, source, map);
+      status = battle.log.at(-1);
+    }); return;
   }
   if (play === "inspect-marker") {
     const marker = battle.markers?.find((entry) => entry.id === id);
@@ -2563,6 +3071,12 @@ document.addEventListener("click", (event) => {
   }
   interact(async () => {
     switch (play) {
+      case "reset-art-fit":
+        artFitDraft = null;
+        delete battle.artworkFit;
+        if (art && !battle.gridManual) alignImage(art);
+        status = "Image placement reset. Rooms stay where the adventure put them.";
+        break;
       case "reset-grid":
         gridDraft = null;
         if (!setAlignment(detectedGrid ?? map.sourceGrid) && !setAlignment(map.sourceGrid)) {
@@ -2573,7 +3087,27 @@ document.addEventListener("click", (event) => {
         break;
       case "reveal-marker": {
         const marker = battle.markers?.find((entry) => entry.id === id);
-        if (marker) { marker.revealed = true; status = marker.name + " revealed."; }
+        if (marker) {
+          marker.revealed = true;
+          marker.hidden = false;
+          const feature = (battle.features ?? []).find((entry) => entry.id === marker.id || entry.id === marker.featureId);
+          if (feature) {
+            setFeatureState(feature, "revealed");
+            syncMarkerForFeature(battle, feature);
+            recordFeatureDiscovery(battle, map, feature);
+          }
+          status = marker.name + " revealed.";
+        }
+        break;
+      }
+      case "reveal-feature": {
+        const feature = (battle.features ?? []).find((entry) => entry.id === id);
+        if (feature) {
+          setFeatureState(feature, "revealed");
+          syncMarkerForFeature(battle, feature);
+          recordFeatureDiscovery(battle, map, feature);
+          status = feature.name + " revealed.";
+        }
         break;
       }
       case "release-wolves":
@@ -2593,7 +3127,7 @@ document.addEventListener("click", (event) => {
         if (controllers[id] && controllers[id] !== controller) throw new Error("Another player claimed this character.");
         if (controllers[id] === controller) delete controllers[id];
         else {
-          for (const owned of Object.keys(controllers)) if (controllers[owned] === controller) delete controllers[owned];
+          // Multi-claim: keep any other characters this player already controls.
           controllers[id] = controller;
           selectedId = id;
           resetActionSelection();
@@ -2619,8 +3153,16 @@ document.addEventListener("click", (event) => {
         break;
       case "add-party": {
         const character = context.characters.find((entry) => entry.id === selectedParty);
-        if (character) add(partyActor(character), room ?? startingRegion(map));
+        const spawnId = root()?.querySelector("#play-spawn")?.value || selectedSpawnId || "";
+        if (character) add(partyActor(character), room ?? startingRegion(map), DEFAULT_PARTY_ID, spawnId || null);
         selectedParty = "";
+        break;
+      }
+      case "remove-spawn": {
+        if (removeSpawnMarker(battle, id)) {
+          if (selectedSpawnId === id) selectedSpawnId = "";
+          status = "Spawn point removed.";
+        }
         break;
       }
       case "refresh-party-token": {
@@ -2662,9 +3204,24 @@ document.addEventListener("click", (event) => {
         selectedId = "";
         break;
       case "start":
-        if (!canRollInitiative()) throw new Error("Place a party member and a hostile creature to roll initiative.");
+        if (!canRollInitiative()) throw new Error("Place a party member and a hostile creature — or two rival parties — to roll initiative.");
         startInitiative(battle); resetActionSelection(); tool = "move"; break;
       case "end-initiative": endInitiative(battle); combatChoice = ""; targetId = ""; tool = "move"; break;
+      case "leave-combat": {
+        const actor = selectedActor();
+        requireControl(actor);
+        const result = requestTruce(battle, actor);
+        status = result === 'ended' ? "Truce accepted. Free movement restored." : battle.log.at(-1);
+        if (result === 'ended') { combatChoice = ""; targetId = ""; tool = "move"; }
+        break;
+      }
+      case "create-party": {
+        ensureParties(battle);
+        const party = createParty(battle);
+        status = party.name + " is ready. Add characters to it from this panel.";
+        partyOpen = true;
+        break;
+      }
       case "end":
         requireControl(selectedActor()); endTurn(battle, Math.random, selectedActor()); resetActionSelection(); category = "move"; break;
       case "death": requireControl(selectedActor()); deathSave(battle, selectedActor()); break;
@@ -2836,7 +3393,7 @@ function movePreview(x,y,{pointer=false}={}){
 }
 
 document.addEventListener("pointermove", (event) => {
-  if (wallEditor.active || !context?.game || (gridDraft && root()?.querySelector("#grid-settings")?.open) || event.target.id !== "play-grid") return;
+  if (wallEditor.active || !context?.game || ((gridDraft || artFitDraft) && root()?.querySelector("#grid-settings")?.open) || event.target.id !== "play-grid") return;
   if (tool === "wall" || tool === "door" || tool === "erase-wall") {
     const pos = gridPosition(map, event.target, event);
     cursor = { x: pos.x, y: pos.y, edge: pos.edge, tool };
@@ -2876,6 +3433,47 @@ function positionHotbarTooltip(event) {
 }
 document.addEventListener('pointerover', positionHotbarTooltip);
 document.addEventListener('focusin', positionHotbarTooltip);
+
+function featureEntriesFor(name, features) {
+  if (!name || !features?.length) return null;
+  const needle = String(name).replace(/ \(.*\)$/, "").toLowerCase();
+  for (const feature of features) {
+    if (String(feature.name || "").replace(/ \(.*\)$/, "").toLowerCase() === needle) return feature.entries ?? null;
+    const nested = featureEntriesFor(name, feature.entries ?? feature.items);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function openHotbarDetail(entry) {
+  if (!entry) return;
+  const actor = selectedActor();
+  if (entry.inspect) {
+    if (!actor) return;
+    document.dispatchEvent(new CustomEvent('wayfarer:inspect', {
+      detail: structuredClone({
+        ...actor,
+        tokenImage: partyTokenImage(actor), tokenSession: table?.id, sharedSheet: table ? battle.sheets?.[actor.id] : undefined
+      })
+    }));
+    return;
+  }
+  const sheet = actor ? (importedCharacter(actor) ?? battle.sheets?.[actor.id]) : null;
+  const features = sheet?.rulesDetails?.classDetails?.features ?? [];
+  const model = hotbarDetailModel(entry, actor ?? {}, {
+    entries: featureEntriesFor(entry.data?.feature || entry.name, features),
+  });
+  if (!model) return;
+  document.dispatchEvent(new CustomEvent('wayfarer:hotbar-detail', { detail: model }));
+}
+
+document.addEventListener('contextmenu', event => {
+  const tile = event.target.closest?.('.hotbar-tile');
+  if (!tile || !root()?.contains(tile)) return;
+  event.preventDefault();
+  const entry = hotbarEntries().find(item => item.id === tile.dataset.id);
+  openHotbarDetail(entry);
+});
 document.addEventListener('keydown', event => {
   if (!context?.game || !root() || event.altKey || event.ctrlKey || event.metaKey || event.repeat ||
     event.target.closest?.('input,select,textarea,[contenteditable="true"],.game-event-slot') || document.querySelector('dialog[open]')) return;
@@ -2904,28 +3502,44 @@ document.addEventListener("input", (event) => {
   if (event.target.id === 'new-room-name') { roomDraft.name = event.target.value; return; }
   if (event.target.id === 'new-room-username') { roomDraft.username = event.target.value; return; }
   if (event.target.id === 'new-room-prepared') { roomDraft.prepared = event.target.checked; redraw(); return; }
+  if (event.target.id === 'spawn-point-name') { spawnNameDraft = event.target.value; return; }
+  if (event.target.id === 'play-spawn' || event.target.id === 'session-spawn') { selectedSpawnId = event.target.value; return; }
   if (event.target.name === 'room-character') { roomDraft.party = new Set([...root().querySelectorAll('[name="room-character"]:checked')].map(input => input.value)); return; }
   if (event.target.id === "session-username" && table?.needsUsername) {
     table.usernameDraft = event.target.value;
     return;
   }
-  if (!event.target.id.startsWith("grid-align-")) return;
-  const alignment = readAlignment();
-  const feedback = root().querySelector("#grid-align-feedback");
-  if (alignment && fitsCurrentGrid(gridGeometry(map, alignment), battle)) {
-    gridDraft = alignment;
-    feedback.textContent = "Previewing the adjusted guides.";
-  } else {
-    feedback.textContent = "Enter positive spacing and keep saved pieces inside the grid.";
+  if (event.target.id.startsWith("art-fit-")) {
+    previewArtworkFit(readArtworkFit() ?? currentArtworkFit());
+    return;
   }
-  paintBoard();
+  if (event.target.id === "grid-align-scale") {
+    const scale = event.target.valueAsNumber;
+    if (!Number.isFinite(scale) || scale <= 0) {
+      const feedback = root().querySelector("#grid-align-feedback");
+      if (feedback) feedback.textContent = "Enter a positive scale percentage.";
+      return;
+    }
+    previewAlignment(alignmentFromScale(scale), { from: "scale" });
+    return;
+  }
+  if (!event.target.id.startsWith("grid-align-")) return;
+  previewAlignment(readAlignment(), { from: "fields" });
 });
 
 document.addEventListener("toggle", (event) => {
-  if (event.target.id !== "grid-settings" || !root()?.contains(event.target) || event.target.open || !gridDraft) return;
-  gridDraft = null;
-  updateAlignmentFields();
-  paintBoard();
+  if (event.target.id !== "grid-settings" || !root()?.contains(event.target) || event.target.open) return;
+  let redrawBoard = false;
+  if (gridDraft) {
+    gridDraft = null;
+    updateAlignmentFields();
+    redrawBoard = true;
+  }
+  if (artFitDraft) {
+    artFitDraft = null;
+    redrawBoard = true;
+  }
+  if (redrawBoard) paintBoard();
 }, true);
 
 document.addEventListener("change", (event) => {
@@ -2948,11 +3562,33 @@ document.addEventListener("change", (event) => {
     case "play-room": selectRoom(map.regions.find((region) => areaKey(region) === value)); tool = "room"; break;
     case 'rest-table': {if(!restTableChoices(map).policies.some(p=>p.id===value))return;void interact(()=>{battle.rest??={};(battle.rest.tableChoices??={})[map.key]=value;},{cosmetic:true});return;}
     case "activity-placement": if (value !== "hidden") setEventLogMode("compact"); setActivityPlacement(value); return;
-    case "grid-tool": tool = value; break;
+    case "grid-tool": tool = value; if (value === "spawn" && !spawnNameDraft) spawnNameDraft = "Party 1 start"; break;
     case "grid-overlay": interact(() => { battle.gridOverlay = value; }); return;
+    case "grid-square-ft": {
+      const next = Number(value) === 10 ? 10 : 5;
+      interact(() => {
+        const previous = currentSquareFt();
+        if (next === previous) return;
+        battle.gridSquareFt = next;
+        const alignment = battle.gridManual ?? detectedGrid ?? map.printedGrid ?? map.sourceGrid;
+        if (!setAlignment(alignment)) {
+          battle.gridSquareFt = previous === defaultSquareFeet(map.sourceGrid) ? undefined : previous;
+          throw new Error("That square size would push tokens off the map. Move them first or reset alignment.");
+        }
+        // Re-fit artwork to the new printed scale when using automatic alignment.
+        if (!battle.gridManual && art) {
+          try { detectedGrid = alignArtwork(art, map, next, currentArtworkFit()); } catch { detectedGrid = null; }
+          if (detectedGrid) setAlignment(detectedGrid);
+        }
+        updateAlignmentFields();
+      });
+      return;
+    }
     case "room-creature": selectedCreature = Number(value); break;
     case "homebrew-creature": selectedHomebrew = Number(value); break;
     case "play-party": selectedParty = value; break;
+    case "play-spawn":
+    case "session-spawn": selectedSpawnId = value; break;
     case 'spell-hot-side':spellHotSide=value;break;
     case 'spell-wall-form':spellWallForm=value==='ring'?'ring':'wall';spellEnd=null;spellHotSide=spellWallForm==='ring'?'inside':'left';break;
     case "combat-choice": combatChoice = value; spellSquare = null; castSlot = ""; extraTargets.clear(); break;
@@ -3006,21 +3642,24 @@ function executeCombatSelection(form) {
     return;
   }
   if (!battle.round && (choice.mode === "weapon" || choice.mode === "custom" ||
-    (choice.mode === "spell" && !effect?.exploration && target?.side === "hostile"))) {
-    const enemy = target?.side === "hostile" ? target : (effect?.area || effect?.cone) && spellSquare
+    (choice.mode === "spell" && !effect?.exploration && target && isCombatFoe(actor, target)))) {
+    const enemy = target && isCombatFoe(actor, target) ? target : (effect?.area || effect?.cone) && spellSquare
       ? battle.actors.find((entry) => entry.side === "hostile" && actorIsUp(entry) && noticesEnemy(battle, map, actor, entry)) : null;
-    if (!beginCombat(actor, enemy, false)) throw new Error("Choose an enemy to start combat.");
+    if (!beginCombat(actor, enemy, false)) throw new Error("Choose an enemy or player character to start combat.");
     return;
   }
-  if(choice.mode==='spell'&&effect?.custom&&!effect.area&&!battle.round&&effect.definition.effects.some(block=>block.kind!=='healing'&&(block.damage.length||block.condition||block.save))){const enemy=battle.actors.find(enemy=>enemy.side==='hostile'&&actorIsUp(enemy)&&(target?.id===enemy.id||options.targets?.some(target=>target.id===enemy.id)));if(enemy){beginCombat(actor,enemy,false);if(!canTakeTurn(battle,actor))return;}}
+  if(choice.mode==='spell'&&effect?.custom&&!effect.area&&!battle.round&&effect.definition.effects.some(block=>block.kind!=='healing'&&(block.damage.length||block.condition||block.save))){
+    const foe=battle.actors.find(enemy=>isCombatFoe(actor,enemy)&&actorIsUp(enemy)&&(target?.id===enemy.id||options.targets?.some(entry=>entry.id===enemy.id)));
+    if(foe){beginCombat(actor,foe,false);if(!canTakeTurn(battle,actor))return;}
+  }
   if (choice.mode === "spell") {
     castSpell(battle, actor, target, choice.data, slotRank(value("cast-slot")), options);
     if(effect?.custom&&['sphere','movable'].includes(effect.definition.shape)){const zone=battle.spellZones?.find(zone=>zone.custom&&zone.caster===actor.id&&zone.rule.reference===choice.data.reference);if(zone){controlledZone=zone.id;hotbarSelection='spell:'+(choice.data.reference||choice.data.key);category='spell-zone-choice';}}
     status = battle.log.at(-1);
     if (!battle.round && !effect?.teleport) {
       const hitIds = new Set((battle.actionEvents?.at(-1)?.impacts ?? []).map(impact => impact.actor));
-      const enemy = battle.actors.find(enemy => enemy.side === 'hostile' && actorIsUp(enemy) && hitIds.has(enemy.id));
-      if (enemy) beginCombat(actor, enemy, false);
+      const foe = battle.actors.find(enemy => isCombatFoe(actor, enemy) && actorIsUp(enemy) && hitIds.has(enemy.id));
+      if (foe) beginCombat(actor, foe, false);
     }
     if (!battle.round && effect?.teleport) detectNearby(actor);
   }
@@ -3032,7 +3671,7 @@ function executeCombatSelection(form) {
       reach: Number(value("custom-reach")) || 5,
     };
     rollStrike(battle, actor, target, weapon, options);
-    if (target?.side === "hostile") joinInitiative(battle, target);
+    if (target && isCombatFoe(actor, target)) joinInitiative(battle, target);
   }
 
 }
@@ -3113,11 +3752,27 @@ document.addEventListener("submit", (event) => {
         if (!character || battle.actors.some(({ id }) => id === "party:" + character.id)) return;
         const connection = table;
         const actor = partyActor(character);
+        const chosenParty = value("session-party") || DEFAULT_PARTY_ID;
+        const spawnId = value("session-spawn") || selectedSpawnId || "";
         if (connection && actor.tokenImage) await uploadSessionToken(connection.id, actor.tokenImage);
         if (connection !== table) return;
-        add(actor, room ?? startingRegion(map));
+        add(actor, room ?? startingRegion(map), chosenParty, spawnId || null);
+        selectedSpawnId = spawnId || selectedSpawnId;
         (battle.sheets ??= {})[actor.id] = sharedSheet(character);
-        status = actor.name + " joined the party." + (battle.round ? " Initiative: " + actor.initiativeRoll + "." : "");
+        const spawn = findSpawn(battle, spawnId);
+        status = actor.name + " joined " + (battle.parties.find(party => party.id === actorPartyId(actor))?.name || "the party")
+          + (spawn ? " at " + spawn.name : "")
+          + "." + (battle.round ? " Initiative: " + actor.initiativeRoll + "." : "");
+        break;
+      }
+      case "art-fit-form": {
+        const fit = readArtworkFit();
+        if (!fit) throw new Error("Enter a positive image scale and finite shifts.");
+        if (artworkFitIsDefault(fit)) delete battle.artworkFit;
+        else battle.artworkFit = fit;
+        artFitDraft = null;
+        if (art && !battle.gridManual) alignImage(art);
+        status = "Image placement saved. Rooms and monsters stayed put.";
         break;
       }
       case "grid-align-form": {
@@ -3263,20 +3918,53 @@ function closeDistantInteraction() {
   if (interactionPosition === null) { interactionPosition = position; return; }
   if (position === interactionPosition && source) return;
   interactionPosition = position;
-  if (actor && source && (source.carriedBy === actor.id || withinReach(battle, actor, source, map))) return;
+  if (actor && source && (source.carriedBy === actor.id || source.draggedBy === actor.id || withinReach(battle, actor, source, map))) return;
   objectTarget = null; bodyPlacement = ''; resetActionSelection(); category = 'move'; tool = 'move';
 }
 function worldObject() { return objectTarget?.type === 'body' ? battle.actors.find(body => body.id === objectTarget.id) : battle.markers?.find(marker => marker.id === objectTarget?.id); }
+function featureExplorationPanel(actor, mode) {
+  const region = regionAt(map, ...cellCenter(map, actor));
+  const regionId = region ? areaKey(region) : null;
+  const candidates = (battle.features ?? []).filter((feature) => {
+    if (regionId && feature.regionId !== regionId && feature.origin !== regionId) return false;
+    // Hidden features stay off the card list until Search / passive Perception notices them.
+    if (mode === 'investigate') return feature.state === 'hinted' || feature.state === 'revealed';
+    return feature.state === 'revealed' || feature.state === 'triggered';
+  });
+  const selected = candidates.find((feature) => feature.id === featureTargetId) ?? candidates[0];
+  if (selected && selected.id !== featureTargetId) featureTargetId = selected.id;
+  const card = featureCardModel(selected);
+  if (!candidates.length) {
+    return `<p>${mode === 'investigate'
+      ? 'Nothing here looks worth a closer look. Try Search first.'
+      : 'No revealed mechanisms or objects to use in this room.'}</p>`;
+  }
+  const stateLabel = (state) => state === 'hinted' ? 'noticed' : state === 'revealed' ? 'known' : state === 'triggered' ? 'used' : state;
+  const list = `<div class="world-objects">${candidates.map((feature) =>
+    `<button type="button" class="game-button" data-play="feature-select" data-id="${escape(feature.id)}" aria-pressed="${feature.id === featureTargetId}">${escape(feature.name)} · ${escape(stateLabel(feature.state))}</button>`
+  ).join('')}</div>`;
+  if (!card) return list;
+  const check = card.check ? `DC ${card.check.dc} ${card.check.skill}` : '';
+  return `${list}<div class="feature-card"><div class="world-object-heading"><strong>${escape(card.name)}</strong><small>${escape(card.kind)}${check ? ' · ' + escape(check) : ''}${card.requiresItem ? ' · needs ' + escape(card.requiresItem) : ''}</small></div>
+    <p>${escape(card.text)}</p>
+    <div class="item-action-choices">${mode === 'investigate' && card.canInvestigate ? actionButton('Investigate', 'feature-investigate', { primary: true }) : ''}${mode === 'use-feature' && card.canUse ? actionButton('Use', 'feature-use', { primary: true }) : ''}</div></div>`;
+}
 function worldInteractionPanel(actor) {
-  const source = worldObject(), carrying = actor.carrying && battle.actors.find(body => body.id === actor.carrying);
-  const bodies = battle.actors.filter(body => (body.dead || body.hp === 0) && body.x != null && (!body.carriedBy || body.carriedBy === actor.id) && distanceFt(actor, body) <= 15 && (!fogActive() || displayVision().has(keyAt(body.x, body.y))));
+  const source = worldObject();
+  const carrying = actor.carrying && battle.actors.find(body => body.id === actor.carrying);
+  const dragging = actor.dragging && battle.actors.find(body => body.id === actor.dragging);
+  const attached = (body) => (!body.carriedBy || body.carriedBy === actor.id) && (!body.draggedBy || body.draggedBy === actor.id);
+  const bodies = battle.actors.filter(body => (body.dead || body.hp === 0) && body.x != null && attached(body) && distanceFt(actor, body) <= 15 && (!fogActive() || displayVision().has(keyAt(body.x, body.y))));
   const treasures = visibleMarkers().filter(marker => marker.type === 'treasure' && !marker.looted && distanceFt(actor, marker) <= 15);
   if (bodyPlacement) return `<p>Choose an open square on the map to ${bodyPlacement === 'throw' ? 'throw the body (20 ft, action, 1d4 impact damage)' : 'place the body (5 ft, free)'}. Throwing an unconscious creature can kill them.</p>`;
-  if (!source) return `<p>Select a body or treasure on the map. Move within 5 feet to interact.</p><div class="world-objects">${[...bodies, ...treasures].map(object => `<button type="button" class="game-button" data-play="world-select" data-type="${object.side ? 'body' : 'treasure'}" data-id="${escape(object.id)}">${escape(object.name)}${object.dead ? ' · Dead' : object.hp === 0 ? ' · Unconscious' : ''}</button>`).join('') || '<p>No bodies or treasure nearby.</p>'}${carrying ? `<button type="button" class="game-button" data-play="world-select" data-type="body" data-id="${escape(carrying.id)}">Carrying ${escape(carrying.name)}</button>` : ''}</div>`;
+  const attachedButtons = (carrying ? `<button type="button" class="game-button" data-play="world-select" data-type="body" data-id="${escape(carrying.id)}">Carrying ${escape(carrying.name)}</button>` : '') +
+    (dragging ? `<button type="button" class="game-button" data-play="world-select" data-type="body" data-id="${escape(dragging.id)}">Dragging ${escape(dragging.name)}</button>` : '');
+  if (!source) return `<p>Select a body or treasure on the map. Move within 5 feet to interact.</p><div class="world-objects">${[...bodies, ...treasures].map(object => `<button type="button" class="game-button" data-play="world-select" data-type="${object.side ? 'body' : 'treasure'}" data-id="${escape(object.id)}">${escape(object.name)}${object.dead ? ' · Dead' : object.hp === 0 ? ' · Unconscious' : ''}</button>`).join('') || '<p>No bodies or treasure nearby.</p>'}${attachedButtons}</div>`;
   const contents = lootContents(source), lootable = contents.items.length || Object.keys(contents.currency).length;
+  const free = !source.carriedBy && !source.draggedBy;
   return `<div class="world-object-heading"><strong>${escape(source.name)}</strong><small>${source.side ? (source.dead ? 'Dead' : 'Unconscious') + ' · ' + bodyWeight(source) + ' lb' : 'Treasure'}</small></div>
  ${lootable ? `<ul class="world-loot">${contents.items.map(item => `<li>${escape(item.name)} × ${item.quantity}</li>`).join('')}${Object.entries(contents.currency).map(([unit, n]) => `<li>${n} ${escape(unit)}</li>`).join('')}</ul>` : '<p>No detailed loot remains.</p>'}
- <div class="item-action-choices">${lootable && (!source.side || source.dead) ? actionButton('Take all', 'world-loot') : ''}${source.side && !source.carriedBy ? actionButton('Pick up body', 'world-carry') : ''}${source.side && !source.dead && source.hp === 0 && source.side === actor.side ? actionButton('Help Up · 1 HP', 'world-help') : ''}${carrying?.id === source.id ? actionButton('Place body', 'world-place') + actionButton('Throw body', 'world-throw') : ''}</div>`;
+ <div class="item-action-choices">${lootable && (!source.side || source.dead) && !actor.dragging ? actionButton('Take all', 'world-loot') : ''}${source.side && free ? actionButton('Pick up body', 'world-carry') + actionButton('Drag body', 'world-drag') : ''}${source.side && !source.dead && source.hp === 0 && source.side === actor.side && !actor.dragging ? actionButton('Help Up · 1 HP', 'world-help') : ''}${carrying?.id === source.id ? actionButton('Place body', 'world-place') + actionButton('Throw body', 'world-throw') : ''}${dragging?.id === source.id ? actionButton('Drop body', 'world-drop') : ''}</div>`;
 }
 
 async function loadRoomMaps(connection){try{const available=map.module==='training'?[trainingMap]:await moduleMaps(map.module);if(table!==connection)return;const fresh=available.find(m=>m.key===map.key);if(fresh?.playerAsset&&!map.playerAsset){map.playerAsset=fresh.playerAsset;if(!customArtwork&&!battle.showDmArtwork)loadArtwork(map);}maps=roomMapChoices(connection.state,available);if(toolsOpen)redraw();}catch{if(table===connection)maps=roomMapChoices(connection.state);}}

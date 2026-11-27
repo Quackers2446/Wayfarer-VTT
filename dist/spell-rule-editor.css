@@ -1,25 +1,30 @@
 .spell-rule-desk{max-width:1440px;margin:auto}
-.rule-page-heading,.rule-selected-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}
-.rule-page-heading h1{font-family:var(--display);font-size:2rem;letter-spacing:-.02em}
-.rule-page-heading p,.rule-selected-heading p{color:var(--muted);margin-top:6px;max-width:52ch}
-.rule-workspace{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px}
-.rule-library{align-self:start;position:sticky;top:12px;display:grid;gap:10px;padding:14px;border:1px solid #c5d0bc;border-radius:12px;background:linear-gradient(180deg,#f7f8f1,#eef2e6)}
+.rule-page-heading,.rule-selected-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+.rule-page-heading h1{font-family:var(--display);font-size:clamp(1.85rem,3vw,2.15rem);letter-spacing:-.02em;line-height:1.15;overflow-wrap:anywhere}
+.rule-selected-heading h2{font-family:var(--display);font-size:clamp(1.45rem,2.4vw,1.9rem);letter-spacing:-.015em;line-height:1.2;overflow-wrap:anywhere}
+.rule-page-heading p,.rule-selected-heading p{color:var(--muted);margin-top:6px;max-width:52ch;line-height:1.45}
+.rule-selected-heading .rule-check{margin-top:4px;flex:none}
+.rule-workspace{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px;align-items:start}
+.rule-library{align-self:start;position:sticky;top:12px;box-sizing:border-box;display:grid;grid-template-rows:auto auto auto minmax(0,1fr);gap:10px;padding:14px;border:1px solid #c5d0bc;border-radius:12px;background:linear-gradient(180deg,#f7f8f1,#eef2e6);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px);min-height:calc(100dvh - 24px)}
 .spell-rule-desk label{display:grid;gap:5px;font-size:.84rem;font-weight:600;color:#2c4334}
 .spell-rule-desk input:not([type=checkbox]),.spell-rule-desk select{width:100%;min-width:0;padding:9px 11px;border:1px solid #a8b3a1;border-radius:8px;background:#fffdf7;color:var(--ink,#23372c);font:inherit;font-weight:500}
 .spell-rule-desk input:focus,.spell-rule-desk select:focus{outline:2px solid #4d7a58;outline-offset:1px}
 .rule-search-count{font-size:.76rem;color:var(--muted);font-weight:500}
-.rule-spell-list{display:grid;gap:6px;max-height:62vh;overflow:auto;overscroll-behavior:contain;padding-right:2px}
-.rule-spell-list button{text-align:left;padding:10px 12px;border:1px solid #c3cdb8;border-radius:10px;background:#fffcf4;color:#21392a;cursor:pointer;transition:border-color .12s,background .12s,transform .12s}
+.rule-spell-list{display:grid;align-content:start;gap:6px;min-height:0;height:100%;overflow:auto;overscroll-behavior:contain;padding-right:4px;scrollbar-gutter:stable}
+.rule-spell-list button{display:grid;gap:0;justify-items:start;text-align:left;padding:10px 12px;border:1px solid #c3cdb8;border-radius:10px;background:#fffcf4;color:#21392a;cursor:pointer;transition:border-color .12s,background .12s,transform .12s}
 .rule-spell-list button:hover{border-color:#6f9274;transform:translateY(-1px)}
 .rule-spell-list button[aria-pressed=true]{background:#d7e6cc;border-color:#3b654b;box-shadow:inset 0 0 0 1px #3b654b55}
+.rule-spell-list strong{display:block;width:100%;font:700 .9rem/1.3 var(--body,system-ui);overflow-wrap:anywhere}
+.rule-animation-clip strong{display:block;font:600 .92rem/1.25 var(--display);overflow-wrap:anywhere}
 .rule-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
 .rule-tag{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;font-size:.68rem;font-weight:700;letter-spacing:.02em;background:#e7ecdf;color:#355240}
 .rule-tag:nth-child(1){background:#e8f0ff;color:#2a4d7a}
 .rule-builtin-banner,.rule-import-review{border-left:3px solid #3b654b;padding:.85rem 1rem;background:#3b654b12;margin:1rem 0;border-radius:0 10px 10px 0;line-height:1.45}
 .rule-import-review{border-left-color:#9b7e30;background:#9b7e3012}
 .rule-editor-main{min-width:0}
-.rule-editor-main fieldset{border:1px solid #b4beaa;border-radius:12px;padding:16px;margin:16px 0;background:#ffffff55;min-width:0}
-.rule-editor-main legend{padding:0 8px;font-weight:700;font-size:.95rem}
+.rule-editor-main .rule-section{border:1px solid #b4beaa;border-radius:12px;padding:14px 16px 16px;margin:16px 0;background:#ffffff55;min-width:0;box-sizing:border-box}
+.rule-editor-main .rule-section-title{display:block;width:100%;box-sizing:border-box;padding:0 0 10px;margin:0 0 14px;border-bottom:1px solid #c9d2c0;font-family:var(--display);font-weight:600;font-size:1.12rem;line-height:1.25;color:var(--ink,#23372c);overflow-wrap:anywhere}
+.rule-preview h3,.rule-publish h3,.rule-import-review h3{font-family:var(--display);font-size:1.2rem;line-height:1.25;margin:0 0 8px;overflow-wrap:anywhere}
 .rule-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .rule-checks{display:flex;gap:12px;flex-wrap:wrap}
 .spell-rule-desk .rule-check{display:flex;align-items:center;gap:7px;margin-top:10px;font-weight:500}
@@ -60,5 +65,5 @@
 .rule-video-preview video[data-blend=screen]{mix-blend-mode:screen}
 .rule-video-preview video[data-blend=dark-plate]{background:transparent;mix-blend-mode:screen;filter:contrast(1.25)}
 @media(max-width:1000px){.rule-workspace{grid-template-columns:220px minmax(0,1fr)}.rule-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.rule-damage-row{grid-template-columns:1fr 1fr}}
-@media(max-width:650px){.rule-page-heading,.rule-selected-heading{align-items:flex-start;flex-direction:column}.rule-workspace{grid-template-columns:minmax(0,1fr)}.rule-library{position:static}.rule-spell-list{max-height:220px}.rule-fields,.rule-damage-row{grid-template-columns:minmax(0,1fr)}.rule-page-heading h1{font-size:1.65rem}.rule-editor-main fieldset{padding:11px}}
+@media(max-width:650px){.rule-page-heading,.rule-selected-heading{flex-direction:column;gap:8px;margin-bottom:12px}.rule-workspace{grid-template-columns:minmax(0,1fr)}.rule-library{position:static;height:auto;min-height:0;max-height:none;grid-template-rows:auto}.rule-spell-list{height:auto;max-height:min(42vh,280px)}.rule-fields,.rule-damage-row{grid-template-columns:minmax(0,1fr)}.rule-page-heading h1{font-size:1.4rem}.rule-page-heading p,.rule-selected-heading p{font-size:.84rem;margin-top:3px}.rule-editor-main .rule-section{padding:12px}.rule-editor-main .rule-section-title{font-size:1.05rem}}
 @media(max-width:800px){.sidebar nav{min-width:0;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none}.sidebar nav::-webkit-scrollbar{display:none}.sidebar nav .nav-link{flex-shrink:0;white-space:nowrap}}

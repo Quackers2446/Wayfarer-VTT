@@ -63,20 +63,66 @@ function fallbackDie(ctx,die,x,y,radius) {
 
 export function createDiceTheatre() {
   const panel=document.createElement('section');panel.className='dice-theatre';panel.setAttribute('aria-label','Dice roll');
-  panel.innerHTML='<div class="dice-heading"><div><small></small><strong></strong></div><button type="button" class="dice-skip" aria-label="Skip animation" title="Skip animation">Skip</button></div><canvas aria-hidden="true"></canvas><div class="dice-tallies" aria-live="polite"></div>';
+  panel.innerHTML='<div class="dice-heading"><div><small></small><strong></strong></div><div class="dice-heading-actions"><button type="button" class="dice-skip" aria-label="Skip animation" title="Skip animation">Skip</button><button type="button" class="dice-reaction" aria-label="Use a reaction" title="Pause after this roll to use a reaction" disabled>Reaction</button></div></div><div class="dice-reaction-panel" hidden></div><canvas aria-hidden="true"></canvas><div class="dice-tallies" aria-live="polite"></div>';
   let canvas=panel.querySelector('canvas');const tallies=panel.querySelector('.dice-tallies');
+  const skipButton=panel.querySelector('.dice-skip');
+  const reactionButton=panel.querySelector('.dice-reaction');
+  const reactionPanel=panel.querySelector('.dice-reaction-panel');
   let frame,finish,active,started,phaseStarted,scene,ctx,attempted=false,generation=0,dice=[],width=1,height=1,duration=0,quiet=false,pace=1,hasMorePending=false;
   let fallbackTable,viewportInsets={};
   let enabled=true;
+  let reactionPaused=false;
+  let reactionOffer=null;
+  let onReactionRequest=null;
   try {enabled=localStorage.getItem('wayfarer-dice-fx')!=='off';} catch {}
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 
+  function setReactionArmed(armed) {
+    reactionButton.hidden=false;
+    reactionButton.disabled=!armed;
+    reactionButton.title=armed
+      ? 'Pause after this roll to use a reaction'
+      : 'No reaction available for this roll';
+    reactionButton.setAttribute('aria-disabled', String(!armed));
+  }
+
+  function clearReactionUi() {
+    reactionPaused=false;
+    reactionOffer=null;
+    setReactionArmed(false);
+    reactionPanel.hidden=true;
+    reactionPanel.replaceChildren();
+    panel.classList?.remove('reaction-paused');
+  }
+
   function stop() {
     hasMorePending=false;
+    clearReactionUi();
     generation++;cancelAnimationFrame(frame);panel.remove();scene?.clear();
     const done=finish;finish=undefined;active=undefined;done?.();
   }
-  panel.querySelector('button').addEventListener('click',stop);
+
+  function finishNow() {
+    if(reactionPaused) return;
+    stop();
+  }
+
+  skipButton.addEventListener('click',()=>{
+    if(reactionPaused) return;
+    finishNow();
+  });
+
+  reactionButton.addEventListener('click',()=>{
+    if(!active || reactionPaused || !reactionOffer || reactionButton.disabled) return;
+    reactionPaused=true;
+    panel.classList?.add('reaction-paused');
+    setReactionArmed(false);
+    reactionButton.disabled=true;
+    tally('total');
+    cancelAnimationFrame(frame);
+    frame=0;
+    onReactionRequest?.(active, reactionOffer);
+  });
 
   function resize() {
     const viewport=window.visualViewport;
@@ -105,7 +151,7 @@ export function createDiceTheatre() {
   }
 
   function animate(now) {
-    if(!active) return;
+    if(!active || reactionPaused) return;
     const elapsed=Math.max(0,now-started);
     if(scene) scene.draw(elapsed/pace);
     else if(ctx) {
@@ -127,7 +173,20 @@ export function createDiceTheatre() {
     else if(phase==='rolling' && elapsed>=duration) {tally('natural');phaseStarted=now;}
     else if(phase==='natural' && now-phaseStarted>=naturalWait) {tally('modifier');phaseStarted=now;}
     else if(phase==='modifier' && now-phaseStarted>=modifierWait) {tally('total');phaseStarted=now;}
-    if(quiet ? elapsed>quietWait : panel.dataset.phase==='total' && now-phaseStarted>totalWait) stop();else frame=requestAnimationFrame(animate);
+    // Auto-open the reaction window once totals are known so players cannot miss Shield/Counterspell.
+    if (reactionOffer && !reactionPaused && (quiet || panel.dataset.phase === 'total')) {
+      reactionPaused = true;
+      panel.classList?.add('reaction-paused');
+      setReactionArmed(false);
+      reactionButton.disabled = true;
+      tally('total');
+      cancelAnimationFrame(frame);
+      frame = 0;
+      onReactionRequest?.(active, reactionOffer);
+      return;
+    }
+    if(quiet ? elapsed>quietWait : panel.dataset.phase==='total' && now-phaseStarted>totalWait) finishNow();
+    else frame=requestAnimationFrame(animate);
   }
 
   async function begin(token) {
@@ -157,22 +216,41 @@ export function createDiceTheatre() {
   return {
     get enabled() {return enabled;},
     get isPlaying() {return Boolean(active);},
+    get isReactionPaused() {return reactionPaused;},
     toggle() {enabled=!enabled;try {localStorage.setItem('wayfarer-dice-fx',enabled ? 'on' : 'off');}catch{}return enabled;},
     expedite() {
-      if(!active) return;
+      if(!active || reactionPaused) return;
       hasMorePending=true;
-      if(panel.dataset.phase==='total') stop();
+      if(panel.dataset.phase==='total') finishNow();
       else if(panel.dataset.phase) tally('total');
     },
-    play(event,done,hasMore=false) {
+    play(event,done,hasMore=false,{reaction=null,onReaction=null}={}) {
       stop();active=event;finish=done;hasMorePending=Boolean(hasMore);
       panel.querySelector('.dice-heading small').textContent=event.name;panel.querySelector('.dice-heading strong').textContent=event.action;
       delete panel.dataset.phase;document.body.append(panel);
       dice=visualDice(event.rolls);
       const count=event.rolls.reduce((sum,roll)=>sum+(roll.diceCount ?? roll.dice.length),0);
       panel.querySelector('canvas').setAttribute('aria-label',dice.length<count ? `Showing ${dice.length} of ${count} dice; full results are in the combat log.` : 'Recorded dice');
+      reactionOffer=reaction;
+      onReactionRequest=onReaction;
+      setReactionArmed(Boolean(reaction));
       tally('rolling');begin(generation);
     },
+    showReactionChoices(html) {
+      if(!active || !reactionPaused) return;
+      reactionPanel.hidden=false;
+      reactionPanel.innerHTML=html;
+      resize();
+    },
+    resume() {
+      if(!active) return;
+      reactionPaused=false;
+      panel.classList?.remove('reaction-paused');
+      reactionPanel.hidden=true;
+      reactionPanel.replaceChildren();
+      finishNow();
+    },
     resize,stop,
+    get panel() {return panel;},
   };
 }

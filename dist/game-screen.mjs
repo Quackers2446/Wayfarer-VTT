@@ -1,15 +1,21 @@
-import {canTakeTurn, sharedTurnGroup, actorIsUp, currentActor, movementBudget, movementGroup, moveLeft} from "./combat.mjs";
+import {canTakeTurn, sharedTurnGroup, actorIsUp, concentrationRemaining, currentActor, movementBudget, movementGroup, moveLeft} from "./combat.mjs";
 import {escape} from "./format.mjs";
 import {icon} from "./icons.mjs";
 import {mapControls, mapHint, mapViewport} from "./map-camera.mjs";
+import {actorPartyId, ensureParties, partyLabel} from "./parties.mjs";
 
 function button(label, symbol, action, extra = "") {
   return `<button class="game-button" type="button" data-play="${action}" ${extra} ${extra.includes('aria-label=') ? '' : 'aria-label="'+escape(label)+'"'}>${symbol ? icon(symbol,17) : ""}<span class="game-button-label">${escape(label)}</span></button>`;
 }
 
-function portraits(party, selected, inCombat, controllers, controller, players, movers) {
+function portraits(party, selected, inCombat, controllers, controller, players, movers, parties) {
   const names = new Map(players.map(({id,username}) => [id,username]));
-  return party.length ? party.map((character, index) => {
+  const multi = (parties?.length || 0) > 1;
+  if (!party.length) return '<a class="game-link" href="#play">Add a party member</a>';
+  const groups = multi
+    ? (parties || []).map(group => ({...group, members: party.filter(character => actorPartyId(character) === group.id)})).filter(group => group.members.length)
+    : [{id: 'all', name: '', members: party}];
+  return groups.map(group => `${group.name ? `<h3 class="game-party-group">${escape(group.name)}</h3>` : ""}${group.members.map((character, index) => {
     const name = escape(character.name);
     const id = escape(character.id);
     const initials = character.name.split(/\s+/).slice(0,2).map((word) => word[0]).join("");
@@ -28,14 +34,17 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
         </span>
         <span class="game-character-info"><strong>${name}</strong><small>${character.hp} / ${character.maxHp} HP${character.tempHp ? " · +" + character.tempHp : ""}</small>
           <progress max="${character.maxHp}" value="${hp}" aria-label="${name} hit points"></progress>
-          ${owner ? `<small>${mine ? "Your character" : escape(names.get(owner) ?? "Claimed")}</small>` : ""}
+          ${owner
+            ? `<small>${mine ? "Your character" : escape(names.get(owner) ?? "Claimed")}</small>`
+            : (controllers ? `<small>Unclaimed</small>` : "")}
+          ${multi ? `<small class="game-party-tag">${escape(partyLabel(actorPartyId(character)))}</small>` : ""}
         </span>
       </button>
       ${selectable && !selectedHere
         ? button("Control","", "control-party", `data-id="${id}" aria-label="${inCombat ? "Control " + name : "Control"}"`) : ""}
       ${controllers && (!owner || mine) ? button(mine ? "Release" : "Claim","","claim-party",`data-id="${id}" aria-label="${mine ? "Release" : "Claim"} ${name}"`) : ""}
     </div>`;
-  }).join("") : '<a class="game-link" href="#play">Add a party member</a>';
+  }).join("")}`).join("");
 }
 
 function activityLog(history,mode) {
@@ -56,6 +65,8 @@ export function gameScreen({
   map, battle, roomName, saveStatus, selected, party, category, actions, tacticalTools, status,
   logOpen, logHistory=battle.log, eventLogMode="compact", eventLogPlacement="separate", toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,hotbar,resourceControls,
   destination, adventureName, hasToken, tableOpen, tableContent, shared, partyOpen=false,partyContent='',restOpen=false,restContent='',chatOpen=false, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
+  defeated=false, pvpLeave=false, truceVoted=false,
+  compact=false, actionsSheetOpen=true, aiming=false, aimMessage="",
 }) {
   const active = battle.round > 0;
   const turn = currentActor(battle);
@@ -66,7 +77,20 @@ export function gameScreen({
   const online = players.filter((player) => player.online).length;
   const remaining = selected && active ? moveLeft(battle,selected) : 0;
   const total = selected && active ? movementBudget(battle,selected) : 0;
-  return `<section class="game-screen ${active ? "game-combat" : ""}" aria-label="Wayfarer game">
+  const parties = ensureParties(battle);
+  const multiParty = parties.length > 1;
+  const menuOpen = tableOpen || partyOpen || restOpen || storyOpen || toolsOpen || chatOpen || logOpen;
+  const chromeButtons = [
+    button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"${shared ?
+      ` data-online="${online}" aria-label="Session" aria-description="${online} ${online === 1 ? "player" : "players"} online"` : ""}`),
+    button("Party","users","game-party",`aria-pressed="${partyOpen}"`),
+    button("Rest","heart","game-rest",`aria-expanded="${restOpen}"`),
+    button("Story","book","game-story",`aria-pressed="${storyOpen}"`),
+    button(eventLogPlacement === "chat" ? "Chat & log" : "Chat","chat","game-chat",`aria-pressed="${chatOpen}"`),
+    eventLogPlacement === "chat" ? "" : button("Log","book","game-log",`aria-pressed="${logOpen}"`),
+    button("Tools","map","game-tools",`aria-pressed="${toolsOpen}"`),
+  ].filter(Boolean).join("");
+  return `<section class="game-screen ${active ? "game-combat" : ""}${defeated ? " game-defeated-active" : ""}${compact ? " game-compact" : ""}${actionsSheetOpen ? " game-actions-open" : ""}${aiming ? " game-aiming" : ""}" aria-label="Wayfarer game">
     <header class="game-top">
       <div class="game-location">
         <a href="#play" class="game-button game-exit" aria-label="${shared ? "Rooms" : "Setup"}">${icon("home",16)}<span>${shared ? "Rooms" : "Setup"}</span></a>
@@ -75,23 +99,22 @@ export function gameScreen({
       </div>
       <div class="game-top-right">
         ${shared ? `<span class="game-save-status" role="status">${escape(saveStatus || 'Saved')}</span>` : ''}
-        <span class="game-phase" aria-live="polite"><i></i>${active ? "Combat · Round " + battle.round : "Exploring"}</span>
-        ${button(shared ? "Session" : "Multiplayer","users","game-table",`aria-pressed="${tableOpen}"${shared ?
-          ` data-online="${online}" aria-label="Session" aria-description="${online} ${online === 1 ? "player" : "players"} online"` : ""}`)}
-        ${button("Party","users","game-party",`aria-pressed="${partyOpen}"`)}
-        ${button("Rest","heart","game-rest",`aria-expanded="${restOpen}"`)}
-        ${button("Story","book","game-story",`aria-pressed="${storyOpen}"`)}
-        ${button(eventLogPlacement === "chat" ? "Chat & log" : "Chat","chat","game-chat",`aria-pressed="${chatOpen}"`)}
-        ${eventLogPlacement === "chat" ? "" : button("Log","book","game-log",`aria-pressed="${logOpen}"`)}
-        ${button("Tools","map","game-tools",`aria-pressed="${toolsOpen}"`)}
+        <span class="game-phase" aria-live="polite"><i></i>${active ? (battle.combatKind === 'pvp' ? "PvP · Round " : "Combat · Round ") + battle.round : "Exploring"}</span>
+        ${shared ? `<div class="game-voice-slot"></div>` : ""}
+        <div class="game-top-chrome">${chromeButtons}</div>
+        <details class="game-top-menu"${menuOpen ? " open" : ""}>
+          <summary class="game-button" aria-label="Menu">${icon("map",16)}<span class="game-button-label">Menu</span></summary>
+          <div class="game-top-menu-panel" role="menu">${chromeButtons}</div>
+        </details>
       </div>
     </header>
     <div class="game-middle">
       <aside class="game-party" aria-label="Party">
-        <h2>Party</h2>
-        <div class="game-roster">${portraits(party,selected,active,controllers,controller,players,movers)}</div><button type="button" class="game-party-add game-button" data-play="game-party" aria-label="Add characters to party">+ Add</button>
+        <h2>${multiParty ? "Parties" : "Party"}</h2>
+        <div class="game-roster">${portraits(party,selected,active,controllers,controller,players,movers,parties)}</div><button type="button" class="game-party-add game-button" data-play="game-party" aria-label="Add characters to party">+ Add</button>
       </aside>
       <div class="game-stage">
+        ${shared ? `<div class="game-voice-channel-slot"></div>` : ""}
         ${active ? `<div class="game-initiative" aria-label="Initiative order">${battle.order.filter((id) => !visibleInitiative || visibleInitiative.has(id)).map((id) => {
           const actor = battle.actors.find((entry) => entry.id === id);
           return actor ? `<span class="game-turn ${actor.id === turn?.id ? "game-turn-current" : movers.includes(actor) ? "game-turn-shared" : ""} ${actor.side === "hostile" ? "game-turn-hostile" : ""}"
@@ -106,39 +129,71 @@ export function gameScreen({
           <div><p id="game-move-preview" class="game-move-preview">${escape(canAct && destination || '')}</p><p id="game-map-status" role="status">${escape(status)}</p>${mapHint()}</div>
           ${mapControls(hasToken)}
         </div>
-        ${storyOpen ? `<aside class="game-flyout play-panel story-flyout" aria-label="Story journal">${storyContent}</aside>` : ""}
-        ${restOpen ? `<aside class="game-flyout play-panel rest-flyout" aria-label="Party rest">${restContent}</aside>` : ""}
-        ${toolsOpen ? `<aside class="game-flyout tools-flyout play-panel" aria-label="Table tools">${tacticalTools}</aside>` : ""}
-        ${partyOpen ? `<aside class="game-flyout tools-flyout play-panel party-flyout" aria-label="Party management">${partyContent}</aside>` : ""}
-        ${tableOpen ? `<aside class="game-flyout tools-flyout play-panel session-panel" aria-label="Multiplayer">${tableContent}</aside>` : ""}
+        ${storyOpen ? `<aside class="game-flyout story-flyout" aria-label="Story journal">${storyContent}</aside>` : ""}
+        ${restOpen ? `<aside class="game-flyout rest-flyout" aria-label="Party rest">${restContent}</aside>` : ""}
+        ${toolsOpen ? `<aside class="game-flyout tools-flyout" aria-label="Table tools">${tacticalTools}</aside>` : ""}
+        ${partyOpen ? `<aside class="game-flyout tools-flyout party-flyout" aria-label="Party management">${partyContent}</aside>` : ""}
+        ${tableOpen ? `<aside class="game-flyout tools-flyout session-panel" aria-label="Multiplayer">${tableContent}</aside>` : ""}
       </div>
       <div class="game-social-dock" aria-label="Messages and activity">
         <div class="game-activity-home" data-activity-placement="${eventLogPlacement}">${activityLog(logHistory,eventLogMode)}</div>
         <div class="game-chat-slot"></div>
       </div>
     </div>
+    ${compact && aiming && aimMessage && !actionsSheetOpen ? `<div class="game-aim-banner" role="status" aria-live="polite">
+      <p>${escape(aimMessage)}</p>
+      <div class="game-aim-actions">
+        <button type="button" class="game-button" data-play="actions-back" aria-label="Back to actions">${icon("plus",15)}<span>Actions</span></button>
+        <button type="button" class="game-button" data-play="hotbar-cancel" aria-label="Cancel action">${icon("close",15)}<span>Cancel</span></button>
+      </div>
+    </div>` : ""}
     <footer class="game-hud" aria-busy="${busy}">
       <div class="game-hud-top">
         <div class="game-active">
           <span class="game-label">${reacting ? "Reaction · Deflect Missiles" : enemyTurn ? "Enemy turn · game controlled" : movingEarly ? "Waiting for next turn" : active ? sharedTurnGroup(battle).length>1 ? "Shared turn" : "Current turn" : "Selected character"}</span>
           <strong>${escape(selected?.name ?? "Choose a party member")}</strong>
-          ${selected?.concentration ? `<span class="game-label">Concentrating · ${escape(selected.concentration.name)}</span>` : ""}
+          ${(() => {
+            const conc = selected ? concentrationRemaining(battle, selected) : null;
+            if (!conc) return "";
+            const left = conc.rounds > 0 ? ` · ${conc.rounds} round${conc.rounds === 1 ? "" : "s"} left` : " · expiring";
+            return `<span class="game-label">Concentrating · ${escape(conc.name)}${left}</span>`;
+          })()}
         </div>
         ${enemyTurn ? "" : `<div class="game-move" ${active ? 'aria-label="Movement budget"' : ""}>
           ${active ? `<span><strong>${remaining} ft</strong> left / ${total} ft</span>
           <progress value="${Math.min(Math.max(1,total), remaining)}" max="${Math.max(1,total)}" aria-label="Movement remaining"></progress>` :
             '<strong>Free movement</strong>'}
         </div>`}
-        ${!enemyTurn && !movingEarly ? resourceControls : ''}
+        ${!enemyTurn && !movingEarly && (!compact || actionsSheetOpen) ? resourceControls : ''}
+        ${compact && canAct && !battle.movement && !movingEarly && !reacting && selected?.hp>0 && !actionsSheetOpen
+          ? `<button type="button" class="game-button game-actions-toggle" data-play="actions-open" aria-expanded="false">${icon("plus",16)}<span>Actions</span></button>` : ""}
+        ${pvpLeave ? `<button class="game-button game-leave-combat" type="button" data-play="leave-combat" aria-label="${truceVoted ? 'Truce offered' : 'Leave combat'}" title="PvP ends when every player in the scrap agrees" ${busy || battle.movement || reacting ? "disabled" : ""}>${icon("users",17)}<span>${truceVoted ? "Truce offered…" : "Leave combat"}</span></button>` : ""}
         ${active && !enemyTurn && !movingEarly && !reacting ? `<button class="game-button game-end-turn" type="button" data-play="end" aria-label="End turn" aria-keyshortcuts="Space" title="End turn (Space)" ${battle.movement || !canAct || busy ? "disabled" : ""}>${icon("check",17)}<span>End turn</span><kbd aria-hidden="true">Space</kbd></button>` : ""}
       </div>
       <div class="game-hud-body">
-        ${canAct && !battle.movement && !movingEarly && !reacting && selected?.hp>0 ? hotbar : ''}
+        ${canAct && !battle.movement && !movingEarly && !reacting && selected?.hp>0 && actionsSheetOpen ? `
+          <div class="game-actions-sheet" aria-label="Character actions">
+            ${compact ? `<header class="game-actions-sheet-head">
+              <strong>${escape(selected?.name ?? "Actions")}</strong>
+              <button type="button" class="game-button" data-play="actions-close" aria-label="Close actions">${icon("close",15)}<span>Close</span></button>
+            </header>` : ""}
+            ${hotbar}
+          </div>` : ""}
         <div class="game-action-content"${actionPanelOpen && (rescueAvailable || actions?.trim?.()) ? ' role="region" aria-label="Selected action controls"' : ' hidden'}>
           ${rescueAvailable ? button("Free Sildar","users","rescue-sildar") : ""}
           ${actions}
         </div>
       </div>
     </footer>
+    ${defeated ? `<div class="game-defeated" role="dialog" aria-modal="true" aria-labelledby="game-defeated-title">
+      <div class="game-defeated-card">
+        <h2 id="game-defeated-title">Defeated</h2>
+        <p>The party can no longer continue.</p>
+        <div class="game-defeated-actions">
+          <button type="button" class="game-button game-defeated-retry" data-play="try-again">Try again</button>
+          <button type="button" class="game-button" data-play="continue-defeated">Continue</button>
+        </div>
+      </div>
+    </div>` : ""}
   </section>`;
 }

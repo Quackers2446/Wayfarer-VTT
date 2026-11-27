@@ -301,6 +301,6 @@ export function starterRule(spell){
  const block=(trigger,formula,area='footprint',save='dex')=>({trigger,area,save,onSave:'half',condition:'',damage:[{formula,type:'fire',upcast:'1d8'}]});
  if(ruleKey(spell.name)==='wall of fire')Object.assign(rule,{shape:'line',range:120,length:60,radius:10,persistent:true,concentration:true,blocksVision:true,effects:[block('cast','5d8'),block('enter','5d8','footprint',''),block('end','5d8','hotSide','')]});
  if(ruleKey(spell.name)==='ice storm')Object.assign(rule,{shape:'circle',range:300,radius:20,persistent:true,difficult:true,concentration:false,endNextTurn:true,effects:[{trigger:'cast',area:'footprint',save:'dex',onSave:'half',condition:'',damage:[{formula:'2d8',type:'bludgeoning',upcast:'1d8'},{formula:'4d6',type:'cold',upcast:''}]}]});
- if(ruleKey(spell.name)==='flaming sphere')Object.assign(rule,{shape:'sphere',range:60,radius:0,persistent:true,concentration:true,nearby:5,move:30,effects:[{...block('end','2d6','nearby'),damage:[{formula:'2d6',type:'fire',upcast:'1d6'}]},{...block('ram','2d6'),damage:[{formula:'2d6',type:'fire',upcast:'1d6'}]}]});
+ if(ruleKey(spell.name)==='flaming sphere')Object.assign(rule,{shape:'sphere',range:60,radius:0,duration:60,persistent:true,concentration:true,nearby:5,move:30,effects:[{...block('end','2d6','nearby'),damage:[{formula:'2d6',type:'fire',upcast:'1d6'}]},{...block('ram','2d6'),damage:[{formula:'2d6',type:'fire',upcast:'1d6'}]}]});
  return rule;
 }

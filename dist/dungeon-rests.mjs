@@ -67,7 +67,11 @@ async function resolveDungeonRest(battle,map,long,{leaderId,random,loadMonster})
   log(draft,'Rest interrupted after '+Math.round(elapsed/60)+' minutes. No healing or rest resources were restored.');
   recordAction(draft,leader,{action:'Rest interrupted',kind:'rest',messages:[plain(encounter.text),'No healing or rest resources were restored.']});
   const hostile=actors.filter(a=>a.side==='hostile');
-  if(hostile.length){const participants=new Set([...draft.actors.filter(a=>a.side==='party'&&occupies(a)&&!a.dead),...hostile].map(a=>a.id));startInitiative(draft,random,participants);}
- }else restParty(draft,long,{advance:false});
+  if(hostile.length){
+   const partyId=leader.partyId||'party-1';
+   const participants=new Set([...draft.actors.filter(a=>a.side==='party'&&occupies(a)&&!a.dead&&(a.partyId||'party-1')===partyId),...hostile].map(a=>a.id));
+   startInitiative(draft,random,participants);
+  }
+ }else restParty(draft,long,{advance:false,partyId:leader.partyId||'party-1'});
  Object.assign(battle,draft);return {completed:!encounter,checks:rolledChecks,plannedChecks:checks,elapsed,encounter,spawned:actors.map(a=>a.id)};
 }

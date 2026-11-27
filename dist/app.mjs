@@ -1,10 +1,12 @@
 import {prepareAccountWorkspace,startAccounts,accountLibraryChanged,accountState} from './account-client.mjs';
 import {accountBadge,mountAccountProfile} from './account-view.mjs';
+import {applyTheme} from './theme.mjs';
+applyTheme();
 import {dismissOnBackdrop} from './modal-dismiss.mjs';
 import './site-search.mjs';
 import './custom-select.mjs';
 import {registerSuggestions} from './search-suggestions.mjs';
-import {mountSpellRuleEditor} from './spell-rule-editor.mjs';
+import {mountSpellRuleEditor} from './spell-rule-editor.mjs?v=spell-lib-layout';
 import {mountHomebrewDesk} from './homebrew-desk.mjs';
 import {listHomebrew} from './homebrew-store.mjs';
 import {itemToSheetEntry, itemToAttack, featureToSheetEntry} from './homebrew-schema.mjs';
@@ -463,6 +465,29 @@ document.addEventListener("wayfarer:inspect", (event) => {
     xp:actor.xp ?? imported?.xp,currency:actor.currency ?? imported?.currency,
     items:(actor.items ?? imported?.items ?? []).map((item) => ({...item,quantity:potions.get(item.name) ?? item.quantity})),
   });
+});
+
+function openHotbarDetailDialog(model) {
+  if (!model) return;
+  const body = `
+    <dl class="spell-reference-facts">${model.facts.map(([label, value]) =>
+      `<div><dt>${escape(label)}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>
+    ${model.entries ? `<div class="spell-reference-text">${formatEntries(model.entries)}</div>` :
+      model.description ? `<div class="spell-reference-text"><p>${escape(model.description)}</p></div>` : ""}
+    ${model.reason ? `<p class="play-hint"><em>${escape(model.reason)}</em></p>` : ""}
+    <footer class="dialog-footer"><span>Hotbar details · right-click any action for rules</span>
+      <a class="text-link" href="assets/srd-attribution.txt">SRD attribution</a></footer>`;
+  openDialog(model.name, model.subtitle, body, model.symbol || "book", true);
+}
+
+document.addEventListener("wayfarer:hotbar-detail", (event) => {
+  const model = event.detail;
+  if (!model) return;
+  if (model.spellKey && spellByKey(model.spellKey)) {
+    spellDialog(model.spellKey);
+    return;
+  }
+  openHotbarDetailDialog(model);
 });
 
 let changingToken = false;

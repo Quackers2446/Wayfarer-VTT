@@ -27,8 +27,10 @@ export function forcedMove(battle, target, origin, feet, map, {mode = 'away', ma
     if (Math.max(Math.abs(want.x - here.x), Math.abs(want.y - here.y)) > 1) break;
     if (!canStand(battle, target, want.x, want.y, map) || crossesMapWall(map, here, want, battle)) break;
     target.x = want.x; target.y = want.y;
-    const body = target.carrying && battle.actors.find(other => other.id === target.carrying);
-    if (body) {body.x = target.x; body.y = target.y;}
+    const carried = target.carrying && battle.actors.find(other => other.id === target.carrying);
+    if (carried) {carried.x = target.x; carried.y = target.y;}
+    const dragged = target.dragging && battle.actors.find(other => other.id === target.dragging);
+    if (dragged) {dragged.x = target.x; dragged.y = target.y;}
     moved += 5;
     customZoneTriggers(battle, target, 'enter', here, random);
     refreshFollowZones(battle, target, map);

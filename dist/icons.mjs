@@ -36,6 +36,11 @@ const paths = {
   dice: '<path d="m12 2 9 6v9l-9 5-9-5V8zm0 0L3 17m9-15 9 15M3 17h18M3 8l9 14 9-14"/>',
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  mic: '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3m-4 0h8"/>',
+  micOff: '<path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V6a3 3 0 0 0-5.8-1"/><path d="M19 11a7 7 0 0 1-9.8 6.4M5.1 15A7 7 0 0 1 5 11M12 18v3m-4 0h8"/>',
+  headphones: '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><path d="M21 16a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 16a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>',
+  deafOff: '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><path d="M21 16a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 16a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3zM2 2l20 20"/>',
+  phoneOff: '<path d="M10.7 5.1A15 15 0 0 1 19 13.4M15.4 2.2A19 19 0 0 1 21.8 8.7M2 2l20 20M6.4 6.4a15 15 0 0 0 11.2 11.2l1.4-1.4a1.7 1.7 0 0 0-.4-2.7l-2.3-1a1.7 1.7 0 0 0-2 .5l-.7.8a1 1 0 0 1-1.1.3 11.4 11.4 0 0 1-3.4-3.4 1 1 0 0 1 .3-1.1l.8-.7a1.7 1.7 0 0 0 .5-2l-1-2.3a1.7 1.7 0 0 0-2.7-.4z"/>',
 };
 export function icon(name, size = 19) {
   return '<svg class="icon" aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] ?? paths.file) + '</svg>';

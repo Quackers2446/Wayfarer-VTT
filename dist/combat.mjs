@@ -5,9 +5,10 @@ import {weaponProperties} from './weapon-properties.mjs';
 import {customSpellEffect} from './spell-rule-store.mjs';
 import {castCustomSpell,customZoneTriggers,expireCustomZones,refreshFollowZones,flushPendingDamage} from './custom-spells.mjs';
 import {defaultSpellAnimation,resolveSpellAnimation,breathAnimation,spellVisualEvent,formRule} from './spell-animation-library.mjs';
-import {needsEndpoint} from './spell-shapes.mjs';
+import {needsEndpoint,isCenterlineVisionZone,visionSegmentsForZone} from './spell-shapes.mjs';
 import {awardDefeatXP} from "./encounter-rewards.mjs";
 import {crossesMapWall, mapFloor, mapLineClear, mapWalls} from "./map-walls.mjs";
+import {segmentIntersection,segmentEnds} from './wall-geometry.mjs';
 import {tokenSize,sizeRank,actorCells,containsCell,overlaps,spaceDistance,touchesArea,creatureSize} from './actor-space.mjs';
 import {captureImpact, captureMessage, captureRoll, recordAction, withActionEvent} from "./action-events.mjs";
 import {modsOf, canReact, autoFailsSave, saveMode, expireTurnStatuses, endStatuses, syncStatusHp, conditionTable} from "./conditions.mjs";
@@ -78,8 +79,13 @@ const freshTurn=(spent=0)=>({spent,dash:0,action:null,attacksMade:0,bonusUsed:fa
 const turnViews=new WeakMap(),viewRoots=new WeakMap();
 export function sharedTurnGroup(battle) {
   if(!battle.round || initiativeActor(battle)?.side!=='party') return [];
+  const lead=initiativeActor(battle);
+  const leadParty=lead?.partyId || 'party-1';
   let start=battle.turn,end=battle.turn;
-  const partyAt=index=>battle.actors.find(a=>a.id===battle.order[index])?.side==='party';
+  const partyAt=index=>{
+    const actor=battle.actors.find(a=>a.id===battle.order[index]);
+    return actor?.side==='party' && (actor.partyId || 'party-1')===leadParty;
+  };
   // Older saves already finished characters before the cursor; do not reopen those turns.
   while(battle.sharedEnded && start>0 && partyAt(start-1)) start--;
   while(end+1<battle.order.length && partyAt(end+1)) end++;
@@ -115,7 +121,15 @@ export function turnView(battle,actor) {
 }
 export const turnBudgetStamp=(battle,actor)=>{const view=turnView(battle,actor);return JSON.stringify(turnFields.map(key=>view[key]));};
 export const actorIsUp = (actor) => Boolean(actor && actor.hp > 0 && !actor.dead);
-export const occupies = (actor) => !actor.dead && !actor.carriedBy && actor.x != null && actor.y != null;
+export const occupies = (actor) => !actor.dead && !actor.carriedBy && !actor.draggedBy && actor.x != null && actor.y != null;
+/** Dragging occupies both hands (weapon attacks, somatic/material spells, object use). */
+export const handsOccupied = (actor) => Boolean(actor?.dragging);
+/** True when the spell needs a free hand (Somatic or Material). Verbal-only spells return false. */
+export function spellNeedsHands(spell) {
+  const components = spell?.components;
+  if (!components || typeof components !== 'object') return true;
+  return Boolean(components.s || components.m);
+}
 export const modifier = (score) => score == null ? null : Math.floor((score - 10) / 2);
 export const hasFeature = (actor,name) => actor.classRules?.edition === "2014" && actor.classRules.traits.includes(name);
 export const condition = (actor,name) => actor?.conditions?.find((effect) => effect.name === name);
@@ -174,6 +188,13 @@ export function endConcentration(battle,caster) {
 export function startConcentration(battle,caster,name,duration) {
   endConcentration(battle,caster);
   caster.concentration = {name,expires:(battle.elapsed ?? 0)+duration};
+}
+
+/** Seconds / round budget still left on the caster's concentration spell (6 seconds = 1 round). */
+export function concentrationRemaining(battle,actor) {
+  if (!actor?.concentration) return null;
+  const seconds = Math.max(0,(actor.concentration.expires ?? 0) - (battle?.elapsed ?? 0));
+  return {seconds, rounds: Math.max(0, Math.ceil(seconds / 6)), name: actor.concentration.name};
 }
 
 export function addCondition(battle,actor,name,duration,properties = {}) {
@@ -277,7 +298,10 @@ export function startInitiative(battle, random = Math.random, participantIds = n
   battle.round = 1;
   battle.turn = 0;
   battle.deathRolled = false;
-  delete battle.earlyMovement;
+  delete battle.earlyMovement;delete battle.truceVotes;
+  const pcs=ready.filter(actor=>actor.side==='party');
+  const hostiles=ready.filter(actor=>actor.side==='hostile');
+  battle.combatKind=pcs.length>=2 && !hostiles.length ? 'pvp' : hostiles.length ? 'encounter' : 'pvp';
   resetTurn(battle,random);
   log(battle, "Initiative — " + scores.map((actor) => actor.name + " " + actor.initiativeRoll).join(", ") + ".");
   return currentActor(battle);
@@ -307,12 +331,14 @@ export function endTurn(battle, random = Math.random, selected = currentActor(ba
   if (battle.movement) error("Resolve the opportunity attack before ending the turn.");
   if (battle.classReaction) error("Resolve Deflect Missiles before ending the turn.");
   const actor=selected;
-  if(!canTakeTurn(battle,actor)) error('This character cannot end a turn at the current initiative.');
-  const budget=turnView(battle,actor);
-  if (actor?.hp === 0 && actor.resolveDeath && !actor.dead && !actor.stable && !budget.deathRolled) {
+  // Defeated tokens can still hold the initiative cursor after a final death save; skip them.
+  const skippingDead = Boolean(actor?.dead);
+  if (!skippingDead && !canTakeTurn(battle, actor)) error('This character cannot end a turn at the current initiative.');
+  const budget = skippingDead ? battle : turnView(battle, actor);
+  if (!skippingDead && actor?.hp === 0 && actor.resolveDeath && !actor.dead && !actor.stable && !budget.deathRolled) {
     error("Roll this character's death save before ending the turn.");
   }
-  if (actor) {
+  if (actor && !skippingDead) {
     customZoneTriggers(battle,actor,'end',undefined,random);
     for (const creature of battle.actors) {
       if (creature.conditions) creature.conditions = creature.conditions.filter((effect) =>
@@ -331,15 +357,19 @@ export function endTurn(battle, random = Math.random, selected = currentActor(ba
       if (creature.sliver?.caster === actor.id && creature.sliver.round <= battle.round) creature.sliver = null;
     }
   }
-  if(actor.side==='party') {
+  if (actor?.side === 'party') {
     battle.sharedEnded ??= Object.fromEntries(battle.order.slice(0,battle.turn).map(id=>[id,true]));
     battle.sharedEnded[actor.id]=true;
+    // A dead initiative lead never took an end-turn; treat them as finished so living allies can advance.
+    const lead = initiativeActor(battle);
+    if (lead?.dead) battle.sharedEnded[lead.id] = true;
     const pending=sharedTurnGroup(battle).filter(member=>!battle.sharedEnded[member.id]);
     if(pending.length) {
-      if(battle.sharedEnded[initiativeActor(battle)?.id]) {
+      if (battle.sharedEnded[initiativeActor(battle)?.id] || initiativeActor(battle)?.dead) {
         const next=pending[0],nextBudget=Object.fromEntries(turnFields.map(key=>[key,turnView(battle,next)[key]]));
         battle.sharedTurns ??= {};
-        battle.sharedTurns[initiativeActor(battle).id]=Object.fromEntries(turnFields.map(key=>[key,battle[key]]));
+        const leadNow = initiativeActor(battle);
+        if (leadNow) battle.sharedTurns[leadNow.id]=Object.fromEntries(turnFields.map(key=>[key,battle[key]]));
         battle.turn=battle.order.indexOf(next.id);Object.assign(battle,nextBudget);
         delete battle.sharedTurns[next.id];
         if(battle.earlyMovement) delete battle.earlyMovement[next.id];
@@ -380,7 +410,33 @@ export function endInitiative(battle) {
   battle.round = 0;
   battle.turn = 0;
   delete battle.earlyMovement;delete battle.sharedTurns;delete battle.sharedEnded;
+  delete battle.truceVotes;delete battle.combatKind;delete battle.encounterParticipants;
   log(battle, "Initiative ended.");
+}
+
+/** Opt into ending a pure PvP scrap. Combat ends when every living PC in initiative has opted in. */
+export function requestTruce(battle, actor) {
+  if (!battle.round) error("No combat is running.");
+  if (battle.movement) error("Resolve the opportunity attack first.");
+  if (battle.classReaction) error("Resolve the pending reaction first.");
+  if (!actor || actor.side !== 'party' || actor.dead) error("Only player characters in the fight can call a truce.");
+  if (!battle.order.includes(actor.id)) error("This character is not in the fight.");
+  const participants = battle.order.map(id => battle.actors.find(entry => entry.id === id))
+    .filter(entry => entry && entry.side === 'party' && !entry.dead);
+  const hostiles = battle.order.map(id => battle.actors.find(entry => entry.id === id))
+    .filter(entry => entry && entry.side === 'hostile' && entry.hp > 0 && !entry.dead);
+  if (hostiles.length) error("Leave combat / truce is only available during player vs player fights.");
+  if (participants.length < 2) error("Truce needs at least two player characters in the fight.");
+  (battle.truceVotes ??= {})[actor.id] = true;
+  battle.combatKind = 'pvp';
+  const pending = participants.filter(entry => !battle.truceVotes[entry.id]);
+  if (pending.length) {
+    log(battle, actor.name + " offers a truce. Waiting on " + pending.map(entry => entry.name).join(", ") + ".");
+    return 'pending';
+  }
+  endInitiative(battle);
+  log(battle, "All players agree to leave combat. Free movement restored.");
+  return 'ended';
 }
 
 export function speedOf(actor) {
@@ -388,7 +444,7 @@ export function speedOf(actor) {
   if (mods.incapacitated || mods.speedZero || actor.steadyAim) return 0;
   let speed = Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0)+mods.speedBonus);
   if (mods.speedMultiplier !== 1) speed = Math.floor(speed*mods.speedMultiplier/5)*5;
-  return speed*(actor.carrying ? .5 : 1);
+  return speed*(actor.carrying || actor.dragging ? .5 : 1);
 }
 export function armorClass(actor) {
   const mods = modsOf(actor);
@@ -708,16 +764,23 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false, ra
     if (actor.concentration) {
       if (!actorIsUp(actor) || incapacitated(actor)) endConcentration(battle,actor);
       else {
+        // DC = 10 or half the damage taken (after resist/vuln), whichever is higher. Nested event so the
+        // concentrator gets a clear Maintained/Broken cue even when damage came from another creature's action.
         const dc = Math.max(10,Math.floor(damage/2));
-        const save = savingThrow(actor,"con",{random,extra:actor.bladesong ? actor.ability.int ?? 0 : 0});
-        log(battle,actor.name + " concentration save — " + save.total + " vs DC " + dc + ".");
-        if (save.total < dc) endConcentration(battle,actor);
+        withActionEvent(battle,actor,{action:"Concentration",kind:"save"},() => {
+          const save = savingThrow(actor,"con",{random,extra:actor.bladesong ? actor.ability.int ?? 0 : 0});
+          const kept = save.total >= dc;
+          log(battle,actor.name + " concentration save — " + save.total + " vs DC " + dc + ".");
+          recordAction(battle,actor,{outcome:kept ? "Maintained" : "Broken",total:save.total,dc});
+          if (!kept) endConcentration(battle,actor);
+        });
       }
     }
   }
   if (damage && actorIsUp(actor)) repeatConditionSaves(battle,actor,'damaged',random);
   if(actor.dead && before>0){actor.defeatedAt=Date.now();actor.finalBlow=source?.id;awardDefeatXP(battle,actor,source,log);}
   if((actor.dead || actor.hp===0) && actor.carrying){const body=battle.actors.find(body=>body.id===actor.carrying);if(body){body.carriedBy=null;body.x=actor.x;body.y=actor.y;}actor.carrying=null;}
+  if((actor.dead || actor.hp===0) && actor.dragging){const body=battle.actors.find(body=>body.id===actor.dragging);if(body){body.draggedBy=null;body.x=actor.x;body.y=actor.y;}actor.dragging=null;}
   const outcome={damage,absorbed,defeated:actor.dead,unconscious:!actor.dead && actor.hp===0 && before>0};
   captureImpact(battle,actor,{amount:damage,type,critical,defeated:outcome.defeated,absorbed});
   if (damage > 0 && actor.reactions?.length && source && !properties.noReaction) fireReactions(battle,'damaged',{reactor:actor,source,damageType:type,amount:damage,properties,map:properties.map},random);
@@ -916,18 +979,34 @@ export function canSee(battle,from,to,map) {
   if (!battle.spellZones?.length || from.x === to.x && from.y === to.y) return true;
   const sightZones=battle.spellZones.filter(zone=>zone.blocksVision!==false);
   const zones = (from.astralVisage || hasFeature(from,"Devil's Sight")) && distanceFt(from,to) <= 120 ? sightZones.filter((zone) => zone.name !== "Darkness") : sightZones;
-  const obscured = obscuredCells(zones);
+  const areaZones = zones.filter((zone) => !isCenterlineVisionZone(zone));
+  const wallZones = zones.filter(isCenterlineVisionZone);
+  // Fog/darkness still hide whole tiles. Wall/ring tiles stay seeable; occlusion is the centerline.
+  const obscured = obscuredCells(areaZones);
+  if (obscured.has(keyAt(from.x, from.y))) return false;
   let {x,y} = from;
   const dx = Math.abs(to.x-x), dy = -Math.abs(to.y-y);
   const sx = Math.sign(to.x-x), sy = Math.sign(to.y-y);
   let error = dx+dy;
-  while (!obscured.has(keyAt(x,y))) {
-    if (x === to.x && y === to.y) return true;
+  while (x !== to.x || y !== to.y) {
     const next = 2*error;
     if (next >= dy) {error += dy; x += sx;}
     if (next <= dx) {error += dx; y += sy;}
+    if (obscured.has(keyAt(x,y))) return false;
   }
-  return false;
+  if (!wallZones.length) return true;
+  const origin = {x: from.x + 0.5, y: from.y + 0.5};
+  const target = {x: to.x + 0.5, y: to.y + 0.5};
+  for (const zone of wallZones) {
+    for (const segment of visionSegmentsForZone(zone)) {
+      const hit = segmentIntersection(origin, target, ...segmentEnds(segment));
+      if (!hit) continue;
+      // Hitting the wall face at the destination still counts as seeing that wall tile.
+      if (Math.hypot(hit.x - target.x, hit.y - target.y) <= 0.51) continue;
+      if (hit.t > 1e-7 && (hit.endT ?? hit.t) < 1 - 1e-7) return false;
+    }
+  }
+  return true;
 }
 
 /** First spell zone whose cells the line from→to enters, matching `predicate`, or null. */
@@ -961,6 +1040,7 @@ export function rollStrike(battle, attacker, target, weapon, options = {}, rando
   validTarget(attacker, target);
   if (attacker.id === target.id) error("Choose a different target.");
   if (charmedBy(attacker,target)) error("This character is charmed by the target.");
+  if (handsOccupied(attacker)) error("Dragging occupies your hands. Weapon attacks need a free hand — Drop the creature first.");
   if (!Number.isFinite(weapon.bonus) || !diceTerms(weapon.damage)) error("This action needs a numeric attack bonus and a damage formula.");
   const bonusStrike = options.bonusStrike;
   if (bonusStrike) {
@@ -1012,7 +1092,12 @@ export function sneakAttackStatus(battle,attacker,target,weapon,options={},mode)
   weapon=weaponProperties(weapon);
   const dice=attacker.classRules?.sneakDice??Math.ceil((attacker.classRules?.levels?.Rogue??0)/2);
   const turnKey=(battle.combatId?battle.combatId+'|':'')+battle.round+'|'+(options.reaction?initiativeActor(battle)?.id:currentActor(turnView(battle,attacker))?.id);
-  const allyNearby=Boolean(target&&battle.actors.some(ally=>ally.id!==attacker.id&&ally.id!==target.id&&ally.side===attacker.side&&ally.side!==target.side&&actorIsUp(ally)&&!incapacitated(ally)&&occupies(ally)&&distanceFt(ally,target)<=5));
+  const allyParty=attacker.side==='party'?(attacker.partyId||'party-1'):null;
+  const allyNearby=Boolean(target&&battle.actors.some(ally=>{
+    if(ally.id===attacker.id||ally.id===target.id||!actorIsUp(ally)||incapacitated(ally)||!occupies(ally)||distanceFt(ally,target)>5) return false;
+    if(attacker.side==='party' && ally.side==='party') return (ally.partyId||'party-1')===allyParty && (target.side!=='party' || (target.partyId||'party-1')!==allyParty);
+    return ally.side===attacker.side && ally.side!==target.side;
+  }));
   const ranged=Boolean(weapon.normalRange);
   mode??=target?attackMode(battle,attacker,target,options,ranged,distanceFt(attacker,target)):{};
   const reason=!dice?'This character has no Sneak Attack.':!target?'Choose a target.':weapon.spellAttack||!(weapon.finesse||weapon.rangedWeapon||ranged&&!weapon.thrown)?'Requires a finesse weapon or ranged weapon.':attacker.sneakTurn===turnKey?'Already used on this turn.':mode.disadvantage&&!mode.advantage?'Disadvantage prevents Sneak Attack.':!allyNearby&&!(mode.advantage&&!mode.disadvantage)?'Needs advantage or an active ally within 5 ft of the target.':'';
@@ -1424,6 +1509,7 @@ function exhaleBreath(battle,caster,options,random) {
 
 export function castSpell(battle,caster,target,spell,slotLevel,options = {},random = Math.random) {
   if(spell.castUsage?.itemOnly && (slotLevel!==0 || !hasHestiasFury(caster))) error("Cast this spell through "+hestiaName+".");
+  if (handsOccupied(caster) && spellNeedsHands(spell)) error("Dragging occupies your hands. Spells with Somatic or Material components cannot be cast — verbal-only spells still work.");
   battle=turnView(battle,caster);
   const usage = spell.castUsage && slotLevel === 0 ? spell.castUsage : undefined;
   const original = {spellAbility:caster.spellAbility,spellDC:caster.spellDC,spellAttack:caster.spellAttack};
@@ -1452,6 +1538,7 @@ export function castSpell(battle,caster,target,spell,slotLevel,options = {},rand
     const targets=[...new Set((options.targets??[]).filter(Boolean))].filter(entry=>entry!==target).slice(0,count-1);
     const wallEnd=shaped&&needsEndpoint(shaped)?options.end:undefined;
     return withActionEvent(battle,caster,{action:runtime?.exhale?"Exhale Dragon’s Breath":spell.name,kind:"spell",target:target?.name,targetActor:target?.id,
+      spellLevel:usage ? spell.level : slotLevel,spellReference:spell.reference || spell.key,
       ...spellVisualEvent(visual,caster,target,{square:runtime?.self?null:options.square,end:wallEnd,length,diameter,targets}),
       ...(Number.isFinite(shotFeet)?{attackDistance:shotFeet}:{}),
       ...(runtime?.teleport&&visual?.url?{visualDeparture:{x:caster.x,y:caster.y,creatureSize:creatureSize(caster)}}:{})},
@@ -1508,7 +1595,7 @@ function resolveSpell(battle,caster,target,spell,slotLevel,options,random,usage)
   if (effect.attack && !Number.isFinite(caster.spellAttack)) error("Set the spell attack bonus.");
   if (effect.save && !Number.isFinite(caster.spellDC)) error("Set the spell save DC.");
   if (effect.breath) {
-    if (target.side !== caster.side || !actorIsUp(target) || incapacitated(target)) error("Choose a willing, conscious ally.");
+    if (target.side !== 'party' || caster.side !== 'party' || (target.partyId||'party-1')!==(caster.partyId||'party-1') || !actorIsUp(target) || incapacitated(target)) error("Choose a willing, conscious ally.");
     if (!breathTypes.includes(options.damageType)) error("Choose a damage type for Dragon’s Breath.");
     if (!Number.isFinite(caster.spellDC)) error("Set the spell save DC.");
   }
@@ -1622,6 +1709,7 @@ function resolvePotion(battle, actor, item, random) {
     assertTurn(battle, actor);
     if (battle.action) error("This token has used its action.");
   } else if (!actorIsUp(actor)) error("This token cannot use items at 0 hit points.");
+  if (handsOccupied(actor)) error("Dragging occupies your hands. Drop the creature before using items.");
   if (!item || item.quantity <= 0 || !item.formula) error("Choose an available healing potion.");
   const amount = rollDice(item.formula, {random});
   if (battle.round) battle.action = "potion";
@@ -1637,8 +1725,9 @@ export function helpUp(battle,actor,target,map) {
   battle=turnView(battle,actor);
   if(battle.round) {assertTurn(battle,actor);if(battle.action) error("This token has used its action.");}
   else if(!actorIsUp(actor) || incapacitated(actor)) error("Choose a conscious helper.");
+  if (handsOccupied(actor)) error("Dragging occupies your hands. Drop the creature before helping someone up.");
   validTarget(actor,target);
-  if(target.side!==actor.side || target.dead || target.hp!==0) error("Choose a living, unconscious ally.");
+  if(target.side!=='party' || actor.side!=='party' || (target.partyId||'party-1')!==(actor.partyId||'party-1') || target.dead || target.hp!==0) error("Choose a living, unconscious ally.");
   if(distanceFt(actor,target)>5 || !lineClear(battle,actor,target,map)) error("Move within 5 feet of your ally with a clear path.");
   return withActionEvent(battle,actor,{action:"Help Up",kind:"heal",target:target.name,targetActor:target.id},()=>{
     if(battle.round) battle.action="help-up";
@@ -1651,6 +1740,7 @@ export function throwHealingPotion(battle,actor,target,item,map,random=Math.rand
   battle=turnView(battle,actor);
   if(battle.round) {assertTurn(battle,actor);if(battle.action) error("This token has used its action.");}
   else if(!actorIsUp(actor) || incapacitated(actor)) error("Choose a conscious thrower.");
+  if (handsOccupied(actor)) error("Dragging occupies your hands. Drop the creature before throwing items.");
   validTarget(actor,target);
   if(target.dead) error("Healing cannot revive a dead creature.");
   if(distanceFt(actor,target)>30 || !lineClear(battle,actor,target,map)) error("Choose a target within 30 feet with a clear throwing path.");
@@ -1668,6 +1758,11 @@ export function spendObjectAction(battle,actor,name){
   if(battle.round){assertTurn(battle,actor);if(battle.action)error("This token has used its action.");battle.action=name;}
   else if(!actorIsUp(actor)||incapacitated(actor))error("Choose a conscious character.");
 }
-function syncCarriedBody(battle,actor){const body=actor.carrying && battle.actors.find(body=>body.id===actor.carrying);if(body){body.x=actor.x;body.y=actor.y;}}
+function syncCarriedBody(battle,actor){
+  const carried=actor.carrying && battle.actors.find(body=>body.id===actor.carrying);
+  if(carried){carried.x=actor.x;carried.y=actor.y;}
+  const dragged=actor.dragging && battle.actors.find(body=>body.id===actor.dragging);
+  if(dragged){dragged.x=actor.x;dragged.y=actor.y;}
+}
 
 function consumePotionInventory(actor,item){const stored=actor.items?.find(entry=>entry.name.toLowerCase()===item.name.toLowerCase());if(stored)stored.quantity=Math.max(0,(stored.quantity??0)-1);}

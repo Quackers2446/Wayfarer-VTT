@@ -26,6 +26,7 @@ Open [http://127.0.0.1:5173/](http://127.0.0.1:5173/) in your web browser.
 - On the **Character sheets** page, click **Import supplied sheets** to load sample workbooks from the adjacent `Character Sheets` directory.
 - On the **Play** page, click **Use supplied archive** to load map data and creature art from the adjacent `5etools-v*.zip`.
 - Local-only **Spell FX preview** gallery: [http://127.0.0.1:5173/spell-fx-gallery.html](http://127.0.0.1:5173/spell-fx-gallery.html) (not copied into `dist/client` or published).
+- Local-only **Attack FX preview** gallery: [http://127.0.0.1:5173/attack-fx-gallery.html](http://127.0.0.1:5173/attack-fx-gallery.html) (same local-only rule).
 
 ---
 

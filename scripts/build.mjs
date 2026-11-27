@@ -9,7 +9,8 @@ const dist = new URL("../dist/",import.meta.url);
 const client = new URL("client/",dist);
 const server = new URL("server/",dist);
 const localAnimationOutput = path => path === 'assets/animations/transparent' ||
-  (path.startsWith('assets/animations/') && path.endsWith('.opaque.bak'));
+  path.startsWith('assets/animations/_blfx-') ||
+  (path.startsWith('assets/animations/') && (path.endsWith('.opaque.bak') || path.endsWith('.jb2a.bak')));
 // Keep the built-in illustrations restricted to the reviewed 5etools source images.
 const artwork=JSON.parse(await readFile(new URL('assets/artwork-sources.json',dist),'utf8'));
 const approved=new Map(artwork.images.map(image=>[image.file,image.sha256])),found=new Set();
@@ -37,16 +38,20 @@ for(const path of approved.keys()) if(!found.has(path)) throw new Error('Missing
 await rm(client,{recursive:true,force:true});
 await mkdir(client,{recursive:true});
 await mkdir(server,{recursive:true});
-// Local-only Spell FX preview: served from dist/ by scripts/serve.py, never published.
+// Local-only Spell FX preview / QA fixtures: served from dist/ by scripts/serve.py, never published.
 const localOnly = new Set([
   "spell-fx-gallery.html",
   "spell-fx-gallery.mjs",
   "spell-fx-gallery.css",
+  "attack-fx-gallery.html",
+  "attack-fx-gallery.mjs",
+  "attack-fx-gallery.css",
+  "fixtures",
 ]);
 for (const name of await readdir(dist)) {
   // Copy top-level client assets and the spell-library package the engine imports at runtime.
   if (localOnly.has(name)) continue;
-  if (name === "assets" || name === "spell-library" || name === "fixtures" || /\.(html|css|mjs|json)$/.test(name)) {
+  if (name === "assets" || name === "spell-library" || name === "compiled-features" || /\.(html|css|mjs|json)$/.test(name)) {
     await cp(new URL(name,dist),new URL(name,client),{
       recursive:true,
       filter: path => !localAnimationOutput(relative(fileURLToPath(dist),path).split(sep).join('/')),
@@ -55,6 +60,7 @@ for (const name of await readdir(dist)) {
 }
 const sessionCode = await readFile(new URL("../worker/session.mjs",import.meta.url),"utf8");
 const roomOwnerCode = await readFile(new URL("../worker/room-owner.mjs",import.meta.url),"utf8");
+const playerAuthCode = await readFile(new URL("../worker/player-auth.mjs",import.meta.url),"utf8");
 const spellRuleSchemaCode = await readFile(new URL("../worker/spell-rule-schema.mjs",import.meta.url),"utf8");
 const accountsCode=await readFile(new URL("../worker/accounts.mjs",import.meta.url),"utf8");
 const bundledWorker = sessionCode
@@ -62,6 +68,10 @@ const bundledWorker = sessionCode
   .replace(
     "import {newRoomOwner,ownerHash,ownsRoom} from './room-owner.mjs';",
     roomOwnerCode
+  )
+  .replace(
+    "import {newPlayerCredential,playerCredentialHash,matchesPlayerCredential} from './player-auth.mjs';",
+    playerAuthCode.replace(/export /g, "")
   )
   .replace(
     "import {validRuleSet} from './spell-rule-schema.mjs';",
@@ -72,8 +82,8 @@ await writeFile(new URL("_worker.js",client),bundledWorker);
 await writeFile(new URL("wrangler.json",server),JSON.stringify({
   name:"wayfarer-vtt",main:"index.js",compatibility_date:"2026-05-25",
   assets:{directory:"../client",binding:"ASSETS",html_handling:"none"},
+  vars:{CF_ACCOUNT_ID:"1a15c3ffd6933ad42e67777406cb8a61",TURN_USAGE_CAP_GB:"750"},
   d1_databases:[{binding:"DB",database_id:"af23b966-91b0-416b-87f5-89140e7ddbd2"}],
-  r2_buckets:[{binding:"BUCKET",bucket_name:"wayfarer-art"}],
 },null,2));
 
 await cp(new URL("../worker/accounts.mjs",import.meta.url),new URL("accounts.mjs",server));

@@ -298,7 +298,7 @@ export function partyActor(record) {
     return {name:spell?.name ?? bare, key:ruleKey(spell?.name ?? bare),
       edition:spell?.edition ?? "2014", level:spell?.level ?? level, note, customUse:customUse || Boolean(castUsage?.ritual), prepared,
       reference:spell ? spellKey(spell) : homebrewRef, timing:spell?.time?.[0]?.unit,castUsage:castUsage ? {...castUsage,resource} : undefined,
-      castingAbility,grantedBy};
+      castingAbility,grantedBy,components:spell?.components};
   });
   const scores = Object.fromEntries(character.abilities.map(({abbr, score, modifier:mod}) => [abbr.toLowerCase(),mod ?? modifier(score)]));
   const saves = Object.fromEntries(character.abilities.map(({abbr, save}) => [abbr.toLowerCase(),save]));

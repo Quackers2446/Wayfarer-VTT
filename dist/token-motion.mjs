@@ -25,6 +25,14 @@ export function createTokenMotion(onFrame,now=()=>performance.now(),reduced=()=>
       const events=battle.actionEvents ?? [],latest=events.at(-1)?.id ?? 0,time=now(),initial=scope!==nextScope || latest<cursor;
       if(initial) {reset();scope=nextScope;}
       const fresh=events.filter(e=>e.id>cursor && (e.kind==='move' || /^Moved /.test(e.action))),live=new Set();
+      // Several tokens shifting in one sync (enemy wave) share a compressed slide so moves overlap instead of feeling serial.
+      const movingIds=new Set();
+      if(!initial) for(const actor of battle.actors) {
+        if(actor.x==null || actor.y==null) continue;
+        const previous=last.get(actor.id);
+        if(previous && !same(previous,{x:actor.x,y:actor.y}) && fresh.some(e=>e.actor===actor.id)) movingIds.add(actor.id);
+      }
+      const crowd=movingIds.size,moveScale=crowd>1 ? Math.max(0.4,0.92-(crowd-1)*0.09) : 1;
       for(const actor of battle.actors) {
         if(actor.x==null || actor.y==null) continue;live.add(actor.id);
         const previous=last.get(actor.id),destination={x:actor.x,y:actor.y};
@@ -36,12 +44,13 @@ export function createTokenMotion(onFrame,now=()=>performance.now(),reduced=()=>
           if(!same(points.at(-1),destination)) points.push(destination);
           const route=points.filter((p,i)=>!i || !same(p,points[i-1]));
           if(moves.length && actor.hp>0 && !actor.dead && !reduced() && route.length>1) {
-            const duration=Math.min(old ? 650 : 1800,Math.max(180,(route.length-1)*(actor.side==='party' ? 160 : 190)));
+            const base=Math.min(old ? 650 : 1800,Math.max(180,(route.length-1)*(actor.side==='party' ? 160 : 190)));
+            const duration=Math.round(base*moveScale);
             tracks.set(actor.id,{points:route,started:time,duration});positions.set(actor.id,route[0]);
           } else {tracks.delete(actor.id);positions.set(actor.id,destination);}
           if(moves.length) {
             const distance=moves.reduce((n,e)=>n+(e.distance ?? (Number(/Moved (\d+)/.exec(e.action)?.[1]) || 0)),0);
-            labels.set(actor.id,{text:distance+' ft',until:time+Math.max(1200,this.remaining(actor.id)+650)});
+            labels.set(actor.id,{text:distance+' ft',until:time+Math.max(900,this.remaining(actor.id)+500)});
           }
         } else if(!positions.has(actor.id)) positions.set(actor.id,destination);
         last.set(actor.id,destination);

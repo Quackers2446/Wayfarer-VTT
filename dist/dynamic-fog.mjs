@@ -3,6 +3,8 @@ import {actorIsUp,condition,hasFeature,occupies,keyAt,canSee} from './combat.mjs
 import {getWallData,mapWalls,mapFloor} from './map-walls.mjs';
 import {segmentIntersection,segmentEnds} from './wall-geometry.mjs';
 import {exploredCells,rememberCells,saveExplored} from './fog-memory.mjs';
+import {actorPartyId} from './parties.mjs';
+import {isCenterlineVisionZone,visionSegmentsForZone} from './spell-shapes.mjs';
 const cache=new WeakMap(),holders=new WeakMap(),combined=new WeakMap();
 const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
 export const fogSettings=b=>({sharedVision:true,remember:true,opacity:1,exploredOpacity:.65,softness:1,blockMovement:true,...b.fogSettings});
@@ -10,8 +12,15 @@ export function visionSettings(actor) {
   const range=actor.astralVisage || hasFeature(actor,"Devil's Sight") ? 120 : Number.isFinite(actor.darkvision) ? Math.max(30,Math.min(120,actor.darkvision)) : 30;
   return {enabled:true,range,angle:360,facing:0,...actor.vision};
 }
+function viewerPartyId(battle,controller) {
+  if(controller==null) return null;
+  const mine=battle.actors.find(actor=>actor.side==='party' && battle.controllers?.[actor.id]===controller);
+  return mine ? actorPartyId(mine) : null;
+}
 export function visionActors(battle,controller) {
+  const partyId=viewerPartyId(battle,controller);
   return battle.actors.filter(actor=>actor.side==='party' && actorIsUp(actor) && occupies(actor) && !condition(actor,'Asleep') && visionSettings(actor).enabled &&
+    (partyId==null || actorPartyId(actor)===partyId) &&
     (controller==null || fogSettings(battle).sharedVision || !battle.controllers?.[actor.id] || battle.controllers[actor.id]===controller));
 }
 export function blockingSegments(battle,map) {
@@ -73,11 +82,22 @@ export function visionData(battle,map) {
   segments.push({x1:0,y1:0,x2:map.cols,y2:0},{x1:map.cols,y1:0,x2:map.cols,y2:map.rows},{x1:map.cols,y1:map.rows,x2:0,y2:map.rows},{x1:0,y1:map.rows,x2:0,y2:0});
   for(const actor of visionActors(battle)) {
     const zones=(battle.spellZones??[]).filter(z=>z.blocksVision!==false).filter(z=>z.name!=='Darkness' || !(actor.astralVisage || hasFeature(actor,"Devil's Sight")));
-    const zoneSegments=[];for(const zone of zones)for(const cell of zone.cells){const [x,y]=cell.split(':').map(Number);zoneSegments.push({x1:x,y1:y,x2:x+1,y2:y},{x1:x+1,y1:y,x2:x+1,y2:y+1},{x1:x+1,y1:y+1,x2:x,y2:y+1},{x1:x,y1:y+1,x2:x,y2:y});}
+    // Walls/rings occlude along cell-center polylines so their own tiles (and spell FX) stay visible.
+    const zoneSegments=zones.flatMap(visionSegmentsForZone);
     const inZone=zones.some(z=>z.cells.includes(keyAt(actor.x,actor.y)));
     const polygon=inZone ? [{x:actor.x,y:actor.y},{x:actor.x+1,y:actor.y},{x:actor.x+1,y:actor.y+1},{x:actor.x,y:actor.y+1}] : polygonFor(actor,[...segments,...zoneSegments],map),visible=new Set(),r=Math.ceil(clamp(Number(visionSettings(actor).range)||0,0,300)/5)+4;
     for(let y=Math.max(0,actor.y-r);y<Math.min(map.rows,actor.y+r+1);y++)for(let x=Math.max(0,actor.x-r);x<Math.min(map.cols,actor.x+r+1);x++)
       if(mapFloor(map,x,y,battle) && inside({x:x+.5,y:y+.5},polygon) && canSee(battle,actor,{x,y},map)) {visible.add(keyAt(x,y));all.add(keyAt(x,y));}
+    // Wall/ring tiles sit on the occluder centerline — still reveal them when canSee reaches that face.
+    if(!inZone)for(const zone of zones){
+      if(!isCenterlineVisionZone(zone))continue;
+      for(const cell of zone.cells??[]){
+        const [x,y]=String(cell).split(':').map(Number);
+        if(!Number.isFinite(x)||!Number.isFinite(y)||!mapFloor(map,x,y,battle))continue;
+        if(Math.hypot(x+0.5-(actor.x+tokenSize(actor)/2),y+0.5-(actor.y+tokenSize(actor)/2))>r)continue;
+        if(canSee(battle,actor,{x,y},map)){visible.add(keyAt(x,y));all.add(keyAt(x,y));}
+      }
+    }
     // A token's own square is visible even if it is exactly on a wall endpoint.
     if(polygon.length){visible.add(keyAt(actor.x,actor.y));all.add(keyAt(actor.x,actor.y));}
     perActor.set(actor.id,{polygon,visible});
@@ -103,8 +123,20 @@ export function rememberDynamicVision(battle,map) {
   }
 }
 export function viewerMemory(battle,map,controller) {
-  if(fogSettings(battle).remember && (controller==null || fogSettings(battle).sharedVision))return exploredCells(battle,map);
-  const actors=battle.actors.filter(a=>a.side==='party' && (controller==null || fogSettings(battle).sharedVision || !battle.controllers?.[a.id] || battle.controllers[a.id]===controller)),keys=actors.map(a=>battle.fogMemoryByActor?.[a.id]?.data || ''),signature=[fogSettings(battle).remember,map.cols,map.rows,...actors.map(a=>a.id),...keys].join('|');
+  const partyId=viewerPartyId(battle,controller);
+  const actors=battle.actors.filter(a=>a.side==='party' && (partyId==null || actorPartyId(a)===partyId) &&
+    (controller==null || fogSettings(battle).sharedVision || !battle.controllers?.[a.id] || battle.controllers[a.id]===controller));
+  if(fogSettings(battle).remember && (controller==null || fogSettings(battle).sharedVision) && partyId==null)return exploredCells(battle,map);
+  if(fogSettings(battle).remember && fogSettings(battle).sharedVision && partyId){
+    const keys=actors.map(a=>battle.fogMemoryByActor?.[a.id]?.data || ''),signature=['party',partyId,map.cols,map.rows,...actors.map(a=>a.id),...keys].join('|');
+    const old=combined.get(battle);if(old?.signature===signature)return old.memory;
+    const bytes=new Uint8Array(Math.ceil(map.cols*map.rows/8));
+    for(const actor of actors){const m=exploredCells(memoryHolder(battle,actor.id),map);for(let i=0;i<bytes.length;i++)bytes[i]|=m.bytes[i];}
+    // Also fold legacy shared exploration for the first party so older rooms keep fog.
+    if(partyId==='party-1'){const shared=exploredCells(battle,map);for(let i=0;i<bytes.length;i++)bytes[i]|=shared.bytes[i];}
+    const memory={cols:map.cols,rows:map.rows,bytes,revision:0};combined.set(battle,{signature,memory});return memory;
+  }
+  const keys=actors.map(a=>battle.fogMemoryByActor?.[a.id]?.data || ''),signature=[fogSettings(battle).remember,map.cols,map.rows,...actors.map(a=>a.id),...keys].join('|');
   const old=combined.get(battle);if(old?.signature===signature)return old.memory;
   const bytes=new Uint8Array(Math.ceil(map.cols*map.rows/8));
   if(fogSettings(battle).remember)for(const actor of actors){const m=exploredCells(memoryHolder(battle,actor.id),map);for(let i=0;i<bytes.length;i++)bytes[i]|=m.bytes[i];}

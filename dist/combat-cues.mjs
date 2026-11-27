@@ -136,6 +136,7 @@ export function createCombatCues({skipDice = false} = {}) {
   let cursor = 0;
   let queue = [];
   let isRolling = false;
+  let reactionHold = false;
   let inFlight = 0;
   let nextSlot = 0;
   let wakeTimer = 0;
@@ -150,6 +151,10 @@ export function createCombatCues({skipDice = false} = {}) {
   function scheduleProcess(delay=0) {
     clearTimeout(wakeTimer);
     wakeTimer = setTimeout(() => { wakeTimer = 0; processQueue(); }, Math.max(0, delay));
+  }
+  function reactionAvailable(event) {
+    if (!view?.canOfferReaction || reactionHold) return false;
+    try { return Boolean(view.canOfferReaction(event)); } catch { return false; }
   }
 
   function appendFeed(events, pending=false) {
@@ -264,7 +269,7 @@ export function createCombatCues({skipDice = false} = {}) {
     placeImpacts();
   }
 
-  function reveal(event) {
+  function reveal(event, pace=resolvePace(1)) {
     if(!event || !view) return;
     view.onReveal?.(event);
     const revealedAt = performance.now();
@@ -313,30 +318,71 @@ export function createCombatCues({skipDice = false} = {}) {
     view.layer.append(bubble);
     bubble.animate(
       [{opacity:0,transform:"translateY(12px) scale(.92)"},{opacity:1,transform:"translateY(0) scale(1)"}],
-      {duration:matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 260,easing:"cubic-bezier(.16,1,.3,1)"}
+      {duration:matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : Math.min(260,160+100*pace.cueScale),easing:"cubic-bezier(.16,1,.3,1)"}
     );
 
     activeCues.push(cue);
-    cue.timer = setTimeout(() => dismissCue(cue), cueDuration(event));
+    cue.timer = setTimeout(() => dismissCue(cue), Math.max(500, cueDuration(event) * pace.cueScale));
     place();
   }
 
-  function processQueue() {
-    if (!view || isRolling || !queue.length) return;
+  function releaseFlight() {
+    inFlight = Math.max(0, inFlight - 1);
+    processQueue();
+  }
 
-    const next = queue[0];
-    // When dice FX are off (user toggle) or preview forces skip, go straight to cast videos.
-    // Preview uses skipDice so it never mutates the player's wayfarer-dice-fx preference.
-    if (skipDice || !dice.enabled || !hasDice(next)) {
-      queue.shift();
-      isRolling=true;
-      finishBatch([next]);
+  function resolveOne(event) {
+    const pace = resolvePace(backlogDepth());
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      reveal(event, pace);
+      releaseFlight();
+    };
+    // Solo: wait for FX. Backlog: reveal on the early timer OR when FX ends first (incl. no-visual sync).
+    spellVisuals.play(event, () => {
+      if (pace.revealAfter == null || !settled) finish();
+    }, {durationScale: pace.fxScale});
+    if (pace.revealAfter != null && !settled) setTimeout(finish, pace.revealAfter);
+  }
+
+  function launchResolve(batch) {
+    if (!batch.length) { processQueue(); return; }
+    const pace = resolvePace(queue.length + inFlight + batch.length);
+    nextSlot = performance.now() + pace.stagger;
+    scheduleProcess(pace.stagger);
+    batch.forEach((event, index) => {
+      inFlight++;
+      const offset = index * Math.min(70, Math.round(pace.stagger * 0.45));
+      if (offset) setTimeout(() => resolveOne(event), offset);
+      else resolveOne(event);
+    });
+  }
+
+  function processQueue() {
+    if (!view || !queue.length) return;
+    if (isRolling) {
+      if (!reactionHold && queue.some(hasDice)) dice.expedite();
       return;
     }
 
-    const wait = Math.max(view.motion?.remaining(next.actor) ?? 0, view.motion?.remaining(next.targetActor) ?? 0);
-    if (wait > 0) {
-      setTimeout(() => { if (!isRolling) processQueue(); }, wait + 20);
+    const pace = resolvePace(backlogDepth());
+    if (inFlight >= pace.maxInFlight) return;
+
+    const next = queue[0];
+    const slotWait = Math.max(0, nextSlot - performance.now());
+    const motion = Math.max(view.motion?.remaining(next.actor) ?? 0, view.motion?.remaining(next.targetActor) ?? 0);
+    const wait = Math.max(slotWait, motion * pace.motionScale);
+    if (wait > 12) {
+      scheduleProcess(wait);
+      return;
+    }
+
+    // When dice FX are off (user toggle) or preview forces skip, go straight to cast videos.
+    // Preview uses skipDice so it never mutates the player's wayfarer-dice-fx preference.
+    if (skipDice || !dice.enabled || !hasDice(next)) {
+      launchResolve([queue.shift()]);
       return;
     }
 
@@ -347,44 +393,51 @@ export function createCombatCues({skipDice = false} = {}) {
     }
 
     isRolling = true;
-    const hasMore = queue.some(hasDice);
+    const hasMore = queue.some(hasDice) || backlogDepth() > 1;
+    const offerEvent = batch.length === 1 ? batch[0] : {
+      ...batch[0],
+      action: batch.map(e => e.action).join(" & "),
+      rolls: batch.flatMap(e => (e.rolls ?? []).map(r => ({
+        ...r,
+        label: (batch.length > 1 ? e.action + " · " : "") + (r.label || "Roll")
+      }))),
+      partyEvents: batch,
+      healthChanges: batch.flatMap(e => e.healthChanges ?? []),
+      impacts: batch.flatMap(e => e.impacts ?? []),
+    };
+    const reaction = reactionAvailable(offerEvent) ? {batch, event: offerEvent} : null;
+    const finishRoll = () => {
+      reactionHold = false;
+      isRolling = false;
+      launchResolve(batch);
+    };
+    const onReaction = (event, offer) => {
+      reactionHold = true;
+      view.onReactionPause?.(event, {
+        resume: () => { if (!dice.isPlaying) return; dice.resume(); },
+        showChoices: html => dice.showReactionChoices(html),
+        batch: offer.batch,
+      });
+    };
 
     if (batch.length === 1) {
-      const event = batch[0];
-      dice.play(event, () => {
-        finishBatch([event]);
-      }, hasMore);
+      dice.play(batch[0], finishRoll, hasMore, {reaction, onReaction});
     } else {
-      const combinedRolls = batch.flatMap(e =>
-        (e.rolls ?? []).map(r => ({
-          ...r,
-          label: (batch.length > 1 ? e.action + " · " : "") + (r.label || "Roll")
-        }))
-      );
-      const combinedEvent = {
-        ...batch[0],
-        action: batch.map(e => e.action).join(" & "),
-        rolls: combinedRolls,
-        partyEvents: batch
-      };
-      dice.play(combinedEvent, () => {
-        finishBatch(batch);
-      }, hasMore);
+      dice.play(offerEvent, finishRoll, hasMore, {reaction, onReaction});
     }
   }
 
-  function finishBatch(batch){
-    if(!batch.length){isRolling=false;processQueue();return;}
-    const [event,...remaining]=batch;
-    spellVisuals.play(event,()=>{reveal(event);finishBatch(remaining);});
-  }
-
   function reset() {
+    clearTimeout(wakeTimer);
+    wakeTimer = 0;
     spellVisuals.stop();
     zoneVisuals.reset();
     damageEffects.reset();
     queue = [];
     isRolling = false;
+    reactionHold = false;
+    inFlight = 0;
+    nextSlot = 0;
     while (activeCues.length) {
       const cue = activeCues.pop();
       clearTimeout(cue.timer);
@@ -422,11 +475,14 @@ export function createCombatCues({skipDice = false} = {}) {
         const grouped=groupActions(fresh.filter(event=>!movementEvent(event)),view.sight,view.fogEnabled);
         const queued=new Set(grouped.flatMap(event=>(event.partyEvents ?? [event]).map(entry=>entry.id)));
         for(const event of fresh) if(!queued.has(event.id)) view.onReveal?.(event);
+        const wasIdle = !queue.length && !inFlight && !isRolling;
         queue.push(...grouped);
         const dropped=queue.splice(0,Math.max(0,queue.length-16));
         for(const event of dropped) view.onReveal?.(event);
         cursor = latest;
-        if (dice.isPlaying && queue.some(hasDice)) {
+        // A new burst after the queue drains should not inherit the previous stagger slot.
+        if (wasIdle) nextSlot = 0;
+        if (dice.isPlaying && !reactionHold && !dice.isReactionPaused && queue.some(hasDice)) {
           dice.expedite();
         }
         processQueue();

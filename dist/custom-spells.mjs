@@ -185,6 +185,10 @@ const anchored=(battle,caster)=>Boolean(caster.concentration?.bolt)||battle.acto
 const markedEntries=(battle,caster,rule)=>battle.actors.flatMap(actor=>(actor.conditions??[]).filter(entry=>entry.spell===rule.reference&&entry.source===caster.id).map(entry=>({actor,entry})));
 
 export function castCustomSpell(battle,caster,target,spell,slot,options={},random=Math.random){
+ if(caster.dragging){
+  const components=spell?.components;
+  if(!components||typeof components!=='object'||components.s||components.m)throw Error('Dragging occupies your hands. Spells with Somatic or Material components cannot be cast — verbal-only spells still work.');
+ }
  const baseRule=customSpellRule(spell.reference ?? spell.key,battle.spellRules);if(!baseRule)throw Error('This spell has no enabled rules in this room.');
  if(baseRule.level!==spell.level||baseRule.edition!==spell.edition)throw Error('The automation must match this spell’s source level and edition.');
  const rule=formRule(baseRule,options.form);
@@ -324,7 +328,7 @@ function runZoneBlock(battle,zone,caster,actor,index,label,random,map){
  withActionEvent(battle,caster,{action:zone.name+' · '+label,kind:'spell',target:actor.name,targetActor:actor.id},()=>applyBlock({...zoneContext(battle,zone,caster,random),map},[actor],block,{entryKey:'zone'+index}));
 }
 export function customZoneTriggers(battle,actor,phase,from,random=Math.random){
- expireCustomZones(battle);if(!actor||actor.dead||actor.carriedBy)return;
+ expireCustomZones(battle);if(!actor||actor.dead||actor.carriedBy||actor.draggedBy)return;
  for(const zone of [...(battle.spellZones??[])]){
   if(!zone.custom)continue;const caster=battle.actors.find(actor=>actor.id===zone.caster);if(!caster)continue;
   for(const [i,block] of zone.rule.effects.entries()){
@@ -363,7 +367,7 @@ export function refreshFollowZones(battle,mover,map,random=Math.random){
  }
 }
 export function moveCustomSphere(battle,caster,zoneId,square,map,random=Math.random){
- battle=turnView(battle,caster);const zone=battle.spellZones?.find(zone=>zone.id===zoneId&&zone.caster===caster.id&&upgradeZone(zone)?.shape==='movable');
+ battle=turnView(battle,caster);const zone=battle.spellZones?.find(zone=>zone.id===zoneId&&zone.caster===caster.id&&['movable','sphere'].includes(upgradeZone(zone)?.shape));
  if(!zone||!actorIsUp(caster)||incapacitated(caster)||battle.movement||battle.classReaction)throw Error('This sphere cannot be controlled now.');
  if(battle.round&&(!canTakeTurn(battle,caster)||battle.bonusUsed))throw Error('This character’s bonus action is unavailable.');
  if(!Number.isInteger(square?.x)||!Number.isInteger(square?.y)||square.x<0||square.y<0||square.x>=map.cols||square.y>=map.rows||distanceFt(zone.square,square)>zone.rule.move)throw Error('Choose a sphere destination within '+zone.rule.move+' feet.');

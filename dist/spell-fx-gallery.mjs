@@ -2,6 +2,18 @@ import {builtinList} from './spell-library/index.mjs';
 import {defaultSpellAnimation,builtinSpellColors} from './spell-animation-library.mjs';
 import {escape} from './format.mjs';
 
+/** Catalogue BLFX (incl. keyed spell-fx-poison) need canvas alpha in Chromium. */
+function clipBlend(url) {
+  if (!url) return '';
+  if (/spell-fx-poison|\/assets\/animations\/blfx-/i.test(url)) return 'alpha';
+  if (/fire|flame|ice|frost|storm|lightning|radiant|holy|sacred|wind|wall.?of|moonbeam|spirit|energy|aura/i.test(url)) return 'screen';
+  return 'screen';
+}
+
+function cacheBust(url) {
+  return url + (url.includes('?') ? '&' : '?') + 'v=blfx6';
+}
+
 const shapeLabels = {
   creature: 'Creature',
   target: 'Creature',
@@ -138,6 +150,7 @@ export function mountSpellFxGallery(host) {
   let videoOnly = false;
   let selected = entries[0] ?? null;
   let previewVideo;
+  let previewRaf = 0;
 
   const sources = [...new Set(entries.map(entry => entry.rule.source))].sort();
   const levels = [...new Set(entries.map(entry => entry.rule.level))].sort((a, b) => a - b);
@@ -154,11 +167,65 @@ export function mountSpellFxGallery(host) {
   }
 
   function stopPreview() {
+    if (previewRaf) {
+      cancelAnimationFrame(previewRaf);
+      previewRaf = 0;
+    }
     if (!previewVideo) return;
     previewVideo.pause();
     previewVideo.removeAttribute('src');
     previewVideo.load();
     previewVideo = null;
+  }
+
+  /** Hardware <video> often drops WebM alpha; draw frames to canvas so alpha composites. */
+  function mountAlphaPreview(stage, url) {
+    const wrap = document.createElement('div');
+    wrap.className = 'fx-alpha-preview';
+    const canvas = document.createElement('canvas');
+    canvas.className = 'fx-alpha-canvas';
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.loop = true;
+    video.preload = 'auto';
+    video.src = cacheBust(url);
+    video.setAttribute('aria-hidden', 'true');
+    wrap.append(canvas, video);
+    stage.append(wrap);
+
+    const draw = () => {
+      if (!previewVideo || previewVideo !== video) return;
+      if (video.videoWidth && video.videoHeight) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0);
+      }
+      previewRaf = requestAnimationFrame(draw);
+    };
+
+    video.addEventListener('error', () => {
+      wrap.replaceChildren();
+      const err = document.createElement('p');
+      err.className = 'fx-no-clip';
+      err.textContent = 'This animation could not be loaded.';
+      wrap.append(err);
+    }, {once: true});
+    const start = () => {
+      canvas.width = video.videoWidth || 600;
+      canvas.height = video.videoHeight || 600;
+      void video.play().catch(() => {});
+      if (!previewRaf) previewRaf = requestAnimationFrame(draw);
+    };
+    video.addEventListener('loadeddata', start, {once: true});
+    video.addEventListener('canplay', start, {once: true});
+
+    previewVideo = video;
+    return video;
   }
 
   function playSelected() {
@@ -169,18 +236,24 @@ export function mountSpellFxGallery(host) {
     stage.replaceChildren();
     const visual = selected.visual;
     if (visual?.url) {
-      const video = document.createElement('video');
-      video.src = visual.url;
-      video.controls = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.loop = true;
-      video.addEventListener('error', () => {
-        if (note) note.textContent = 'This animation could not be loaded. Check the clip path and hosting permissions.';
-      }, {once: true});
-      stage.append(video);
-      previewVideo = video;
-      void video.play().catch(() => {});
+      const blend = clipBlend(visual.url);
+      if (blend === 'alpha') {
+        mountAlphaPreview(stage, visual.url);
+      } else {
+        const video = document.createElement('video');
+        video.src = cacheBust(visual.url);
+        video.controls = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.loop = true;
+        if (blend) video.dataset.blend = blend;
+        video.addEventListener('error', () => {
+          if (note) note.textContent = 'This animation could not be loaded. Check the clip path and hosting permissions.';
+        }, {once: true});
+        stage.append(video);
+        previewVideo = video;
+        void video.play().catch(() => {});
+      }
       if (note) note.textContent = (visual.label || 'Spell animation') + (visual.kind ? ' · ' + visual.kind : '');
       return;
     }
@@ -239,7 +312,7 @@ export function mountSpellFxGallery(host) {
       <div><dt>Resolved animation</dt><dd>${escape(animLine)}</dd></div>
     </dl>
     <fieldset class="fx-preview-panel"><legend>Animation preview</legend>
-      <p>Included animations by <a href="https://jb2a.com/" target="_blank" rel="noopener">JB2A — Jules &amp; Ben</a>, <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener">CC BY-NC-SA 4.0</a>. <a href="/assets/animations/credits.json" target="_blank" rel="noopener">Sources and credits</a>.</p>
+      <p>Included animations by <a href="https://jb2a.com/" target="_blank" rel="noopener">JB2A</a> and Boss Loot BLFX. <a href="/assets/animations/credits.json" target="_blank" rel="noopener">Sources and credits</a>.</p>
       <div class="fx-preview-toolbar">
         <button type="button" class="button primary small" data-fx-action="play"${kind === 'none' ? ' disabled' : ''}>Play animation</button>
         <button type="button" class="button outline small" data-fx-action="stop">Stop</button>

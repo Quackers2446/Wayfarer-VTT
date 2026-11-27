@@ -3,7 +3,7 @@ import {drawMonsterArtwork} from "./monster-art.mjs";
 import {keyAt, occupies} from "./combat.mjs";
 import {regionAt} from "./encounters.mjs";
 import {hasExplored} from "./fog-memory.mjs";
-import {cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
+import {artworkDestination, cellAt, cellBounds, cellCenter, firstLine} from "./map-grid.mjs";
 import {actorCells,tokenSize,tokenRadius,containsCell} from './actor-space.mjs';
 import {getWallData} from "./map-walls.mjs";
 
@@ -69,8 +69,10 @@ const dynamicTextures=new WeakMap();
 function dynamicFogTexture(map,{visible,memory,polygons,settings}) {
   const signature=JSON.stringify(settings),old=dynamicTextures.get(memory);
   if(old?.visible===visible && old.revision===memory.revision && old.signature===signature)return old.texture;
-  const scale=Math.min(1,maxRasterEdge/Math.max(map.cols*(map.cellWidth??map.size),map.rows*(map.cellHeight??map.size)));
-  const cellW=Math.max(1,Math.round((map.cellWidth??map.size)*scale)),cellH=Math.max(1,Math.round((map.cellHeight??map.size)*scale));
+  // Cap fog to a few pixels per cell. Full map-pixel fog on giant boards (~7MP) freezes the UI.
+  const maxFogEdge = 1024;
+  const cellW = Math.max(1, Math.min(3, Math.floor(maxFogEdge / Math.max(1, map.cols))));
+  const cellH = Math.max(1, Math.min(3, Math.floor(maxFogEdge / Math.max(1, map.rows))));
   const width=cellW*map.cols,height=cellH*map.rows;
   const texture=document.createElement('canvas');texture.width=width;texture.height=height;const c=texture.getContext('2d'),sx=cellW,sy=cellH;
   c.fillStyle=`rgba(16,26,25,${settings.opacity})`;c.fillRect(0,0,width,height);
@@ -246,8 +248,18 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
   c.fillRect(left,top,width,height);
   c.imageSmoothingQuality = "high";
   if (art) {
-    const sourceX = art.naturalWidth/map.width, sourceY = art.naturalHeight/map.height;
-    c.drawImage(art,left*sourceX,top*sourceY,width*sourceX,height*sourceY,left,top,width,height);
+    const dest = artworkDestination(map, battle?.artworkFit);
+    const x0 = Math.max(left, dest.x);
+    const y0 = Math.max(top, dest.y);
+    const x1 = Math.min(left + width, dest.x + dest.width);
+    const y1 = Math.min(top + height, dest.y + dest.height);
+    if (x1 > x0 && y1 > y0 && dest.width > 0 && dest.height > 0) {
+      const sx = (x0 - dest.x) / dest.width * art.naturalWidth;
+      const sy = (y0 - dest.y) / dest.height * art.naturalHeight;
+      const sw = (x1 - x0) / dest.width * art.naturalWidth;
+      const sh = (y1 - y0) / dest.height * art.naturalHeight;
+      c.drawImage(art, sx, sy, sw, sh, x0, y0, x1 - x0, y1 - y0);
+    }
   }
   c.lineWidth = Math.max(1,map.size *.042);
 
@@ -305,7 +317,8 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
 
   if (wallEditor) drawWallsAndDoors(c, map, battle, fog);
 
-  if (fog) drawFog(c,map,fog);
+  // When layered, fog is painted on the token overlay so vision changes don't rebuild artwork.
+  if (fog && !layered) drawFog(c,map,fog);
 
   for (const zone of battle.spellZones ?? []) {
     c.fillStyle = zone.name === "Darkness" ? "#160e28a8" : "#b3cad252";
@@ -317,18 +330,27 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
 
   for (const marker of markers) {
     const [x,y] = cellCenter(map,marker);
-    const length = map.size * .30;
-    const tones = {treasure:"#926739",object:"#49647a",hazard:"#a2653b",trap:"#a05142",creature:"#62665c"};
+    const hinted = Boolean(marker.hinted);
+    const length = map.size * (hinted ? .22 : .30);
+    const tones = {treasure:"#926739",object:"#49647a",hazard:"#a2653b",trap:"#a05142",creature:"#62665c",spawn:"#2f7d5a",hint:"#6a7a88",secret:"#5a6e8a",mechanism:"#49647a",lore:"#5a6e8a"};
     c.save();
+    c.globalAlpha = hinted ? 0.55 : 1;
     c.translate(x,y);
     c.rotate(Math.PI/4);
     c.fillStyle = tones[marker.type] ?? tones.object;
-    c.strokeStyle = "#f5e8c5"; c.lineWidth = map.size * .034;
+    c.strokeStyle = marker.type === "spawn" ? "#b7f0c8" : hinted ? "#c5d4e0" : "#f5e8c5"; c.lineWidth = map.size * .034;
     c.fillRect(-length,-length,2*length,2*length);
     c.strokeRect(-length,-length,2*length,2*length);
     c.restore();
-    c.textAlign="center"; c.textBaseline="middle"; c.font="700 "+map.size*.35+"px system-ui"; c.fillStyle="#fff2d7";
-    c.fillText({treasure:"◆",object:"◈",hazard:"!",trap:"!",creature:"?"}[marker.type] ?? "·",x,y);
+    c.textAlign="center"; c.textBaseline="middle";
+    c.font="700 "+map.size*(hinted?0.28:0.35)+"px system-ui"; c.fillStyle=hinted?"#d7e4ef":"#fff2d7";
+    c.fillText({treasure:"◆",object:"◈",hazard:"!",trap:"!",creature:"?",spawn:"＋",hint:"·",secret:"◈",mechanism:"◈",lore:"·"}[marker.type] ?? "·",x,y);
+    if (marker.type === "spawn" && marker.name) {
+      c.font = "600 " + map.size * .16 + "px system-ui";
+      c.fillStyle = "#d9ffe6";
+      c.textBaseline = "top";
+      c.fillText(marker.name, x, y + map.size * .28);
+    }
   }
 
   }
@@ -342,7 +364,11 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
     backgroundFrames.set(canvas,{key:backgroundKey,viewKey,overlay});
   }else if(cached){cached.overlay?.remove();backgroundFrames.delete(canvas);}
   c.save();c.setTransform(rasterScaleX*mapScaleX,0,0,rasterScaleY*mapScaleY,-view.x*rasterScaleX,-view.y*rasterScaleY);
-  const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).filter(actor=>!actor.carriedBy).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
+  if (fog && layered) {
+    c.imageSmoothingEnabled = true;
+    drawFog(c, map, fog);
+  }
+  const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).filter(actor=>!actor.carriedBy && !actor.draggedBy).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
   const scale=Math.min(mapScaleX,mapScaleY);
   const overToken=cursor&&tokens.some(actor=>(occupies(actor)||defeatedCreature(actor))&&containsCell(actor,cursor.x,cursor.y));
   if(path?.length || cursor?.movement&&!hovered&&!overToken)drawMovement(c,map,cursor,path,scale,fog);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import {resetSceneBoard} from '../dist/board-reset.mjs';
+import {resetSceneBoard,restorePartyForRetry} from '../dist/board-reset.mjs';
 import {newBattle,makeActor} from '../dist/combat.mjs';
+import {partyDefeated} from '../dist/exploration.mjs';
 import {commitRoomState,roomBattle} from '../dist/room-state.mjs';
 const map={key:'one',module:'QA',regions:[]};
 const original={...newBattle(),round:3,order:['hero','foe'],sceneReady:true,worldLootVersion:1,terrain:{'2,2':'wall'},markers:[{looted:true}],wallData:{vertices:[{x:1,y:1}]},rest:{shortUsed:1},sheets:{hero:{name:'Hero'}},actors:[makeActor({id:'hero',side:'party',hp:7,maxHp:20,x:1,y:1,xp:100,items:[{name:'Sword'}],carrying:'foe'}),makeActor({id:'foe',hp:0,dead:true})]};
@@ -10,4 +11,12 @@ const state=commitRoomState({currentMap:map,battle:{...original,actors:[...origi
 assert.ok(state.battle.actors.some(a=>a.id==='elsewhere'));assert.equal(roomBattle(state).actors.length,2);
 await assert.rejects(resetSceneBoard({...original,movement:{}},map,{}));
 await assert.rejects(resetSceneBoard(original,map,{populate:async()=>{throw Error('offline');}}));assert.equal(original.actors.length,2);
-console.log('Board reset preserves party progress, sheets, walls, rests and other maps; blocks pending reactions and leaves original intact on failure.');
+const downed=makeActor({id:'hero',side:'party',resolveDeath:true,hp:0,maxHp:20,dead:true,failures:3,prone:true,conditions:[{name:'Unconscious'}],concentration:{name:'Bless'}});
+const wiped={actors:[downed,makeActor({id:'pet',side:'party',summoner:'hero',hp:8,maxHp:8})]};
+assert.equal(partyDefeated(wiped),true);
+assert.equal(partyDefeated({actors:[makeActor({id:'hero',side:'party',resolveDeath:true,hp:1,maxHp:20})]}),false);
+restorePartyForRetry(wiped);
+assert.equal(downed.hp,20);assert.equal(downed.dead,false);assert.deepEqual(downed.conditions,[]);assert.equal(downed.concentration,undefined);
+const retried=await resetSceneBoard({...original,actors:[makeActor({id:'hero',side:'party',resolveDeath:true,hp:0,maxHp:20,dead:true,x:1,y:1}),makeActor({id:'foe',hp:0,dead:true})]},map,{reviveParty:true,populate:async(m,b)=>{b.actors.push(makeActor({id:'fresh',hp:20}));b.sceneReady=true;}});
+assert.equal(retried.actors.find(a=>a.id==='hero').hp,20);assert.equal(retried.actors.find(a=>a.id==='hero').dead,false);
+console.log('Board reset preserves party progress, sheets, walls, rests and other maps; blocks pending reactions and leaves original intact on failure; defeat retry restores party vitality.');

@@ -16,6 +16,11 @@
 .fx-preview-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
 .fx-preview-stage{min-height:220px;display:grid;place-items:center;border:1px solid #677b60;border-radius:10px;background:#14281f;overflow:hidden}
 .fx-preview-stage video{width:min(100%,560px);max-height:340px;background:#0f1c16}
+.fx-preview-stage video[data-blend="screen"]{mix-blend-mode:screen;background:transparent}
+.fx-alpha-preview{position:relative;width:min(100%,560px);max-height:340px;display:grid;place-items:center}
+/* Keep the source video laid out so Chromium decodes frames for canvas draw. */
+.fx-alpha-preview video{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none;background:transparent}
+.fx-alpha-canvas{width:min(100%,560px);max-height:340px;object-fit:contain;background:transparent}
 .fx-builtin-swatch{display:grid;place-items:center;gap:8px;width:min(100%,280px);aspect-ratio:1;margin:24px;border-radius:50%;background:radial-gradient(circle at 40% 35%,color-mix(in srgb,var(--spell-color) 88%,#fff),var(--spell-color) 55%,color-mix(in srgb,var(--spell-color) 55%,#14281f));box-shadow:0 0 0 2px #ffffff22,0 0 36px color-mix(in srgb,var(--spell-color) 55%,transparent);color:#fff;text-align:center;text-shadow:0 1px 2px #0008;animation:fx-pulse 1.4s ease-in-out infinite}
 .fx-builtin-swatch[data-kind=ray],.fx-builtin-swatch[data-kind=line],.fx-builtin-swatch[data-kind=cone]{border-radius:18px;aspect-ratio:16/9;width:min(100%,420px)}
 .fx-builtin-swatch span{font:700 1.05rem var(--display,Georgia,serif);text-transform:capitalize}

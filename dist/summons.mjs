@@ -59,6 +59,7 @@ export function dismissSummons(battle, casterId, {concentrationOnly = false, onl
     log(battle, actor.name + ' vanishes.');
     actor.dismissed = true; actor.dead = true; actor.hp = 0; actor.x = null; actor.y = null; actor.conditions = [];
     if (actor.carrying) {const body = battle.actors.find(other => other.id === actor.carrying); if (body) body.carriedBy = null; actor.carrying = null;}
+    if (actor.dragging) {const body = battle.actors.find(other => other.id === actor.dragging); if (body) body.draggedBy = null; actor.dragging = null;}
   }
   pruneDismissed(battle);
 }

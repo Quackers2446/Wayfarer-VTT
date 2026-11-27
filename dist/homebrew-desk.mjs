@@ -263,15 +263,18 @@ export function mountHomebrewDesk(host, {onAddToCharacter} = {}) {
   function listPanel() {
     const entries = listHomebrew(tab).filter((entry) =>
       !query || (entry.name + ' ' + (entry.note ?? '') + ' ' + (entry.className ?? '')).toLowerCase().includes(query.toLowerCase()));
-    return `<aside class="homebrew-library">
-      <label class="search-field">${icon('search', 18)}<span class="sr-only">Search homebrew</span>
-        <input type="search" class="homebrew-search" value="${escape(query)}" placeholder="Search…"></label>
-      <button type="button" class="button primary small" data-homebrew-action="new">${icon('plus', 14)} New ${tab.slice(0, -1)}</button>
+    const kind = tab === 'monsters' ? 'monster' : tab.slice(0, -1);
+    return `<div class="homebrew-workspace-tools">
+      <label class="search-field homebrew-search-field">${icon('search', 16)}<span class="sr-only">Search homebrew</span>
+        <input type="search" class="homebrew-search" value="${escape(query)}" placeholder="Search ${escape(tab)}…"></label>
+      <button type="button" class="button primary small" data-homebrew-action="new">${icon('plus', 14)} New ${escape(kind)}</button>
+    </div>
+    <aside class="homebrew-library" aria-label="Saved ${escape(tab)}">
       <div class="homebrew-entry-list">${entries.map((entry) => `<button type="button" data-homebrew-select="${escape(entry.id)}" aria-pressed="${selectedId === entry.id}">
         <strong>${escape(entry.name)}</strong>
         <span>${tab === 'monsters' ? escape(entry.creatureType) + ' · AC ' + entry.ac
           : tab === 'items' ? escape(entry.kind) : escape(entry.className || 'Feature')}</span>
-      </button>`).join('') || '<p>No matching entries.</p>'}</div>
+      </button>`).join('') || '<p class="homebrew-empty">No matching entries.</p>'}</div>
     </aside>`;
   }
 

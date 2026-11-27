@@ -1,24 +1,17 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "wayfarer-vtt",
-  "main": "worker/session.mjs",
+  "pages_build_output_dir": "dist/client",
   "compatibility_date": "2026-05-25",
-  "assets": {
-    "directory": "dist",
-    "binding": "ASSETS",
-    "html_handling": "none"
+  "vars": {
+    "CF_ACCOUNT_ID": "1a15c3ffd6933ad42e67777406cb8a61",
+    "TURN_USAGE_CAP_GB": "750"
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "wayfarer-db",
       "database_id": "af23b966-91b0-416b-87f5-89140e7ddbd2"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "BUCKET",
-      "bucket_name": "wayfarer-art"
     }
   ]
 }

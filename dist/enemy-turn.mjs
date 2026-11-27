@@ -9,6 +9,13 @@ const canAct = (actor) => actorIsUp(actor) && occupies(actor);
 const weaponRange = (weapon) => weapon.normalRange || weapon.reach || 5;
 const attackRange = (weapon) => weapon.longRange || weaponRange(weapon);
 const waitingForSave = (actor) => actor?.resolveDeath && !actor.dead && !actor.stable && actor.hp === 0;
+/** Shared rooms track controllers{}; solo play deletes the map. Unclaimed PCs auto-skip. */
+const unclaimedParty = (battle, actor) => Boolean(
+  actor?.side === "party" &&
+  battle.controllers &&
+  !battle.controllers[actor.id] &&
+  !(waitingForSave(actor) && !battle.deathRolled)
+);
 
 export function enemyTurnPending(battle) {
   if (!battle.round) return false;
@@ -16,6 +23,9 @@ export function enemyTurnPending(battle) {
   const reaction = opportunity(battle);
   if (reaction) return reaction.foe.side === "hostile";
   const actor = currentActor(battle);
+  // Dead PCs must not freeze initiative — auto-skip their cursor slot.
+  if (actor?.dead) return true;
+  if (unclaimedParty(battle, actor)) return true;
   return actor?.side === "hostile" || (actor?.side === "party" &&
     (incapacitated(actor) && (!waitingForSave(actor) || battle.deathRolled) || actor.stable && !actorIsUp(actor)));
 }
@@ -101,6 +111,15 @@ export function runEnemyTurns(battle, map, random = Math.random) {
     }
     if (!battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && canAct(actor))) break;
     const actor = currentActor(battle);
+    if (actor?.dead) {
+      endTurn(battle, random, actor);
+      continue;
+    }
+    if (unclaimedParty(battle, actor)) {
+      log(battle, actor.name + "’s turn was skipped (unclaimed).");
+      endTurn(battle, random, actor);
+      continue;
+    }
     if (actor?.side === "hostile") {
       enemyTurn(battle,map,actor,heroes,random);
       lastEnemy = actor.name;

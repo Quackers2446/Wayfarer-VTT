@@ -1,0 +1,30 @@
+{
+  "module": "dotmm",
+  "generatedAt": "2026-11-25T00:00:00.000Z",
+  "note": "Sample compiled cache including DotMM 17b-class hidden creature. Re-run scripts/compile-features.mjs to refresh from adventure JSON.",
+  "regions": {
+    "17b": {
+      "hash": "fixture",
+      "name": "Statue Chamber",
+      "features": [
+        {
+          "id": "dotmm|17b|black-pudding-statue",
+          "regionId": "17b",
+          "kind": "creature_hint",
+          "name": "Black pudding",
+          "state": "hidden",
+          "surfaceText": "A grimy statue dominates the chamber.",
+          "truthText": "A black pudding clings to the statue, waiting to drop on creatures that investigate.",
+          "check": { "skill": "perception", "dc": 14, "inferredDC": true },
+          "passivePerceptionDC": 14,
+          "inferredDC": true,
+          "outcomes": [
+            { "on": "success", "effect": "reveal" },
+            { "on": "success", "effect": "spawn_creature", "creature": "black pudding", "source": "MM" },
+            { "on": "trigger", "effect": "spawn_creature", "creature": "black pudding", "source": "MM" }
+          ]
+        }
+      ]
+    }
+  }
+}

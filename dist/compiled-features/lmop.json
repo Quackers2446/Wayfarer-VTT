@@ -1,0 +1,28 @@
+{
+  "module": "lmop",
+  "generatedAt": "2026-11-25T00:00:00.000Z",
+  "note": "Sample compiled cache for Cragmaw-adjacent beats. Re-run scripts/compile-features.mjs against a 5etools data dir to refresh hashes.",
+  "regions": {
+    "025": {
+      "hash": "fixture",
+      "name": "Goblin Trail",
+      "features": [
+        {
+          "id": "LMoP|1ab|025|goblin-trail-snare",
+          "regionId": "025",
+          "kind": "trap",
+          "name": "Trail snare (compiled)",
+          "state": "hidden",
+          "surfaceText": "The muddy passage looks undisturbed.",
+          "truthText": "A snare is set across the trail to warn goblins deeper in the caves.",
+          "check": { "skill": "perception", "dc": 12 },
+          "passivePerceptionDC": 12,
+          "outcomes": [
+            { "on": "success", "effect": "reveal" },
+            { "on": "trigger", "effect": "log", "text": "The snare snaps — a warning clatter echoes deeper into the caves." }
+          ]
+        }
+      ]
+    }
+  }
+}

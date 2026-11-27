@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {buildActionBar,filterActionBar,renderActionBar,renderActionResources,toggleHotbarFilter} from "../dist/action-bar.mjs";
+import {buildActionBar,filterActionBar,hotbarDetailModel,renderActionBar,renderActionResources,toggleHotbarFilter} from "../dist/action-bar.mjs";
 import {makeActor,newBattle} from "../dist/combat.mjs";
 
 const monk=makeActor({side:"party",name:"Monk",hp:50,swings:2,resources:{ki:{name:"Ki",current:9,maximum:9}},
@@ -91,5 +91,29 @@ const whip=find("spell:phb|thorn whip");
 assert.ok(whip.stats.some(stat=>/1d6\+?\s*piercing/i.test(stat)),"Thorn Whip shows damage: "+JSON.stringify(whip.stats));
 assert.ok(whip.stats.some(stat=>/melee spell attack/i.test(stat)),"Thorn Whip shows attack: "+JSON.stringify(whip.stats));
 assert.match(renderActionBar(entries,tipCaster,{tab:"spell"}),/1d6\+ thunder|1d6 thunder/i);
+
+monk.resources.ki.current=9;
+const detailBattle={...newBattle(),actors:[monk],round:1,order:[monk.id],action:"attack",attacksMade:1};
+const detailEntries=buildActionBar(monk,detailBattle,[weapon]);
+const weaponDetail=hotbarDetailModel(detailEntries.find(e=>e.mode==="weapon"),monk);
+assert.equal(weaponDetail.mode,"weapon");
+assert.ok(weaponDetail.facts.some(([label])=>label==="Damage"));
+assert.ok(weaponDetail.facts.some(([label])=>label==="Attack"));
+const spellDetail=hotbarDetailModel(thunder,tipCaster);
+assert.equal(spellDetail.spellKey,"xge|thunderclap");
+assert.ok(spellDetail.facts.some(([label])=>/^(Level|Damage|Save)$/.test(label)));
+const abilityDetail=hotbarDetailModel(detailEntries.find(e=>e.id==="feature:patient-defense"),monk);
+assert.equal(abilityDetail.mode,"feature");
+assert.ok(abilityDetail.subtitle.includes("Ability"));
+const potionDetail=hotbarDetailModel({id:"potion:Potion of Healing",name:"Potion of Healing",mode:"potion",timing:"action",
+  description:"Restore hit points with this item.",stats:["2d4+2 healing","3 remaining"],data:{name:"Potion of Healing",formula:"2d4+2",quantity:3}},monk);
+assert.ok(potionDetail.facts.some(([label,value])=>label==="Healing"&&value==="2d4+2"));
+
+caster.concentration={name:"Flaming Sphere",expires:(battle.elapsed??0)+60};
+Object.assign(battle,{actors:[caster],order:[caster.id],action:null,round:1});
+entries=buildActionBar(caster,battle,spells);
+assert.ok(find("common:end-concentration"),"Concentrating casters get an End Concentration control");
+assert.equal(find("common:end-concentration").reason,"");
+assert.ok(find("common:end-concentration").stats.some(stat=>/Flaming Sphere|rounds left/.test(stat)));
 
 console.log("Hotbar budgets, Extra Attack, Ki requirements, persistent Flurry follow-ups, ownership, casting restrictions, slot filters and spell tip facts verified.");

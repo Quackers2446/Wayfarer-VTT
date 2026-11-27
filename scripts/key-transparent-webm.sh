@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Convert opaque dark-plate spell .webm clips to true-transparent VP9 (yuva420p).
 #
-# Per clip: sample corner RGB from a mid-ish frame (exact plate color — often #000000
-# or off-black like #101216 / #140d0f), soft-colorkey, encode libvpx-vp9 / yuva420p /
-# -auto-alt-ref 0 + alpha_mode=1, write to <source>/transparent/.
+# Per clip: confirm opaque dark plate, then rgba split → grayscale luma mask →
+# curves black-point crush (0/0 0.08/0 0.35/0.85 1/1) → alphamerge → hard-zero
+# alpha crumbs → encode libvpx-vp9 / yuva420p / -b:v 2M / -auto-alt-ref 0 +
+# alpha_mode=1, write to <source>/transparent/. This kills .webm plate "TV static"
+# better than colorkey on noisy catalogue previews.
 #
 # Detection uses a codec-aware alpha decode (libvpx for VP8, libvpx-vp9 for VP9).
 # ALPHA_MODE tags alone are NOT trusted — some clips (e.g. spell-fx-ice-storm) are
@@ -104,15 +106,30 @@ try:
     dur = float(probe.stdout.strip() or "1")
 except ValueError:
     dur = 1.0
-seek = max(0.0, min(dur * 0.4, max(dur - 0.05, 0.0)))
-extract(src, seek, out)
-img = Image.open(out).convert("RGBA")
-w, h = img.size
-pts = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
-# Prefer mode of corner RGB (ignore alpha for key color).
-mode = Counter(img.getpixel(p)[:3] for p in pts).most_common(1)[0][0]
-r, g, b = mode
-print(f"{r:02x}{g:02x}{b:02x}")
+# Prefer first frame for plate color when mid has FX filling corners.
+best_hex = None
+best_dark_n = -1
+for seek in [0.0, max(0.0, min(dur * 0.4, max(dur - 0.05, 0.0)))]:
+    extract(src, seek, out)
+    img = Image.open(out).convert("RGBA")
+    w, h = img.size
+    edge = []
+    for x in range(w):
+        edge.append(img.getpixel((x, 0))[:3])
+        edge.append(img.getpixel((x, h - 1))[:3])
+    for y in range(h):
+        edge.append(img.getpixel((0, y))[:3])
+        edge.append(img.getpixel((w - 1, y))[:3])
+    dark = [c for c in edge if sum(c) / 3 <= 48]
+    if len(dark) > best_dark_n:
+        best_dark_n = len(dark)
+        if dark:
+            mode = Counter(dark).most_common(1)[0][0]
+        else:
+            pts = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+            mode = Counter(img.getpixel(p)[:3] for p in pts).most_common(1)[0][0]
+        best_hex = f"{mode[0]:02x}{mode[1]:02x}{mode[2]:02x}"
+print(best_hex or "000000")
 PY
 }
 
@@ -179,7 +196,8 @@ finally:
 PY
 }
 
-# Opaque dark plate: corners nearly match, dark (luma < 48), and alpha >= 250.
+# Opaque dark plate: uniform dark corners OR ≥40% of edge pixels opaque-dark
+# (FX may touch some corners — e.g. breath-fire / acid-line).
 is_opaque_dark_plate() {
   local src="$1" frame_png="$2"
   python3 - "$src" "$frame_png" <<'PY'
@@ -237,6 +255,17 @@ for seek in [max(0.0, min(dur * 0.4, max(dur - 0.05, 0.0))), 0.0]:
     dark = all((r + g + b) / 3 <= 48 for r, g, b in rgb)
     if uniform and dark:
         sys.exit(0)
+    # Border-majority plate: FX may occupy 1–2 corners but most of the rim is black.
+    edge = []
+    for x in range(w):
+        edge.append(img.getpixel((x, 0)))
+        edge.append(img.getpixel((x, h - 1)))
+    for y in range(h):
+        edge.append(img.getpixel((0, y)))
+        edge.append(img.getpixel((w - 1, y)))
+    dark_opaque = sum(1 for r, g, b, a in edge if a >= 250 and (r + g + b) / 3 <= 48)
+    if dark_opaque / len(edge) >= 0.40:
+        sys.exit(0)
 sys.exit(1)
 PY
 }
@@ -259,26 +288,24 @@ encode_one() {
   fi
 
   hex="$(sample_corner_hex "$src" "$sample_png")"
-  if [[ "$base" == "blfx-blink.webm" ]]; then
-    similarity=0.03
-    blend=0.07
-  fi
-  echo "KEY #$hex  sim=$similarity blend=$blend  →  transparent/$base"
+  echo "KEY alphamerge+curves (plate sample #$hex)  →  transparent/$base"
   # Record sampled plate for the run report.
-  echo "$base #$hex" >> "$VERIFY_DIR/converted-hex.txt"
+  echo "$base #$hex alphamerge" >> "$VERIFY_DIR/converted-hex.txt"
 
-  # Soft colorkey → yuva420p. Crush near-zero alpha crumbs so plate corners stay fully clear.
+  # Dark-plate → alpha in rgba: luma mask + curves black-point crush kills .webm
+  # compression "TV static" in the plate, then alphamerge. Hard-zero alpha crumbs
+  # (<10) so browsers don't matte residual noise. Prefer -b:v 2M over CRF for overlays.
   # Browsers/VTT honor WebM AlphaMode; ffprobe often still reports pix_fmt=yuv420p.
-  vf="colorkey=0x${hex}:${similarity}:${blend},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(alpha(X,Y)\,10)\,0\,alpha(X,Y))',format=yuva420p"
+  fc="[0:v]format=rgba,split[rgb][a];[a]format=gray,curves=all='0/0 0.08/0 0.35/0.85 1/1'[mask];[rgb][mask]alphamerge,format=rgba,geq=r='if(lt(alpha(X,Y)\,10)\,0\,r(X,Y))':g='if(lt(alpha(X,Y)\,10)\,0\,g(X,Y))':b='if(lt(alpha(X,Y)\,10)\,0\,b(X,Y))':a='if(lt(alpha(X,Y)\,10)\,0\,alpha(X,Y))',format=yuva420p[out]"
 
   ffmpeg -y -i "$src" \
-    -vf "$vf" \
+    -filter_complex "$fc" \
+    -map "[out]" \
     -c:v libvpx-vp9 \
     -pix_fmt yuva420p \
+    -b:v 2M \
     -auto-alt-ref 0 \
     -metadata:s:v:0 alpha_mode=1 \
-    -b:v 0 -crf "$CRF" \
-    -deadline good -cpu-used "$CPU_USED" \
     -an \
     "$dest" </dev/null
 
@@ -331,46 +358,71 @@ for src in "${files[@]}"; do
   fi
 done
 
-# Verification on first converted (prefer Ice Storm / earthbind if present)
+# Verification on this run's converts (prefer Ice Storm / earthbind among them).
 VERIFY_BASE=""
-for cand in spell-fx-ice-storm.webm blfx-earthbind.webm "${CONVERTED_NAMES[@]:-}"; do
-  if [[ -f "$OUT_DIR/$cand" ]]; then
+for cand in spell-fx-ice-storm.webm blfx-earthbind.webm spell-fx-breath-fire.webm "${CONVERTED_NAMES[@]:-}"; do
+  if [[ " ${CONVERTED_NAMES[*]} " == *" $cand "* ]] && [[ -f "$OUT_DIR/$cand" ]]; then
     VERIFY_BASE="$cand"
     break
   fi
 done
+if [[ -z "$VERIFY_BASE" && ${#CONVERTED_NAMES[@]} -gt 0 ]]; then
+  VERIFY_BASE="${CONVERTED_NAMES[0]}"
+fi
 
 if [[ -n "$VERIFY_BASE" ]]; then
   echo
   echo "=== Verify $VERIFY_BASE ==="
   VERIFY_PNG="$VERIFY_DIR/${VERIFY_BASE%.webm}-keyed.png"
-  # Mid-frame keyed still from the OUTPUT (already has alpha)
+  # Prefer first frame (plate) then mid — plate clips may have FX in mid corners.
   DUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$OUT_DIR/$VERIFY_BASE" || echo 1)"
-  SEEK="$(python3 -c "d=float('$DUR' or 1); print(f'{max(0,min(d*0.4,max(d-0.05,0))):.3f}')")"
+  SEEK0="0"
+  SEEK_MID="$(python3 -c "d=float('$DUR' or 1); print(f'{max(0,min(d*0.4,max(d-0.05,0))):.3f}')")"
   # Must decode with libvpx to recover the VP9 alpha plane (native decoder drops it).
-  ffmpeg -y -c:v libvpx-vp9 -ss "$SEEK" -i "$OUT_DIR/$VERIFY_BASE" \
+  ffmpeg -y -c:v libvpx-vp9 -ss "$SEEK0" -i "$OUT_DIR/$VERIFY_BASE" \
     -vf format=rgba -frames:v 1 -update 1 "$VERIFY_PNG" </dev/null
-  python3 - "$VERIFY_PNG" "$VERIFY_DIR/${VERIFY_BASE%.webm}-sample.png" <<'PY'
+  VERIFY_PNG_MID="$VERIFY_DIR/${VERIFY_BASE%.webm}-keyed-mid.png"
+  ffmpeg -y -c:v libvpx-vp9 -ss "$SEEK_MID" -i "$OUT_DIR/$VERIFY_BASE" \
+    -vf format=rgba -frames:v 1 -update 1 "$VERIFY_PNG_MID" </dev/null
+  python3 - "$VERIFY_PNG" "$VERIFY_PNG_MID" <<'PY'
 import sys
 from PIL import Image
-keyed = Image.open(sys.argv[1]).convert("RGBA")
-sample = Image.open(sys.argv[2]).convert("RGB")
-w, h = keyed.size
-corners = [keyed.getpixel(p) for p in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]]
-alphas = [p[3] for p in keyed.getdata()]
-partial = sum(1 for a in alphas if 1 <= a <= 250)
-sc = sample.getpixel((0, 0))
-print(f"sampled_source_corner_hex=#{sc[0]:02x}{sc[1]:02x}{sc[2]:02x}")
-print(f"verify_png={sys.argv[1]}")
-print(f"corner_rgba={corners}")
-print(f"corner_alpha_all_zero={all(c[3]==0 for c in corners)}")
-print(f"alpha0={alphas.count(0)} alpha255={alphas.count(255)} partial={partial}")
-if not all(c[3] == 0 for c in corners):
-    raise SystemExit("Verification failed: corner alpha not 0")
-if partial < 100:
-    print("WARN: few partial-alpha pixels — edges may be hard-cut")
-else:
+
+def edge_dark_opaque_frac(img):
+    w, h = img.size
+    edge = []
+    for x in range(w):
+        edge.append(img.getpixel((x, 0)))
+        edge.append(img.getpixel((x, h - 1)))
+    for y in range(h):
+        edge.append(img.getpixel((0, y)))
+        edge.append(img.getpixel((w - 1, y)))
+    return sum(1 for r, g, b, a in edge if a >= 250 and (r + g + b) / 3 <= 48) / len(edge)
+
+def report(label, path):
+    keyed = Image.open(path).convert("RGBA")
+    w, h = keyed.size
+    corners = [keyed.getpixel(p) for p in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]]
+    alphas = [p[3] for p in keyed.getdata()]
+    partial = sum(1 for a in alphas if 1 <= a <= 250)
+    frac = edge_dark_opaque_frac(keyed)
+    print(f"{label}: corner_rgba={corners}")
+    print(f"{label}: corner_alpha_all_zero={all(c[3]==0 for c in corners)}")
+    print(f"{label}: edge_dark_opaque_frac={frac:.3f}")
+    print(f"{label}: alpha0={alphas.count(0)} alpha255={alphas.count(255)} partial={partial}")
+    return all(c[3] == 0 for c in corners), frac, partial, alphas.count(0)
+
+c0, f0, p0, a0 = report("first", sys.argv[1])
+c1, f1, p1, a1 = report("mid", sys.argv[2])
+# Pass if plate gone: corners clear OR edge no longer mostly opaque-dark, with real transparency.
+ok = (c0 or c1 or (f0 < 0.05 and f1 < 0.05)) and (a0 > 100 or a1 > 100)
+print(f"plate_cleared={ok}")
+if p0 >= 100 or p1 >= 100:
     print("smooth_alpha_gradients=yes")
+else:
+    print("WARN: few partial-alpha pixels — edges may be hard-cut")
+if not ok:
+    raise SystemExit("Verification failed: dark plate still present")
 PY
   ffprobe -v error -select_streams v:0 \
     -show_entries stream=codec_name,width,height,r_frame_rate,pix_fmt:stream_tags=alpha_mode \
