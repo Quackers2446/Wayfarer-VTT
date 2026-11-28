@@ -30,7 +30,7 @@ export function mapControls(hasToken) {
 }
 
 export function mapHint() {
-  return `<span class="map-hint"><span class="map-hint-mouse">Drag or scroll to pan · Ctrl + scroll to zoom</span>
+  return `<span class="map-hint"><span class="map-hint-mouse">Drag or right-drag to pan · Scroll to zoom</span>
     <span class="map-hint-touch">One finger pans · Pinch zooms</span></span>`;
 }
 
@@ -147,14 +147,14 @@ export function createCamera(frame, controls, map, saved, onView) {
   const moveThreshold = (pointerType) => pointerType === "touch" ? 10 : dragThreshold;
   frame.addEventListener("wheel", (event) => {
     if (pointers.size) {event.preventDefault(); return;}
-    if (!event.ctrlKey && !event.metaKey) return;
+    // Plain scroll zooms (trackpads / mice). Pan with drag — never require Ctrl.
     event.preventDefault();
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewHeight : 1;
     const delta = Math.max(-180,Math.min(180,event.deltaY*unit));
     if (delta) scale(zoom*Math.exp(-delta*.005),local(event));
   },{passive:false,signal});
   function startDrag(pointer) {
-    drag = {x:pointer.clientX,y:pointer.clientY,left:frame.scrollLeft,top:frame.scrollTop,pointerType:pointer.pointerType};
+    drag = {x:pointer.clientX,y:pointer.clientY,left:frame.scrollLeft,top:frame.scrollTop,pointerType:pointer.pointerType,button:pointer.button};
   }
   function pinchGeometry() {
     const [a,b] = pointers.values();
@@ -182,7 +182,8 @@ export function createCamera(frame, controls, map, saved, onView) {
   }
   frame.addEventListener("pointerdown", (event) => {
     if(event.target.closest?.('.wall-editor-host'))return;
-    if (![0,1].includes(event.button) || pointers.size >= 2 || (pointers.size && event.pointerType !== "touch")) return;
+    // 0 left, 1 middle, 2 right — all can pan; touch uses button 0.
+    if (![0,1,2].includes(event.button) || pointers.size >= 2 || (pointers.size && event.pointerType !== "touch")) return;
     // Touch: claim the gesture immediately so the page / browser doesn't steal one-finger pans.
     if (event.pointerType === "touch") event.preventDefault();
     pointers.set(event.pointerId,event);
@@ -198,7 +199,14 @@ export function createCamera(frame, controls, map, saved, onView) {
       markDrag();
     }
   },{passive:false,signal});
-  frame.addEventListener("mousedown", (event) => {if (event.button === 1) event.preventDefault();},{signal});
+  frame.addEventListener("mousedown", (event) => {if (event.button === 1 || event.button === 2) event.preventDefault();},{signal});
+  // After a right-drag pan, suppress the browser context menu on release.
+  frame.addEventListener("contextmenu", (event) => {
+    if (blockClick || drag?.button === 2 || pointers.size) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  },{capture:true,signal});
   window.addEventListener("pointermove", (event) => {
     if (!pointers.has(event.pointerId)) return;
     if (event.cancelable) event.preventDefault();

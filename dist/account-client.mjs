@@ -1,4 +1,4 @@
-import {emptyWorkspace,mergeWorkspaces,importGuestWorkspace} from './account-merge.mjs';
+import {emptyWorkspace,mergeWorkspaces,importGuestWorkspace,preferredCharacterId} from './account-merge.mjs';
 import {storedImage,prepareTokenImage} from './character-token.mjs';
 import {knownRooms,rememberRooms} from './adventure-rooms.mjs';
 const deskKey='wayfarer-desk-v1',rulesKey='wayfarer-spell-rules-v1',guestKey='wayfarer-guest-workspace-v1',ownerKey='wayfarer-active-account-v1',guestPlayer='wayfarer-guest-player-v1',pendingKey='wayfarer-pending-characters-v1',cacheKey=id=>'wayfarer-account-cache-v1:'+id;
@@ -6,8 +6,17 @@ const read=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))??fa
 const store=(key,value)=>{const encoded=JSON.stringify(value);try{localStorage.setItem(key,encoded);}catch(error){for(const candidate of Object.keys(localStorage)){if(candidate.startsWith('wayfarer-account-cache-v1:')&&candidate!==key&&!read(candidate,{}).dirty)localStorage.removeItem(candidate);}localStorage.setItem(key,encoded);}};
 const stashDrafts=scope=>store('wayfarer-device-drafts-v1:'+scope,{builder:read('wayfarer-character-builder-v1',null),spells:read('wayfarer-spell-rule-drafts-v1',{}),preview:read('wayfarer-preview-room-v2',null),activeMap:read('wayfarer-active-map-v1',null)});
 const restoreDrafts=scope=>{const drafts=read('wayfarer-device-drafts-v1:'+scope,{builder:null,spells:{}});if(drafts.builder)store('wayfarer-character-builder-v1',drafts.builder);else localStorage.removeItem('wayfarer-character-builder-v1');store('wayfarer-spell-rule-drafts-v1',drafts.spells);if(drafts.preview)store('wayfarer-preview-room-v2',drafts.preview);else localStorage.removeItem('wayfarer-preview-room-v2');if(drafts.activeMap)store('wayfarer-active-map-v1',drafts.activeMap);else localStorage.removeItem('wayfarer-active-map-v1');};
-const currentWorkspace=()=>{const state=read(deskKey,{});return {characters:state.characters??[],active:state.active??null,spellRules:read(rulesKey,{})};};
-const writeWorkspace=workspace=>{const state={...read(deskKey,{}),characters:workspace.characters??[],active:workspace.active??null};store(deskKey,state);store(rulesKey,workspace.spellRules??{});document.dispatchEvent(new CustomEvent('wayfarer:cloud-workspace',{detail:state}));};
+const currentWorkspace=()=>{const state=read(deskKey,{});return {characters:state.characters??[],active:state.active??null,preferredCharacter:preferredCharacterId(state),spellRules:read(rulesKey,{})};};
+const writeWorkspace=workspace=>{
+ const previous=read(deskKey,{});
+ const characters=workspace.characters??[];
+ const preferred=preferredCharacterId({
+  characters,
+  preferredCharacter:workspace.preferredCharacter!==undefined?workspace.preferredCharacter:previous.preferredCharacter
+ });
+ const state={...previous,characters,active:workspace.active??null,preferredCharacter:preferred};
+ store(deskKey,state);store(rulesKey,workspace.spellRules??{});document.dispatchEvent(new CustomEvent('wayfarer:cloud-workspace',{detail:state}));
+};
 /** Queue characters to merge after account/guest workspace settles (survives cloud apply). */
 export function queuePendingCharacters(characters){
   const list=Array.isArray(characters)?characters:[characters];
@@ -44,11 +53,24 @@ function consumePendingCharacters(){
   return added;
 }
 // Do not display cached private account data before this browser's login session is checked.
-export function prepareAccountWorkspace(){try{const previous=localStorage.getItem(ownerKey);if(previous){stashDrafts(previous);restoreDrafts('guest');rememberRooms(read('wayfarer-guest-rooms-v1',[]),{authoritative:true});const guest=read(guestKey,emptyWorkspace());store(deskKey,{characters:guest.characters,active:guest.active});store(rulesKey,guest.spellRules);}}catch{}}
-let user=null,googleClientId=null,status='Checking sign-in…',cache=null,conflicts=[],remote=null,ready=false,busy=false,sessionReached=false,timer,uploaded=new Set(),googleLoading;
+export function prepareAccountWorkspace(){try{const previous=localStorage.getItem(ownerKey);if(previous){stashDrafts(previous);restoreDrafts('guest');rememberRooms(read('wayfarer-guest-rooms-v1',[]),{authoritative:true});const guest=read(guestKey,emptyWorkspace());store(deskKey,{characters:guest.characters??[],active:guest.active??null,preferredCharacter:preferredCharacterId(guest)});store(rulesKey,guest.spellRules??{});}}catch{}}
+const inviteKey='wayfarer-beta-invite-v1';
+let user=null,googleClientId=null,status='Checking sign-in…',cache=null,conflicts=[],remote=null,ready=false,busy=false,sessionReached=false,closedBeta=false,betaAdmin=false,inviteInfo=null,timer,uploaded=new Set(),googleLoading;
 const notify=()=>document.dispatchEvent(new Event('wayfarer:account-status'));
-export const accountState=()=>({user,googleClientId,status,ready,busy,conflicts,sessionReached});
+export const accountState=()=>({user,googleClientId,status,ready,busy,conflicts,sessionReached,closedBeta,betaAdmin,inviteInfo,pendingInvite:readInvite()});
+export function readInvite(){try{const token=sessionStorage.getItem(inviteKey);return /^[a-f0-9]{32,64}$/.test(token||'')?token:null;}catch{return null;}}
+export function clearInvite(){try{sessionStorage.removeItem(inviteKey);}catch{/* ignore */}inviteInfo=null;}
+export async function captureBetaInvite(token){
+ if(!/^[a-f0-9]{32,64}$/.test(token||''))return {valid:false,message:'This invite link is invalid.'};
+ try{sessionStorage.setItem(inviteKey,token);}catch{/* ignore */}
+ try{
+  inviteInfo=await request('/api/auth/invite/'+token);
+  status=inviteInfo.valid?'Invite ready — sign in with Google to join the closed beta.':(inviteInfo.message||'This invite link cannot be used.');
+ }catch(error){inviteInfo={valid:false,message:error.message};status=error.message;}
+ notify();return inviteInfo;
+}
 async function request(path,{method='GET',body,headers}={}){const response=await fetch(path,{method,credentials:'same-origin',headers:{...(body&&!(body instanceof Blob)?{'Content-Type':'application/json'}:{}),...(user&&path.startsWith('/api/account/')?{'X-Wayfarer-Account':user.id}:{}),...headers},body:body instanceof Blob?body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(20000)});const data=await response.json().catch(()=>({}));if(!response.ok){const error=Error(data.message??'Account storage could not be reached.');error.status=response.status;error.data=data;throw error;}return data;}
+export {request as accountRequest};
 function persist(){if(!user||!cache)return;store(cacheKey(user.id),cache);}
 export function accountLibraryChanged(){
  try{
@@ -84,15 +106,60 @@ async function adopt(signedIn){
  return previousController!==user.id;
 }
 async function restoreSession(){
- try{const session=await request('/api/auth/session');sessionReached=true;googleClientId=session.googleClientId??null;if(session.user){const changed=await adopt(session.user);if(changed){location.reload();return true;}consumePendingCharacters();}else{const previous=localStorage.getItem(ownerKey);user=null;ready=true;status='Guest mode · saved in this browser.';if(previous){localStorage.removeItem(ownerKey);const player=localStorage.getItem(guestPlayer)??crypto.randomUUID();localStorage.setItem('wayfarer-player-v1',player);apply(read(guestKey,emptyWorkspace()));location.reload();return true;}store(guestKey,currentWorkspace());store('wayfarer-guest-rooms-v1',knownRooms());consumePendingCharacters();}notify();return false;}
- catch(error){sessionReached=false;ready=true;status='Account connection unavailable. Guest data remains on this device.';consumePendingCharacters();notify();return false;}
+ try{
+  const session=await request('/api/auth/session');
+  sessionReached=true;
+  googleClientId=session.googleClientId??null;
+  closedBeta=Boolean(session.closedBeta);
+  betaAdmin=Boolean(session.betaAdmin);
+  if(session.user){
+   const changed=await adopt(session.user);
+   betaAdmin=Boolean(session.betaAdmin)||betaAdmin;
+   if(changed){location.reload();return true;}
+   consumePendingCharacters();
+  }else{
+   const previous=localStorage.getItem(ownerKey);
+   user=null;ready=true;
+   status=closedBeta
+    ?(readInvite()?'Invite ready — sign in with Google to join.':'Wayfarer is in closed beta. Sign in with an approved Google account or invite link.')
+    :'Guest mode · saved in this browser.';
+   if(previous){
+    localStorage.removeItem(ownerKey);
+    const player=localStorage.getItem(guestPlayer)??crypto.randomUUID();
+    localStorage.setItem('wayfarer-player-v1',player);
+    apply(read(guestKey,emptyWorkspace()));
+    location.reload();
+    return true;
+   }
+   store(guestKey,currentWorkspace());
+   store('wayfarer-guest-rooms-v1',knownRooms());
+   consumePendingCharacters();
+  }
+  const pending=readInvite();
+  if(pending&&!user)await captureBetaInvite(pending).catch(()=>{});
+  notify();return false;
+ }
+ catch(error){
+  sessionReached=false;ready=true;
+  status=closedBeta?'Could not reach Wayfarer accounts. Refresh to try again.':'Account connection unavailable. Guest data remains on this device.';
+  consumePendingCharacters();notify();return false;
+ }
 }
 export async function startAccounts(){
  await restoreSession();
  setInterval(()=>{if(document.visibilityState==='visible'&&!document.querySelector('dialog[open]')&&!document.activeElement?.matches('input,textarea,select')){if(!sessionReached&&!user)void restoreSession();else void syncAccount();}},20000);window.addEventListener('online',()=>{if(!sessionReached&&!user)void restoreSession();else void syncAccount();});window.addEventListener('focus',()=>{if(!ready)return;if(!sessionReached&&!user)void restoreSession();else void syncAccount();});document.addEventListener('wayfarer:library-saved',accountLibraryChanged);
 }
 async function googleScript(){if(window.google?.accounts?.id)return;googleLoading??=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;script.onload=resolve;script.onerror=()=>{googleLoading=null;reject(Error('Google sign-in could not load. Check your connection or content blocker.'));};document.head.append(script);});await googleLoading;}
-export async function mountGoogleButton(host){if(!host||!googleClientId||user)return;try{await googleScript();if(!host.isConnected)return;const challenge=await request('/api/auth/nonce',{method:'POST'});if(!host.isConnected)return;window.google.accounts.id.initialize({client_id:googleClientId,nonce:challenge.nonce,auto_select:false,callback:async({credential})=>{try{status='Signing in…';notify();const result=await request('/api/auth/google',{method:'POST',body:{credential}});store(guestKey,currentWorkspace());await adopt(result.user);const back=sessionStorage.getItem('wayfarer-auth-return-v1');sessionStorage.removeItem('wayfarer-auth-return-v1');if(back?.startsWith('#game/'))location.hash=back;location.reload();}catch(error){const reset=!localStorage.getItem(ownerKey);if(reset){user=null;cache=null;}status=error.message;notify();if(reset&&host.isConnected){host.innerHTML='';void mountGoogleButton(host);}}}});window.google.accounts.id.renderButton(host,{theme:'outline',size:'large',text:'signin_with',shape:'rectangular',width:Math.min(320,host.clientWidth||320)});}catch(error){host.textContent=error.message;}}
+export async function mountGoogleButton(host){if(!host||!googleClientId||user)return;try{await googleScript();if(!host.isConnected)return;const challenge=await request('/api/auth/nonce',{method:'POST'});if(!host.isConnected)return;window.google.accounts.id.initialize({client_id:googleClientId,nonce:challenge.nonce,auto_select:false,callback:async({credential})=>{try{status='Signing in…';notify();const invite=readInvite();const result=await request('/api/auth/google',{method:'POST',body:{credential,...(invite?{invite}:{})}});if(result.inviteRedeemed)clearInvite();store(guestKey,currentWorkspace());closedBeta=Boolean(result.closedBeta??closedBeta);betaAdmin=Boolean(result.betaAdmin);await adopt(result.user);const back=sessionStorage.getItem('wayfarer-auth-return-v1');sessionStorage.removeItem('wayfarer-auth-return-v1');if(back?.startsWith('#game/'))location.hash=back;else if(location.hash.startsWith('#invite/'))location.hash='#overview';location.reload();}catch(error){const reset=!localStorage.getItem(ownerKey);if(reset){user=null;cache=null;}status=error.message;notify();if(reset&&host.isConnected){host.innerHTML='';void mountGoogleButton(host);}}}});window.google.accounts.id.renderButton(host,{theme:'outline',size:'large',text:'signin_with',shape:'rectangular',width:Math.min(320,host.clientWidth||320)});}catch(error){host.textContent=error.message;}}
+export async function listBetaAllowlist(){return request('/api/account/beta/allowlist');}
+export async function addBetaEmail(email,note=''){return request('/api/account/beta/allowlist',{method:'POST',body:{email,note}});}
+export async function removeBetaEmail(email){return request('/api/account/beta/allowlist',{method:'DELETE',body:{email}});}
+export async function listBetaInvites(){return request('/api/account/beta/invites');}
+export async function createBetaInvite({label='',maxUses=0,days=30}={}){return request('/api/account/beta/invites',{method:'POST',body:{label,maxUses,days}});}
+export async function revokeBetaInvite(id){return request('/api/account/beta/invites',{method:'DELETE',body:{id}});}
+export async function requestBetaAccess({email,name='',message=''}={}){return request('/api/auth/beta-request',{method:'POST',body:{email,name,message}});}
+export async function listBetaAccessRequests(){return request('/api/account/beta/requests');}
+export async function reviewBetaAccessRequest(id,action,note=''){return request('/api/account/beta/requests',{method:'POST',body:{id,action,note}});}
 export async function signOutAccount(){if(busy)throw Error('Wait for the current sync to finish.');await syncAccount();persist();stashDrafts(user.id);await request('/api/auth/logout',{method:'POST'});window.google?.accounts?.id.disableAutoSelect();user=null;cache=null;conflicts=[];restoreDrafts('guest');rememberRooms(read('wayfarer-guest-rooms-v1',[]),{authoritative:true});localStorage.removeItem(ownerKey);localStorage.setItem('wayfarer-player-v1',localStorage.getItem(guestPlayer)??crypto.randomUUID());apply(read(guestKey,emptyWorkspace()));location.reload();}
 export async function saveAccountProfile(displayName,bio){const result=await request('/api/account/profile',{method:'PUT',body:{displayName,bio}});user=result.user;localStorage.setItem('wayfarer-username-v1',user.displayName);notify();}
 

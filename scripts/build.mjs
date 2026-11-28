@@ -82,7 +82,7 @@ await writeFile(new URL("_worker.js",client),bundledWorker);
 await writeFile(new URL("wrangler.json",server),JSON.stringify({
   name:"wayfarer-vtt",main:"index.js",compatibility_date:"2026-05-25",
   assets:{directory:"../client",binding:"ASSETS",html_handling:"none"},
-  vars:{CF_ACCOUNT_ID:"1a15c3ffd6933ad42e67777406cb8a61",TURN_USAGE_CAP_GB:"750"},
+  vars:{CF_ACCOUNT_ID:"1a15c3ffd6933ad42e67777406cb8a61",TURN_USAGE_CAP_GB:"750",CLOSED_BETA:"1",BETA_ADMIN_EMAILS:"matthew.zhou@gmail.com"},
   d1_databases:[{binding:"DB",database_id:"af23b966-91b0-416b-87f5-89140e7ddbd2"}],
 },null,2));
 

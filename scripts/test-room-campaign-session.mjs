@@ -1,7 +1,7 @@
 import {upgradeOpenedRoom,upgradeRoomState} from '../dist/room-upgrades.mjs';
 import {starterRule} from '../dist/spell-rule-schema.mjs';
 import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFile} from 'node:fs/promises';
-import {sessionRequest} from '../worker/session.mjs';import {trainingMap,trainingActors} from '../dist/encounters.mjs';import {newBattle} from '../dist/combat.mjs';import {normalizeRoomState,travelRoom,roomBattle,commitRoomState} from '../dist/room-state.mjs';
+import {sessionRequest} from '../worker/session.mjs';import {trainingMap,trainingActors} from '../dist/encounters.mjs';import {newBattle} from '../dist/combat.mjs';import {normalizeRoomState,travelRoom,travelExpedition,roomBattle,commitRoomState} from '../dist/room-state.mjs';
 const sqlite=new DatabaseSync(':memory:');for(const file of ['0000_shared_tables.sql','0001_session_chat.sql','0002_session_players.sql','0003_session_images.sql','0004_room_creator_auth.sql','0005_accounts.sql','0006_profile_photos.sql','0007_session_voice.sql','0008_session_player_auth.sql'])sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
 const DB={prepare(sql){let values=[];return{bind(...args){values=args;return this;},async first(column){const row=sqlite.prepare(sql).get(...values);return column?row?.[column]??null:row??null;},async all(){return{results:sqlite.prepare(sql).all(...values)};},async run(){const result=sqlite.prepare(sql).run(...values);return{meta:{changes:Number(result.changes)}};}};},async batch(statements){return Promise.all(statements.map(s=>s.run()));}};
 const origin='https://test.example',controller=crypto.randomUUID();const jar=new Map();
@@ -9,7 +9,7 @@ function cookieHeader(){return jar.size?[...jar].map(([k,v])=>k+'='+v).join('; '
 function storeCookies(r){for(const header of r.headers.getSetCookie?.()??[]){const [pair]=header.split(';');const at=pair.indexOf('=');const name=pair.slice(0,at),value=pair.slice(at+1);if(value)jar.set(name,value);else jar.delete(name);}if(!(r.headers.getSetCookie?.()??[]).length){const set=r.headers.get('Set-Cookie');if(!set)return;const [pair]=set.split(';');const at=pair.indexOf('=');const name=pair.slice(0,at),value=pair.slice(at+1);if(value)jar.set(name,value);else jar.delete(name);}}
 async function api(path,method='GET',body){const r=await sessionRequest(new Request(origin+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...(cookieHeader()?{Cookie:cookieHeader()}:{})},...(body?{body:JSON.stringify(body)}:{})}),{DB});storeCookies(r);return r;}
 const a={...trainingMap,key:'qa-a',module:'QA',title:'Cave'},b={...trainingMap,key:'qa-b',module:'QA',title:'Castle'};
-const initial={room:{name:'Campaign',adventure:'QA'},battle:{...newBattle(),actors:trainingActors()},alignment:null};
+const initial={room:{name:'Campaign',adventure:'QA',kind:'campaign'},battle:{...newBattle(),actors:trainingActors()},alignment:null};
 const created=await api('/api/sessions','POST',{map:a,state:initial});assert.equal(created.status,201);const id=(await created.json()).id,path='/api/sessions/'+id;
 await api(path+'/players','POST',{controller,username:'QA player'});
 let snapshot=await(await api(path)).json();let state=travelRoom(normalizeRoomState(snapshot.state,a),b),active=roomBattle(state);active.actors[0].hp=8;active.actors[0].xp=75;active.actors[0].items=[{name:'Treasure',quantity:1}];state=commitRoomState(state,b,active);
@@ -18,6 +18,16 @@ const list=await(await api('/api/rooms?controller='+controller)).json();assert.e
 const stale=await api(path,'PUT',{revision:snapshot.revision,state:snapshot.state});assert.equal(stale.status,409);assert.equal((await stale.json()).state.currentMap.key,b.key);
 state=travelRoom(current.state,a);assert.equal(state.battle.actors[0].xp,75);assert.equal(state.battle.actors[0].items[0].name,'Treasure');assert.equal((await api(path,'PUT',{revision:current.revision,state})).status,200);
 current=await(await api(path)).json();const invalid=structuredClone(current.state);invalid.currentMap.module='Other';assert.equal((await api(path,'PUT',{revision:current.revision,state:invalid})).status,400);
+const expeditionMap={...trainingMap,key:'qa-expedition',module:'LMoP',title:'Hideout'};
+const stranded=structuredClone(current.state);stranded.currentMap={...expeditionMap};stranded.room={...stranded.room,adventure:'QA'};
+assert.equal((await api(path,'PUT',{revision:current.revision,state:stranded})).status,400,'Cross-module writes still need room.adventure rebound');
+state=travelExpedition(current.state,expeditionMap);
+assert.equal(state.room.adventure,'LMoP');
+assert.equal((await api(path,'PUT',{revision:current.revision,state})).status,200,'Hub expeditions may leave the room module');
+current=await(await api(path)).json();
+assert.equal(current.map.module,'LMoP');
+assert.equal(current.state.room.adventure,'LMoP');
+assert.equal(current.map.key,expeditionMap.key);
 const legacyWrite=await api(path,'PUT',{revision:current.revision,state:initial});assert.equal(legacyWrite.status,409,'An old client cannot erase a migrated room save');
 const nested=structuredClone(current.state);nested.world.maps[a.key].battle={actors:[]};assert.equal((await api(path,'PUT',{revision:current.revision,state:nested})).status,400);
 const invalidRules=structuredClone(current.state);invalidRules.battle.spellRules={'phb|bad':{name:'Bad',reference:'phb|bad',effects:[]}};assert.equal((await api(path,'PUT',{revision:current.revision,state:invalidRules})).status,400);
@@ -47,4 +57,4 @@ current=await(await api(path)).json();
 assert.equal(current.revision,upgraded.revision);
 assert.equal(current.state.roomDataVersion,upgraded.state.roomDataVersion);
 assert.equal((await api(path,'DELETE',{revision:current.revision})).status,204);
-console.log('Room API persists one campaign across maps; reload and room cards use the active map; stale-map writes, cross-adventure maps and nested per-map battles are rejected; creator cleanup verified.');
+console.log('Room API persists one campaign across maps; reload and room cards use the active map; stale-map writes, cross-adventure maps and nested per-map battles are rejected; hub expeditions can rebind the room module; creator cleanup verified.');

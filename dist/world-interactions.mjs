@@ -49,7 +49,8 @@ export function dragBody(battle,actor,body,map){
  if(body.carriedBy||body.draggedBy||actor.carrying||actor.dragging)fail('Only one character can carry or drag a body, and only one body at a time.');
  if(!withinReach(battle,actor,body,map))fail('Move within 5 feet of the body with a clear path.');
  return withActionEvent(battle,actor,{action:'Drag '+body.name,kind:'ability',target:body.name},()=>{
-  spendObjectAction(battle,actor,'drag-body');actor.dragging=body.id;body.draggedBy=actor.id;body.x=actor.x;body.y=actor.y;
+  // Leave the body on its square — it trails one step behind as you move.
+  spendObjectAction(battle,actor,'drag-body');actor.dragging=body.id;body.draggedBy=actor.id;
   log(battle,actor.name+' starts dragging '+body.name+'. Dragging halves movement speed and occupies both hands.');
  });
 }
@@ -57,7 +58,10 @@ const adjacentCells=(origin)=>[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[
 export function dropBody(battle,actor,body,map){
  awake(battle,actor);if(!body || actor.dragging!==body.id || body.draggedBy!==actor.id)fail('Drag this body first.');
  const landing={...body,draggedBy:null,carriedBy:null};
- const destination=adjacentCells(actor).find(cell=>canStand(battle,landing,cell.x,cell.y,map)&&lineClear(battle,actor,cell,map))
+ const trailed=body.x!=null && body.y!=null && (body.x!==actor.x || body.y!==actor.y) &&
+  canStand(battle,landing,body.x,body.y,map) && lineClear(battle,actor,body,map);
+ const destination=trailed ? {x:body.x,y:body.y}
+  : adjacentCells(actor).find(cell=>canStand(battle,landing,cell.x,cell.y,map)&&lineClear(battle,actor,cell,map))
   ?? (canStand(battle,landing,actor.x,actor.y,map)?{x:actor.x,y:actor.y}:null);
  if(!destination)fail('No open square is available to drop the body.');
  return withActionEvent(battle,actor,{action:'Drop '+body.name,kind:'ability',target:body.name,targetActor:body.id},()=>{

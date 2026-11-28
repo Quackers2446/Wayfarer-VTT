@@ -25,6 +25,8 @@ export function enemyTurnPending(battle) {
   const actor = currentActor(battle);
   // Dead PCs must not freeze initiative — auto-skip their cursor slot.
   if (actor?.dead) return true;
+  // Befriended kennel wolves act automatically on the party's side.
+  if (actor?.kennelAlly) return true;
   if (unclaimedParty(battle, actor)) return true;
   return actor?.side === "hostile" || (actor?.side === "party" &&
     (incapacitated(actor) && (!waitingForSave(actor) || battle.deathRolled) || actor.stable && !actorIsUp(actor)));
@@ -113,6 +115,14 @@ export function runEnemyTurns(battle, map, random = Math.random) {
     const actor = currentActor(battle);
     if (actor?.dead) {
       endTurn(battle, random, actor);
+      continue;
+    }
+    if (actor?.kennelAlly && actor.side === "party") {
+      const foes = battle.actors.filter((entry) => entry.side === "hostile" && canAct(entry));
+      enemyTurn(battle, map, actor, foes, random);
+      lastEnemy = actor.name;
+      if (battle.movement || battle.classReaction) break;
+      endTurn(battle, random);
       continue;
     }
     if (unclaimedParty(battle, actor)) {

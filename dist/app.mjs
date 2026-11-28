@@ -1,5 +1,5 @@
-import {prepareAccountWorkspace,startAccounts,accountLibraryChanged,accountState} from './account-client.mjs';
-import {accountBadge,mountAccountProfile} from './account-view.mjs';
+import {prepareAccountWorkspace,startAccounts,accountLibraryChanged,accountState,captureBetaInvite} from './account-client.mjs';
+import {accountBadge,mountAccountProfile,mountClosedBetaGate} from './account-view.mjs';
 import {applyTheme} from './theme.mjs';
 applyTheme();
 import {dismissOnBackdrop} from './modal-dismiss.mjs';
@@ -8,6 +8,7 @@ import './custom-select.mjs';
 import {registerSuggestions} from './search-suggestions.mjs';
 import {mountSpellRuleEditor} from './spell-rule-editor.mjs?v=spell-lib-layout';
 import {mountHomebrewDesk} from './homebrew-desk.mjs';
+import {mountMapStudio} from './map-studio.mjs';
 import {listHomebrew} from './homebrew-store.mjs';
 import {itemToSheetEntry, itemToAttack, featureToSheetEntry} from './homebrew-schema.mjs';
 import {mountCharacterBuilder} from './character-builder.mjs';
@@ -43,6 +44,7 @@ const navItems = [
   ["library", "Adventure library", "book"],
   ["spell-library", "Spell library", "sparkles"],
   ["homebrew", "Homebrew", "flame"],
+  ["map-studio", "Map Studio", "map"],
   ["play", "Rooms", "dice"],
 ];
 const featured = [
@@ -60,21 +62,42 @@ const byId = (id) => [...catalog.adventures, ...catalog.books].find((entry) => e
 function currentRoute(hash = location.hash) {
   const [raw, characterId, section = "overview"] = hash.slice(1).split("/");
   const requested = raw === "spell-rules" ? "spell-library" : raw;
+  if (requested === "invite") {
+    return {page: "invite", character: null, section: "overview", newRoom: false, roomAdventure: null, hubEntry: false, inviteToken: characterId || ""};
+  }
+  // #hub is the central Yawning Portal entry — not an adventure room.
+  if (requested === "hub") {
+    return {page: "play", character: null, section: "overview", newRoom: false, roomAdventure: null, hubEntry: true};
+  }
   const page = ["game","profile"].includes(requested) || navItems.some(([id]) => id === requested) ? requested : "overview";
   const character = page === "characters" && characterId
     ? state.characters.find((entry) => encodeURIComponent(entry.id) === characterId)
     : null;
   const newRoom = page === "play" && characterId === "new";
-  return {page, character:character ? enrichCharacter(character) : null, section, newRoom, roomAdventure:newRoom && /^[a-z0-9-]+$/i.test(section) && section !== "overview" ? section : null};
+  // Legacy #play/new/YPHub redirects into the dedicated hub entry.
+  if (newRoom && section === "YPHub") {
+    return {page: "play", character: null, section: "overview", newRoom: false, roomAdventure: null, hubEntry: true};
+  }
+  return {page, character:character ? enrichCharacter(character) : null, section, newRoom, roomAdventure:newRoom && /^[a-z0-9-]+$/i.test(section) && section !== "overview" ? section : null, hubEntry: false};
 }
 
 prepareAccountWorkspace();
 let state;
 try {
   const remembered = JSON.parse(localStorage.getItem(storageKey));
-  state = {characters: [], active: null, ...remembered};
+  state = {characters: [], active: null, preferredCharacter: null, ...remembered};
 } catch {
-  state = {characters: [], active: null};
+  state = {characters: [], active: null, preferredCharacter: null};
+}
+state.characters = Array.isArray(state.characters) ? state.characters : [];
+{
+  const preferred = state.preferredCharacter && state.characters.some((entry) => entry.id === state.preferredCharacter)
+    ? state.preferredCharacter : null;
+  state.characters = [...state.characters].sort((a, b) => {
+    if (a.id === preferred) return -1;
+    if (b.id === preferred) return 1;
+    return (Number(b?.updatedAt) || 0) - (Number(a?.updatedAt) || 0) || String(a.name || "").localeCompare(String(b.name || ""));
+  });
 }
 let catalog = {adventures: [], books: [], version: null};
 let catalogStatus = "loading";
@@ -163,23 +186,66 @@ function emptyParty() {
   </button>`;
 }
 
+function preferredCharacterId() {
+  return state.preferredCharacter && state.characters.some((entry) => entry.id === state.preferredCharacter)
+    ? state.preferredCharacter
+    : null;
+}
+
+function characterRecency(character) {
+  return Number(character?.updatedAt) || 0;
+}
+
+/** Default first, then most recently edited/imported. */
+function orderedCharacters(list = state.characters) {
+  const preferred = preferredCharacterId();
+  return [...list].sort((a, b) => {
+    if (a.id === preferred) return -1;
+    if (b.id === preferred) return 1;
+    return characterRecency(b) - characterRecency(a) || String(a.name || "").localeCompare(String(b.name || ""));
+  });
+}
+
+function touchCharacter(character) {
+  if (character && typeof character === "object") character.updatedAt = Date.now();
+  return character;
+}
+
+function arrangeCharacters() {
+  state.characters = orderedCharacters(state.characters);
+}
+
+function setPreferredCharacter(id) {
+  const character = state.characters.find((entry) => entry.id === id);
+  if (!character) return false;
+  touchCharacter(character);
+  state.preferredCharacter = id;
+  arrangeCharacters();
+  return save();
+}
+
 function partyCards(characters) {
+  const preferred = preferredCharacterId();
   return '<div class="party-grid">' + characters.map((record, index) => {
     const character = enrichCharacter(record);
     const hp = [character.hp, character.maxHp].every((value) => value == null)
       ? "—" : text(character.hp) + " / " + text(character.maxHp);
     const profile = characterProfile(character);
-    return `<a class="character-card" href="${sheetPath(character)}" aria-label="Open character sheet for ${escape(character.name)}">
-      <span class="character-open">
-        <span class="avatar tone-${index % 4}" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage)}</span>
-        <span class="character-info"><strong>${escape(character.name)}</strong>${profile ? '<small>' + profile + '</small>' : ""}</span>
-      </span>
+    const isDefault = preferred === character.id;
+    return `<article class="character-card${isDefault ? " is-default" : ""}">
+      <a class="character-open" href="${sheetPath(character)}" aria-label="Open character sheet for ${escape(character.name)}">
+        <span class="avatar${character.tokenImage ? " has-photo" : ` tone-${index % 4}`}" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage)}</span>
+        <span class="character-info"><strong>${escape(character.name)}</strong>${profile ? '<small>' + profile + '</small>' : ""}${isDefault ? '<small class="character-default-tag">Default</small>' : ""}</span>
+      </a>
       <span class="card-stats">
         <span title="Armor Class">${icon("shield", 15)} <b>${text(character.ac)}</b> AC</span>
         <span title="Hit Points">${icon("heart", 15)} <b>${hp}</b> HP</span>
         ${character.level != null ? '<span class="card-level">Level ' + text(character.level) + '</span>' : ""}
       </span>
-    </a>`;
+      <button type="button" class="character-default-btn" data-action="prefer-character" data-id="${escape(character.id)}" aria-pressed="${isDefault}">
+        ${isDefault ? "Your default character" : "Use as default"}
+      </button>
+    </article>`;
   }).join("") + '</div>';
 }
 
@@ -245,8 +311,11 @@ function overview() {
   return `<section class="hero" aria-labelledby="hero-title">
     <div class="hero-content">
       <h1 id="hero-title">Your next adventure<br>starts here.</h1>
-      <p>Gather your party and choose a 5e adventure.</p>
-      <a class="button gold" href="#library">${icon("compass", 18)}Explore the library</a>
+      <p>Step into the Yawning Portal, meet your party, and set out into published 5e adventures.</p>
+      <div class="hero-actions">
+        <a class="button gold" href="#hub">${icon("flag", 18)}Enter the Yawning Portal</a>
+        <a class="button outline" href="#library">${icon("compass", 18)}Explore the library</a>
+      </div>
     </div>
   </section>
   <div class="dashboard-grid">
@@ -255,7 +324,7 @@ function overview() {
         <div><h2 id="party-heading">Your party</h2><p>${state.characters.length ? plural(state.characters.length, "character") : "Add character sheets to assemble your party."}</p></div>
         ${state.characters.length ? button("Add characters", "upload", "plus", "outline small") : ""}
       </div>
-      ${state.characters.length ? partyCards(state.characters.slice(0, 2)) + `
+      ${state.characters.length ? partyCards(orderedCharacters().slice(0, 2)) + `
         <a class="party-directory" href="#characters">View all characters ${icon("chevron", 16)}</a>` : emptyParty()}
     </section>
     <section aria-labelledby="active-heading" class="panel active-panel">
@@ -280,10 +349,10 @@ function charactersPage() {
   if(builderOpen)return '<div id="character-builder"></div>';
   return `<header class="page-heading"><div><h1>Character sheets</h1>
     <p>${state.characters.length ? plural(state.characters.length, "character") + " in your party." : "Create a character step by step, or import an existing sheet."}</p></div>
-    <div class="character-create-actions">${button("Create character", "build-character", "plus")}${button("Import character", "upload", "upload", "outline")}${localSamples.length ? button("Import supplied sheets", "samples", "sheet", "outline") : ""}</div>
+    <div class="character-create-actions">${button("Import character", "upload", "upload", "outline")}${localSamples.length ? button("Import supplied sheets", "samples", "sheet", "outline") : ""}</div>
     </header>
     <section class="panel" aria-label="Party character sheets">
-    ${state.characters.length ? partyCards(state.characters) : emptyParty()}
+    ${state.characters.length ? partyCards(orderedCharacters()) : emptyParty()}
     </section>`;
 }
 
@@ -342,15 +411,56 @@ function renderResults() {
 }
 
 function render() {
-  const {page, character, section, newRoom, roomAdventure} = currentRoute();
+  const {page, character, section, newRoom, roomAdventure, hubEntry, inviteToken} = currentRoute();
+  const account = accountState();
+  if (page === "invite") {
+    if (inviteToken) {
+      void captureBetaInvite(inviteToken).then(() => {
+        if (accountState().user) location.hash = "#overview";
+        else render();
+      });
+    } else if (account.user || !account.closedBeta) {
+      location.hash = "#overview";
+      return;
+    }
+  }
+  // Closed beta: block the desk until an approved Google account is signed in.
+  if (account.ready && account.closedBeta && !account.user) {
+    app.innerHTML = '<div id="beta-gate-mount"></div>';
+    mountClosedBetaGate(document.querySelector("#beta-gate-mount"));
+    return;
+  }
+  if (page === "invite") {
+    location.hash = "#overview";
+    return;
+  }
   if (page === "game") {
     app.innerHTML = '<main id="main" tabindex="-1" class="game-main"><div id="play-mount"></div></main>';
-    showPlay({characters:state.characters, adventures:catalog.adventures, activeAdventure:state.active, localArchive, game:true,
+    showPlay({characters:orderedCharacters(), adventures:catalog.adventures, activeAdventure:state.active, preferredCharacter:preferredCharacterId(), localArchive, game:true,
       sessionRoute:location.hash.slice(6)});
     return;
   }
+  if (page === "map-studio") {
+    if (!account.betaAdmin) {
+      app.innerHTML = `<div class="shell"><main id="main" tabindex="-1" class="content"><div id="map-studio-mount"></div></main></div>`;
+    } else {
+      app.innerHTML = '<main id="main" tabindex="-1" class="map-studio-main"><div id="map-studio-mount"></div></main>';
+    }
+    mountMapStudio(document.querySelector("#map-studio-mount"));
+    return;
+  }
   if (page !== "play") showPlay(null);
-  const pageLabel = newRoom ? "New room" : page === "profile" ? "Profile" : navItems.find(([id]) => id === page)[1];
+  const visibleNav = navItems.filter(([id]) => id !== "map-studio" || account.betaAdmin);
+  const pageLabel = hubEntry ? "Yawning Portal" : newRoom ? "New room" : page === "profile" ? "Profile" : (visibleNav.find(([id]) => id === page) ?? navItems.find(([id]) => id === page))[1];
+  const crumbSep = icon("chevron", 13);
+  const crumbPart = (label, target, { current = false } = {}) => current
+    ? `<span class="crumb-current" aria-current="page">${escape(label)}</span>`
+    : `<button type="button" class="crumb-part" data-action="crumb" data-id="${escape(target)}">${escape(label)}</button>`;
+  const breadcrumb = character
+    ? `${crumbPart("Workspace", "overview")} ${crumbSep} ${crumbPart("Character sheets", "characters")} ${crumbSep} ${crumbPart(character.name, "", { current: true })}`
+    : page === "overview"
+      ? crumbPart("Workspace", "overview", { current: true })
+      : `${crumbPart("Workspace", "overview")} ${crumbSep} ${crumbPart(pageLabel, hubEntry || newRoom ? "play" : page, { current: true })}`;
   app.innerHTML = `<div class="shell">
     <aside class="sidebar">
       <a class="brand" href="#overview">
@@ -358,7 +468,7 @@ function render() {
         <div><strong>Wayfarer</strong><span>5E CAMPAIGN DESK</span></div>
       </a>
       <span class="nav-label">WORKSPACE</span>
-      <nav aria-label="Workspace">${navItems.map(([id, label, art]) =>
+      <nav aria-label="Workspace">${visibleNav.map(([id, label, art]) =>
         '<a class="nav-link' + (id === page ? ' nav-current" aria-current="page"' : '"') + ' href="#' + id + '">' +
         icon(art, 19) + '<span>' + label + '</span></a>').join("")}
       </nav>
@@ -371,9 +481,12 @@ function render() {
     </aside>
     <div class="work-area">
       <div class="topbar${character ? " topbar-sheet" : ""}">
-        <span class="crumb"><span>Workspace</span> ${icon("chevron", 13)} <strong>${pageLabel}</strong></span>
+        <nav class="crumb" aria-label="Breadcrumb">${breadcrumb}</nav>
         <div class="account-topbar-actions">${character ? '<a class="button outline" href="#characters">Back to party</a>' :
-          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>' : page==='spell-library'||page==='homebrew'||page==='profile' ? '' : button("Import character", "upload", "plus")} ${accountBadge()}</div>
+          page === "play" ? '<a class="button outline" href="#characters">Manage party</a>'
+          : page==='spell-library'||page==='homebrew'||page==='map-studio'||page==='profile' ? ''
+          : page === "characters" && builderOpen ? button("Import character", "upload", "upload", "outline")
+          : button("Create character", "build-character", "plus")} ${accountBadge()}</div>
       </div>
       <main id="main" tabindex="-1" class="content">${character ? characterPage(character, section) : page === "overview" ? overview() : page === "characters" ? charactersPage() : page === "library" ? libraryPage() : page === "profile" ? '<div id="account-profile-mount"></div>' : page === "spell-library" ? '<div id="spell-library-mount"></div>' : page === "homebrew" ? '<div id="homebrew-mount"></div>' : '<div id="play-mount"></div>'}</main>
     </div>
@@ -384,11 +497,11 @@ function render() {
   if(page==='homebrew')mountHomebrewDesk(document.querySelector('#homebrew-mount'));
   if(page==='characters' && !character && builderOpen){
     mountCharacterBuilder(document.querySelector('#character-builder'),{close:()=>{builderOpen=false;render();},create:record=>{
-      const previous=state.characters;state.characters=[...previous,record];if(!save()){state.characters=previous;return false;}builderOpen=false;location.hash=sheetPath(record);notice('Character created. Use Party → Add in an adventure room.');return true;
+      const previous=state.characters;touchCharacter(record);state.characters=[...previous,record];if(!state.preferredCharacter)state.preferredCharacter=record.id;arrangeCharacters();if(!save()){state.characters=previous;state.preferredCharacter=previous.some(entry=>entry.id===state.preferredCharacter)?state.preferredCharacter:null;return false;}builderOpen=false;location.hash=sheetPath(record);notice('Character created. Use Party → Add in an adventure room.');return true;
     }});
   }
-  if (page === "play") showPlay({characters:state.characters, adventures:catalog.adventures,
-    activeAdventure:state.active, localArchive, newRoom, roomAdventure});
+  if (page === "play") showPlay({characters:orderedCharacters(), adventures:catalog.adventures,
+    activeAdventure:state.active, preferredCharacter:preferredCharacterId(), localArchive, newRoom, roomAdventure, hubEntry});
   if (character) fillSheetResults(character, section);
   paintCharacterPortraits(app);
 }
@@ -509,6 +622,8 @@ async function applyCharacterToken(source, character, image) {
     if (local) {
       if (image) local.tokenImage = image;
       else delete local.tokenImage;
+      touchCharacter(local);
+      arrangeCharacters();
       saved = save();
     }
     const tokenCharacterId=character.gameActorId ?? character.id;
@@ -621,8 +736,9 @@ function storeCharacters(characters, name, sourceKey) {
       (existing.name.toLowerCase() === character.name.toLowerCase() &&
         existing.species.toLowerCase() === character.species.toLowerCase()));
     const id = index < 0 ? crypto.randomUUID() : state.characters[index].id;
-    const record = {...character, id, sourceName: name, sourceKey,tokenImage:state.characters[index]?.tokenImage,
-      rulesEditionOverride:state.characters[index]?.rulesEditionOverride,sheetEdits:state.characters[index]?.sheetEdits};
+    const record = touchCharacter({...character, id, sourceName: name, sourceKey,tokenImage:state.characters[index]?.tokenImage,
+      rulesEditionOverride:state.characters[index]?.rulesEditionOverride,sheetEdits:state.characters[index]?.sheetEdits,
+      updatedAt:state.characters[index]?.updatedAt});
     if (index < 0) state.characters.push(record);
     else state.characters[index] = record;
   }
@@ -657,6 +773,8 @@ async function runImport(entries) {
         errors.push(name + " — " + (error instanceof Error ? error.message : "Import failed."));
       }
     }
+    if (count) arrangeCharacters();
+    if (count && !preferredCharacterId()) state.preferredCharacter = state.characters[0]?.id ?? null;
     const saved = count ? save() : true;
     if (count) {
       render();
@@ -722,6 +840,8 @@ document.addEventListener("submit", (event) => {
       const edits = readSheetEdits(new FormData(event.target),sheetSkills,character);
       validateSheetEdits(enrichCharacter({...raw,sheetEdits:edits}));
       raw.sheetEdits = edits;
+      touchCharacter(raw);
+      arrangeCharacters();
       const saved = save();
       render();
       const output = app.querySelector("#character-edit-status");
@@ -768,6 +888,8 @@ function updateActiveCharacter(targetElement, mutator) {
   const {character, raw, isGame} = active;
   if (raw) {
     mutator(raw);
+    touchCharacter(raw);
+    arrangeCharacters();
     save();
   } else {
     mutator(character);
@@ -1104,6 +1226,13 @@ document.addEventListener("click", async (event) => {
     }
     case "clear-token": changeCharacterToken(control); break;
     case "samples": if (localSamples.length) fetchLocalSamples(); break;
+    case "crumb": {
+      const target = id === "overview" || id === "characters" || id === "play" || id === "library" || id === "profile" || id === "spell-library" || id === "homebrew"
+        ? "#" + id
+        : id?.startsWith("characters/") ? "#" + id : null;
+      if (target) location.hash = target;
+      break;
+    }
     case "close": dialog.close(); break;
     case "kind": {
       catalogKind = id;
@@ -1140,11 +1269,22 @@ document.addEventListener("click", async (event) => {
     case "remove": {
       const viewing = currentRoute().character?.id === id;
       state.characters = state.characters.filter((entry) => entry.id !== id);
+      if (state.preferredCharacter === id) state.preferredCharacter = null;
+      arrangeCharacters();
+      if (!preferredCharacterId()) state.preferredCharacter = state.characters[0]?.id ?? null;
       const saved = save();
       dialog.close();
       if (viewing) location.hash = "characters";
       else render();
       notice("Character removed." + (saved ? "" : " Browser storage is unavailable."));
+      break;
+    }
+    case "prefer-character": {
+      const character = state.characters.find((entry) => entry.id === id);
+      if (!character) break;
+      const saved = setPreferredCharacter(id);
+      render();
+      notice((saved ? character.name + " is your default character." : "Could not save default character.") + (saved ? " New rooms and token selection will prefer them." : ""));
       break;
     }
   }
@@ -1178,6 +1318,8 @@ document.addEventListener("change", (event) => {
       if (!character) break;
       if (event.target.value) character.rulesEditionOverride = event.target.value;
       else delete character.rulesEditionOverride;
+      touchCharacter(character);
+      arrangeCharacters();
       const saved = save();
       render();
       app.querySelector("#character-rules-edition")?.focus({preventScroll:true});
@@ -1220,6 +1362,11 @@ dialog.addEventListener("close", () => {
   if (dialogReturnFocus?.isConnected) dialogReturnFocus.focus({preventScroll:true});
 });
 window.addEventListener("hashchange", (event) => {
+  // Legacy room-create deep link for the tavern → dedicated hub entry.
+  if (/^#play\/new\/YPHub\b/i.test(location.hash)) {
+    location.replace("#hub");
+    return;
+  }
   const previous = currentRoute(new URL(event.oldURL).hash);
   const next = currentRoute();
   render();
@@ -1229,7 +1376,8 @@ window.addEventListener("hashchange", (event) => {
   focus?.focus({preventScroll:!sameSheet});
 });
 
-render();
+if (/^#play\/new\/YPHub\b/i.test(location.hash)) location.replace("#hub");
+else render();
 const requests = [fetch("catalog.json").then((response) => {
   if (!response.ok) throw new Error("Catalog unavailable");
   return response.json();
@@ -1278,11 +1426,17 @@ Promise.allSettled(requests).then(([index, , samples, archive]) => {
 registerSuggestions('#catalog-search',{options:()=>catalog[catalogKind].filter(entry=>!Number(startLevel)||catalogKind!=='adventures'||entry.level?.start<=Number(startLevel)&&Number(startLevel)<=(entry.level.end??20)).map(entry=>({label:entry.name,search:[entry.id,entry.author,entry.source].filter(Boolean).join(' '),detail:[entry.source??entry.id,entry.level?'Levels '+entry.level.start+'–'+(entry.level.end??20):'',entry.storyline].filter(Boolean).join(' · ')}))});
 registerSuggestions('#sheet-search',{options:()=>{const route=gameSheet??currentRoute(),character=route.character;if(!character)return [];const inventory=route.section==='inventory',prepared=document.querySelector('#prepared-only')?.checked;return (inventory?character.items:character.spells).filter(record=>inventory||!prepared||record.prepared).map(record=>({label:record.name.split(' (')[0],search:record.name,detail:inventory?'Inventory · '+(record.quantity??1)+' owned':(record.level?'Level '+record.level:'Cantrip')+(record.source?' · '+record.source:'')}));}});
 
-document.addEventListener('wayfarer:cloud-workspace',event=>{state={characters:[],active:null,...event.detail};if(currentRoute().page==='game'){syncAccountCharacters(state.characters);return;}if(!dialog.open&&!builderOpen&&!document.activeElement?.matches('input,textarea,select'))render();});
+document.addEventListener('wayfarer:cloud-workspace',event=>{state={characters:[],active:null,preferredCharacter:null,...event.detail};arrangeCharacters();if(currentRoute().page==='game'){syncAccountCharacters(orderedCharacters());return;}if(!dialog.open&&!builderOpen&&!document.activeElement?.matches('input,textarea,select'))render();});
+document.addEventListener('wayfarer:prefer-character',event=>{
+  const id = event.detail?.id;
+  if (!id || !state.characters.some((entry) => entry.id === id) || state.preferredCharacter === id) return;
+  setPreferredCharacter(id);
+});
 document.addEventListener('wayfarer:pending-characters',event=>{
   const characters=event.detail?.characters??[];
   if(!characters.length)return;
   state={...state,characters:readDeskCharacters()};
+  arrangeCharacters();
   const focus=characters[0];
   if(focus?.id)location.hash=sheetPath(focus);
   notice(focus?.name ? focus.name+' added to your party.' : 'Test character added.');
@@ -1291,11 +1445,16 @@ document.addEventListener('wayfarer:pending-characters',event=>{
 function readDeskCharacters(){
   try{return JSON.parse(localStorage.getItem(storageKey))?.characters??state.characters;}catch{return state.characters;}
 }
-document.addEventListener('wayfarer:account-status',()=>{const host=document.querySelector('#account-profile-mount');if(host)mountAccountProfile(host);for(const badge of document.querySelectorAll('.account-badge')){
+document.addEventListener('wayfarer:account-status',()=>{
+ const account=accountState();
+ if(account.ready&&account.closedBeta&&!account.user){render();return;}
+ const gate=document.querySelector('#beta-gate-mount');
+ if(gate){render();return;}
+ const host=document.querySelector('#account-profile-mount');if(host)mountAccountProfile(host);for(const badge of document.querySelectorAll('.account-badge')){
  const markup=accountBadge();
  if(badge.outerHTML===markup)continue;
  const focused=document.activeElement===badge,parent=badge.parentElement;
  badge.outerHTML=markup;
  if(focused)parent.querySelector('.account-badge')?.focus({preventScroll:true});
 }});
-void startAccounts();
+void startAccounts().then(()=>render());

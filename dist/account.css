@@ -1,11 +1,64 @@
 .account-badge{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:7px 13px;border:1px solid var(--border);border-radius:20px;color:var(--ink);font-size:.84rem;font-weight:600;text-decoration:none;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.account-badge:hover{background:var(--pale,#e4ecdb)}.account-topbar-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.account-profile{max-width:900px;margin:auto}.account-panel{padding:24px;margin-bottom:20px}.account-panel>p{color:var(--muted);line-height:1.6;margin:12px 0}.profile-identity{display:flex;align-items:center;gap:16px;margin-bottom:20px}.profile-identity p{margin:4px 0;color:var(--muted);overflow-wrap:anywhere}.profile-avatar{flex:none;display:grid;place-items:center;width:58px;height:58px;background:color-mix(in srgb,var(--pale,#dfe9d7) 65%,var(--green) 35%);border-radius:50%;font-weight:700;font-size:1.2rem;color:var(--ink,#2c513a)}.account-profile-form{display:grid;gap:14px;max-width:520px}.account-profile-form label{display:grid;gap:6px;font-size:.9rem;font-weight:600}.account-profile-form input,.account-profile-form textarea{padding:10px 12px;border:1px solid #b7c2ad;border-radius:7px;background:#fffdf7;font:inherit;color:var(--ink);min-width:0;max-width:100%}.account-profile-form button{justify-self:start}.account-buttons{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.google-sign-in{min-height:48px;margin:22px 0}.account-sync-status{font-size:.88rem;line-height:1.5}.account-conflict{padding:16px 0;border-top:1px solid var(--border)}.account-conflict>span{display:block;color:var(--muted);font-size:.8rem}.account-conflict p{margin:8px 0}.account-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px}.account-compare pre{max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#e8eddf;padding:10px;font-size:.75rem}.account-conflict summary{cursor:pointer}@media(max-width:650px){.account-panel{padding:16px}.account-compare{grid-template-columns:minmax(0,1fr)}.account-badge{max-width:150px}.account-topbar-actions{justify-content:flex-end}.profile-identity h2{font-size:1.2rem}}
 
+.beta-gate{
+  min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:24px;
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 28%, color-mix(in srgb, var(--theme-accent, #edcf90) 16%, transparent), transparent 70%),
+    var(--theme-ground, #19271f);
+  color:var(--theme-text, #f4efdf);
+}
+.beta-gate-card{
+  width:min(440px,100%);padding:28px 24px;border-radius:14px;
+  background:color-mix(in srgb, var(--theme-panel, #24352a) 92%, #000 8%);
+  border:1px solid var(--theme-line, #4b5b48);
+  box-shadow:0 18px 48px #0008;
+}
+.beta-gate-kicker{
+  margin:0 0 8px;font:700 .72rem/1.2 var(--body, system-ui, sans-serif);
+  letter-spacing:.14em;text-transform:uppercase;color:var(--theme-accent, #edcf90);
+}
+.beta-gate-card h1{
+  margin:0 0 10px;font:650 clamp(1.8rem,4vw,2.3rem)/1.1 var(--display, Georgia, serif);
+  color:var(--theme-gold, var(--theme-accent, #edcf90));
+}
+.beta-gate-card>p{margin:0 0 8px;color:var(--theme-muted, #b9c8b6);line-height:1.5}
+.beta-gate-warn{color:#e8b4a0 !important}
+.beta-gate .google-sign-in{margin:18px 0 10px}
+.beta-gate .account-sync-status{color:var(--theme-muted, #b9c8b6)}
+.beta-request-form{
+  margin-top:22px;padding-top:18px;border-top:1px solid color-mix(in srgb,var(--theme-line,#4b5b48) 70%,transparent);
+  display:grid;gap:10px;text-align:left
+}
+.beta-request-form h2{margin:0;font:600 1.15rem/1.2 var(--display);color:var(--theme-text,#f4efdf)}
+.beta-request-form>p{margin:0;color:var(--theme-muted,#b9c8b6);font-size:.9rem}
+.beta-request-form label{display:grid;gap:5px;font-size:.84rem;font-weight:600;color:var(--theme-text,#f4efdf)}
+.beta-request-form label span{font-weight:500;color:var(--theme-muted,#b9c8b6)}
+.beta-request-form input,.beta-request-form textarea{
+  width:100%;padding:9px 11px;border:1px solid color-mix(in srgb,var(--theme-line,#4b5b48) 80%,#000);
+  border-radius:8px;background:color-mix(in srgb,var(--theme-panel,#24352a) 88%,#000);color:var(--theme-text,#f4efdf);font:inherit
+}
+.beta-request-form textarea{resize:vertical;min-height:72px}
+.beta-admin-form{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));align-items:end;margin:14px 0}
+.beta-admin-form label{display:grid;gap:5px;font-size:.86rem;font-weight:600}
+.beta-admin-form input{padding:9px 11px;border:1px solid #b7c2ad;border-radius:7px;background:#fffdf7;font:inherit;color:var(--ink);min-width:0}
+.beta-admin h3{margin:18px 0 6px;font:600 1.05rem/1.2 var(--display)}
+.beta-admin-list{list-style:none;margin:0 0 16px;padding:0;display:grid;gap:8px}
+.beta-admin-list li{display:flex;gap:10px;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid var(--border)}
+.beta-admin-list strong{display:block}
+.beta-admin-list small{color:var(--muted);font-size:.78rem}
+.beta-request-item{align-items:flex-start}
+.beta-request-actions{display:flex;flex-wrap:wrap;gap:6px;flex:none}
+.beta-invite-link{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:0 0 14px}
+.beta-invite-link label{flex:1 1 220px;display:grid;gap:5px;font-size:.86rem;font-weight:600}
+.beta-invite-link input{padding:9px 11px;border:1px solid #b7c2ad;border-radius:7px;background:#fffdf7;font:inherit;color:var(--ink);min-width:0}
+
 .account-badge{gap:8px;min-width:36px;padding:4px 10px 4px 4px}
 .account-badge>span:last-child{overflow:hidden;text-overflow:ellipsis}
 .account-badge>.icon{margin-inline-start:6px}
 .account-avatar,.room-profile-avatar{display:grid;place-items:center;border-radius:50%;width:28px;height:28px;flex:none;background:color-mix(in srgb,var(--pale,#dce8d8) 65%,var(--green) 35%);color:var(--ink,#314a3b);font-weight:700;overflow:hidden}
 .profile-avatar{overflow:hidden}
 .account-avatar img,.profile-avatar img,.room-profile-avatar img{width:100%;height:100%;object-fit:cover}
+.account-avatar:has(img),.profile-avatar:has(img),.room-profile-avatar:has(img){background:transparent}
 .profile-photo-controls{margin-bottom:14px}
 .profile-photo-controls label{cursor:pointer}
 .profile-photo-controls:has(input:focus-visible) label{outline:3px solid #a07f36;outline-offset:3px}

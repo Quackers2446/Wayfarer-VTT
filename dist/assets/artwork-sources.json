@@ -1,5 +1,5 @@
 {
-  "policy": "Built-in raster artwork uses unmodified publication images referenced by 5etools. Do not add AI-generated illustrations.",
+  "policy": "Built-in raster artwork uses unmodified publication images referenced by 5etools, plus local hub maps under assets/yawning-portal/ with recorded provenance. Do not add AI-generated illustrations.",
   "release": "5etools-v2.41.2",
   "images": [
     {
@@ -42,6 +42,59 @@
       "sourcePath": "adventure/ToA/017-0301.webp",
       "retrievedFrom": "https://cdn.5e.tools/2024/img/adventure/ToA/017-0301.webp",
       "sha256": "e8f14b009598868901b0cf10490918f7d8c7e9d5ef1b7a2c1d5b07217b6845f4"
+    },
+    {
+      "file": "assets/yawning-portal/1st-floor.webp",
+      "title": "Yawning Portal \u2014 First floor",
+      "publication": "Yawning Portal map pack",
+      "sourcePath": "authoring/Yawning Portal/YP 1st floor 35x28.png",
+      "notes": "Local hub map. Confirm redistribution rights before public deploy. See assets/yawning-portal/CREDITS.txt.",
+      "sha256": "eb174fcdbaf46c8a15df89912367c63ddbdc0506f64359065fd25d49af82cf86",
+      "grid": { "cols": 35, "rows": 28, "cellPx": 128, "width": 4480, "height": 3584 }
+    },
+    {
+      "file": "assets/yawning-portal/2nd-floor.webp",
+      "title": "Yawning Portal \u2014 Second floor",
+      "publication": "Yawning Portal map pack",
+      "sourcePath": "authoring/Yawning Portal/YP 2nd floor.png",
+      "notes": "Local hub map. See assets/yawning-portal/CREDITS.txt.",
+      "sha256": "8206ccfe9406e32f063b8049b72c49bafc618c15a8ea7a47a1f0d84a17d42477",
+      "grid": { "cols": 35, "rows": 28, "cellPx": 128, "width": 4480, "height": 3584 }
+    },
+    {
+      "file": "assets/yawning-portal/3rd-floor.webp",
+      "title": "Yawning Portal \u2014 Third floor",
+      "publication": "Yawning Portal map pack",
+      "sourcePath": "authoring/Yawning Portal/YP 3rd floor.png",
+      "notes": "Local hub map. See assets/yawning-portal/CREDITS.txt.",
+      "sha256": "5976210113bc2b8e597bc7c7716a341fd5f2da022abf7ef78236a9b0417223e5",
+      "grid": { "cols": 35, "rows": 28, "cellPx": 128, "width": 4480, "height": 3584 }
+    },
+    {
+      "file": "assets/yawning-portal/roof.webp",
+      "title": "Yawning Portal \u2014 Roof",
+      "publication": "Yawning Portal map pack",
+      "sourcePath": "authoring/Yawning Portal/YP 4 roof.png",
+      "notes": "Local hub map. See assets/yawning-portal/CREDITS.txt.",
+      "sha256": "3a3b057a7a3dc47634879e88c5048b892f19d899977b3bfd08681a92260dc5b0",
+      "grid": { "cols": 35, "rows": 28, "cellPx": 128, "width": 4480, "height": 3584 }
+    },
+    {
+      "file": "assets/yawning-portal/cellar.webp",
+      "title": "Yawning Portal \u2014 Cellar",
+      "publication": "Yawning Portal map pack",
+      "sourcePath": "authoring/Yawning Portal/YP 0 cellar.png",
+      "notes": "Local hub map. See assets/yawning-portal/CREDITS.txt.",
+      "sha256": "10075e277dd34c09c828ff47d07ffafa7f9fe07061c466f9dfc145b9c0575544",
+      "grid": { "cols": 35, "rows": 28, "cellPx": 128, "width": 4480, "height": 3584 }
+    },
+    {
+      "file": "assets/kennel/tether-rock.png",
+      "title": "Cragmaw kennel tether rock",
+      "publication": "Wayfarer local prop",
+      "sourcePath": "user-provided kennel rock PNG",
+      "notes": "Custom map prop for kennel ropes/tether. See assets/kennel/CREDITS.txt.",
+      "sha256": "1b4581895c4d7531b175b76405f241a3cd64ac4473e28bb1e536455e5365e1f9"
     }
   ]
 }

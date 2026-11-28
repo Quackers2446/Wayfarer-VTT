@@ -5,13 +5,16 @@
   "compatibility_date": "2026-05-25",
   "vars": {
     "CF_ACCOUNT_ID": "1a15c3ffd6933ad42e67777406cb8a61",
-    "TURN_USAGE_CAP_GB": "750"
+    "TURN_USAGE_CAP_GB": "750",
+    "CLOSED_BETA": "1",
+    "BETA_ADMIN_EMAILS": "matthew.zhou@gmail.com"
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "wayfarer-db",
-      "database_id": "af23b966-91b0-416b-87f5-89140e7ddbd2"
+      "database_id": "af23b966-91b0-416b-87f5-89140e7ddbd2",
+      "migrations_dir": "drizzle"
     }
   ]
 }

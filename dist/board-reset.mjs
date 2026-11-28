@@ -1,4 +1,5 @@
 import {preserveSpawnMarkers} from './spawn-points.mjs';
+import {seedYpHubScene} from './hub-quests.mjs';
 
 // Reset only the active map. The room's character ledger remains intact.
 export async function resetSceneBoard(battle, map, { populate, training, reviveParty = false } = {}) {
@@ -16,6 +17,8 @@ export async function resetSceneBoard(battle, map, { populate, training, reviveP
     next.actors.push(...training().filter(actor => actor.side !== 'party'));
     next.sceneReady = true;
   } else await populate(map, next);
+  // Hub NPCs/props are authored outside populateScene — put them back after a wipe.
+  if (map.module === 'YPHub') seedYpHubScene(map, next);
   return next;
 }
 

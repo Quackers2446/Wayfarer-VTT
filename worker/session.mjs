@@ -174,7 +174,9 @@ function validMap(map) {
 function validRoom(room) {
   return room==null || record(room) && typeof room.name==='string' && room.name.trim().length>0 && room.name.length<=80 &&
     !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(room.name) &&
-    [room.adventure,room.adventureName].every(value=>value==null || typeof value==='string' && value.length<=160) &&
+    [room.adventure,room.adventureName,room.hubSession].every(value=>value==null || typeof value==='string' && value.length<=160) &&
+    (room.kind==null || room.kind==='hub' || room.kind==='campaign') &&
+    (room.hubSession==null || uuid.test(room.hubSession)) &&
     [room.createdAt,room.updatedAt].every(value=>value==null || Number.isSafeInteger(value) && value>0);
 }
 
@@ -391,7 +393,15 @@ async function update(request, env, id) {
   if(changedIds.length){const protectedIds=await env.DB.prepare('SELECT id FROM account_users WHERE id IN ('+changedIds.map(()=>'?').join(',')+')').bind(...changedIds).all();if(protectedIds.results.length){const account=await accounts.identity(request,env);for(const actorId of new Set([...Object.keys(beforeControllers),...Object.keys(afterControllers)])){if(beforeControllers[actorId]===afterControllers[actorId])continue;if(protectedIds.results.some(row=>(row.id===beforeControllers[actorId]||row.id===afterControllers[actorId])&&row.id!==account?.id))return fail(403,'Only that signed-in player can change their character claim.');}}}
   if(metadata?.worldVersion===1 && input.state.world?.version!==1){const current=await env.DB.prepare('SELECT state,revision FROM game_sessions WHERE id=?').bind(id).first();return reply({state:JSON.parse(current.state),revision:current.revision,message:'Reload this room to use its adventure-wide save.'},409);}
   if(metadata?.round>0 && input.state.currentMap && metadata.currentMapKey && input.state.currentMap.key!==metadata.currentMapKey)return fail(400,'Finish combat before changing maps.');
-  if(input.state.currentMap && metadata?.adventure && input.state.currentMap.module!==metadata.adventure)return fail(400,"Choose a map from this room’s adventure.");
+  const storedRoom = metadata?.room ? JSON.parse(metadata.room) : null;
+  const lockedAdventure = (typeof storedRoom?.adventure === "string" && storedRoom.adventure) || metadata?.adventure || null;
+  const requestedAdventure = typeof input.state.room?.adventure === "string" ? input.state.room.adventure : null;
+  if (input.state.currentMap && lockedAdventure && input.state.currentMap.module !== lockedAdventure) {
+    // Hub ↔ expedition travel updates room.adventure with the destination module in the same write.
+    if (!requestedAdventure || input.state.currentMap.module !== requestedAdventure) {
+      return fail(400, "Choose a map from this room’s adventure.");
+    }
+  }
   if(metadata?.room) {
     const original=JSON.parse(metadata.room);
     input.state.room={...original,...input.state.room,createdAt:original.createdAt,ownerController:original.ownerController};
@@ -399,8 +409,13 @@ async function update(request, env, id) {
   if(input.state.room) input.state.room={...input.state.room,name:input.state.room.name.trim(),updatedAt:Date.now()};
   const state = JSON.stringify(input.state);
   if (bytes(state) > maxStateBytes) return fail(413,"The encounter is too large to share.");
-  const result = await env.DB.prepare("UPDATE game_sessions SET state=?, revision=revision+1 WHERE id=? AND revision=?")
-    .bind(state,id,input.revision).run();
+  const mapPayload = input.state.currentMap ? JSON.stringify(input.state.currentMap) : null;
+  if (mapPayload && bytes(mapPayload) > maxMapBytes) return fail(413,"The encounter is too large to share.");
+  const result = mapPayload
+    ? await env.DB.prepare("UPDATE game_sessions SET state=?, map=?, revision=revision+1 WHERE id=? AND revision=?")
+      .bind(state, mapPayload, id, input.revision).run()
+    : await env.DB.prepare("UPDATE game_sessions SET state=?, revision=revision+1 WHERE id=? AND revision=?")
+      .bind(state, id, input.revision).run();
   if (result.meta.changes) return reply({revision:input.revision + 1});
   const current = await env.DB.prepare("SELECT state,revision FROM game_sessions WHERE id=?").bind(id).first();
   if (!current) return fail(404,"This session could not be found.");
@@ -693,8 +708,10 @@ async function listRooms(request,env,url) {
     .bind(controller,controller,account?.id??'').all();
   return reply({rooms:results.map(row=>{
     const room=row.room ? JSON.parse(row.room) : {};
+    const kind=room.kind==='hub'?'hub':'campaign';
     return {id:row.id,canDelete:row.accountOwner?row.accountOwner===account?.id:ownsRoom(row.ownerKeyHash,presented),name:room.name || row.mapName,adventure:room.adventure || row.adventure,
-      adventureName:room.adventureName || row.adventure,mapName:row.mapName,mapKey:row.mapKey,
+      adventureName:room.adventureName || row.adventure,mapName:row.mapName,mapKey:row.mapKey,kind,
+      hubSession:typeof room.hubSession==='string'?room.hubSession:null,
       party:JSON.parse(row.party || '[]'),round:row.round,createdAt:room.createdAt || row.joinedAt,
       updatedAt:room.updatedAt || row.lastVisited,lastVisited:row.lastVisited};
   })});
@@ -704,33 +721,15 @@ export async function sessionRequest(request, env) {
   const url = new URL(request.url);
   if(url.pathname.startsWith("/api/auth/")||url.pathname.startsWith("/api/account"))return accounts.route(request,env,{ownerHash,ownsRoom,validToken,boundedBody});
   const match = sessionPath.exec(url.pathname);
-  if (url.pathname !== api && url.pathname !== "/api/rooms" && url.pathname !== "/api/ai/forecast" && !match) return fail(404,"Session endpoint not found.");
+  if (url.pathname !== api && url.pathname !== "/api/rooms" && !match) return fail(404,"Session endpoint not found.");
   if (request.method !== "GET" && request.headers.get("Origin") !== url.origin) return fail(403,"Open Wayfarer to update this session.");
+  // Closed beta: every game/API action needs an approved Google account.
+  if (accounts.closedBeta(env)) {
+    const gate = await accounts.requireApproved(request, env);
+    if (gate.error) return gate.error;
+  }
   try {
     if(url.pathname==="/api/rooms") return await listRooms(request,env,url);
-    if(url.pathname==="/api/ai/forecast") {
-      if (request.method !== 'POST') return fail(405, 'This action is unavailable.');
-      const apiKey = request.headers.get('x-gemini-key')?.trim();
-      if (!apiKey) return fail(400, 'A Gemini API key is required.');
-      const model = request.headers.get('x-gemini-model') || 'gemini-3.8-flash';
-      const targetUrl = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent';
-      const body = await request.text();
-      const geminiRes = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key':apiKey },
-        body
-      });
-      const data = await geminiRes.text();
-      return new Response(data, {
-        status: geminiRes.status,
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-store',
-          ...(geminiRes.headers.get('Retry-After')?{'Retry-After':geminiRes.headers.get('Retry-After')}:{})
-        }
-      });
-    }
     if (!match && request.method === "POST") {
       return await create(request,env);
     }

@@ -1,35 +1,44 @@
 import {upgradeOpenedRoom, upgradeRoomState} from './room-upgrades.mjs';
 import {applyHestiasFury} from './hestias-fury.mjs';
-import {forecastTiles,scanForecastTiles,forecastImageData,refineForecastPixels} from './forecast-quality.mjs';
 import './custom-select.mjs';
 import {loadRestEncounters,restTableChoices,restPolicy,restRiskSummary,restBlocked,takeDungeonRest} from './dungeon-rests.mjs';
-import {openForecastReview} from './forecast-review.mjs';
 import { loadSpellRules, setSpellRuleContext, customSpellRule } from './spell-rule-store.mjs';
 import { customSpellCells, moveCustomSphere, fireZoneBeam } from './custom-spells.mjs';
 import { directional, needsEndpoint } from './spell-shapes.mjs';
 import { allowsWallRing, formRule } from './spell-animation-library.mjs';
 import { armReaction, disarmReaction, isArmed, reactionSpells, canOfferManualReaction, manualReactionOptions, resolveManualReaction } from './reactions.mjs';
 import { resetSceneBoard } from "./board-reset.mjs";
-import { commitRoomState, normalizeRoomState, roomBattle, travelRoom, roomMapChoices } from "./room-state.mjs";
+import { commitRoomState, normalizeRoomState, roomBattle, travelRoom, travelExpedition, roomMapChoices } from "./room-state.mjs";
+import { hubActions, isYpHub, runHubAction, seedYpHubScene, ypDefaultMap } from "./hub-quests.mjs";
+import { HUB_TABLES, tickHubAmbience } from "./hub-ambience.mjs";
+import {
+  betrayKennelPack, checkKennelApproach, followKennelAllies, kennelActions, pullAlertedDen, runKennelAction, seedKennelWolves,
+} from "./kennel-wolves.mjs";
 import { prepareMonsterRewards } from "./encounter-rewards.mjs";
 import { withinReach, takeLoot, lootContents, carryBody, dragBody, dropBody, placeBody, syncRewardSheets, bodyWeight, initializeTreasure, releaseRevivedBodies, searchRegion, investigateFeature, useFeature, featureCardModel, applyPassiveFeatureHints, triggerFeaturesAt, recordFeatureDiscovery } from "./world-interactions.mjs";
 import { featuresInRegion, visibleFeaturePips, setFeatureState, syncMarkerForFeature } from "./room-features.mjs";
 import { createFloatingPanels } from "./floating-panels.mjs";
 import { createWallEditor } from './wall-editor.mjs';
 import { applyBakedWalls } from './baked-walls.mjs';
-import { getApiKey, setApiKey, clearApiKey, hasApiKey, isKeyRemembered, callGeminiVision, processForecastGeometry } from './ai-forecast.mjs';
+import { clearApiKey } from './ai-forecast.mjs';
 import { fogSettings, visionSettings, viewerVision, viewerMemory } from './dynamic-fog.mjs';
+// Temporarily disable Gemini wall forecast — wipe any remembered browser key.
+try { clearApiKey(); } catch { /* ignore */ }
 import { knownRooms, forgetRoom, rememberRoom, rememberRooms, roomList } from './adventure-rooms.mjs';
 import { turnView, canTakeTurn, sharedTurnGroup, turnBudgetStamp } from './combat.mjs';
 import { creatureSize, tokenSize, actorCells, containsCell, touchesArea } from './actor-space.mjs';
 import { drawMonsterArtwork, monsterArtwork } from "./monster-art.mjs";
-import { characterTokenArtwork, localTokenBlob, uploadSessionToken } from "./character-token.mjs";
+import { characterTokenArtwork, localTokenBlob, paintCharacterPortraits, tokenPortrait, uploadSessionToken } from "./character-token.mjs";
 import { enrichCharacter } from "./character-rules.mjs";
+import { characterProfile, initials } from "./character-view.mjs";
 import { alignArtwork, artworkFitIsDefault, defaultSquareFeet, fitsCurrentGrid, gridGeometry, migrateGridState, normalizeArtworkFit } from "./map-grid.mjs";
 import { areaKey, populateScene, rosterTokens } from "./scene-populate.mjs";
+import { applyMapTemplate, loadMapTemplate } from "./map-templates.mjs";
 import { gameScreen } from "./game-screen.mjs";
 import { createHealthPresentation } from "./health-presentation.mjs";
 import { createCombatCues } from "./combat-cues.mjs";
+import { playCombatVictory, shouldPlayCombatVictory } from "./combat-victory.mjs";
+import { createSpeechBubbles } from "./speech-bubbles.mjs";
 import { createTokenHover } from "./token-hover.mjs";
 import { createTokenMotion } from './token-motion.mjs';
 import { createGameChat } from "./game-chat.mjs";
@@ -51,20 +60,20 @@ import { addDoor, addWall, doorAt, mapFloor, mapWalls, removeDoor, removeWall, s
 import { escape, plural, signed, text } from "./format.mjs";
 import { icon } from "./icons.mjs";
 import { attachArchive, archiveName, formatEntries, hasArchive, hostedMapImage, mapImage, monsterRecord } from "./rules-library.mjs";
-import { cellCenter, creatureActor, moduleMaps, partyActor, regionAt, regionCells, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap } from "./encounters.mjs";
+import { cellCenter, creatureActor, isBuiltinModule, moduleMaps, moduleMapsOrBuiltin, partyActor, regionAt, regionCells, resolveExpeditionMap, roomNotes, roomRoster, startingRegion, trainingActors, trainingMap } from "./encounters.mjs";
 import { cellsNearSpawn, createSpawnMarker, findSpawn, removeSpawnMarker, spawnMarkers } from "./spawn-points.mjs";
 import { listHomebrew } from "./homebrew-store.mjs";
 import { monsterStatBlock } from "./homebrew-schema.mjs";
 import { defeatedCreature, drawGrid, gridPosition, nearestGridEdge, terrainAt } from "./grid-view.mjs";
 import { createCamera, mapControls, mapHint, mapViewport } from "./map-camera.mjs";
 import {
-  listRooms, deleteRoom, artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedUsername, sessionCode, sessionHash,
+  listRooms, deleteRoom, artworkURL, createSession, inviteURL, joinPanel, readSession, recentSession, rememberedHubSession, rememberedUsername, sessionCode, sessionHash,
   syncSessionPlayers, tablePanel, writeSession
 } from "./multiplayer.mjs";
 import {
   actorIsUp, applyDamage, armorClass, breathTypes, castSpell, checkSpellTethers, condition, currentActor, deathSave, diceTerms, distanceFt, drinkPotion, helpUp, throwHealingPotion,
   endConcentration, endInitiative, endTurn, fallingDamage, hasFeature, incapacitated, joinInitiative, keyAt, moveLeft,
-  exploreToken, heal, lineClear, log, movementGroup, moveToken, newBattle, occupies, opportunity, placeToken, canStand, previewMovement, recordSpell, resolveDeflection, resolveOpportunity, requestTruce, rollDice,
+  approachForStrike, exploreToken, heal, lineClear, log, movementGroup, moveToken, newBattle, occupies, opportunity, placeToken, canStand, previewMovement, recordSpell, resolveDeflection, resolveOpportunity, requestTruce, rollDice,
   rollStrike, sneakAttackStatus, slotRank, spellCells, spellTargetCount, startInitiative, supportedSpell, sustainWitchBolt, turnAction, wakeCreature,
 } from "./combat.mjs";
 
@@ -102,11 +111,10 @@ let selectedParty = "";
 let camera;
 let focusedGameMap;
 let artworkRequest;
+let artworkLoading = false;
 let artworkNote = "";
 let customArtwork;
-let aiForecasting = false;
-let aiForecastAbort;
-let aiForecastMessage = "";
+let sessionConnectingTimer = 0;
 let table;
 let tableOpen = false;
 let partyOpen = false;
@@ -186,7 +194,23 @@ let storyOpen = false;
 const storyToasts = createStoryToasts();
 let scheduledEnemyBattle;
 const combatCues = createCombatCues();
+const speechBubbles = createSpeechBubbles();
+let ambientTimer = 0;
 let reactionPause = null;
+
+function scheduleHubAmbience() {
+  clearTimeout(ambientTimer);
+  if (!context?.game || !isYpHub(map) || battle?.round) return;
+  ambientTimer = setTimeout(() => {
+    if (!context?.game || !isYpHub(map) || battle?.round || document.hidden) {
+      scheduleHubAmbience();
+      return;
+    }
+    const bark = tickHubAmbience(battle, map, battle.actors.filter((actor) => actor.side === "party"));
+    if (bark?.actorId) speechBubbles.say(bark.actorId, bark.lines, { name: bark.name });
+    scheduleHubAmbience();
+  }, 4500);
+}
 let localChat;
 let revealHudTimer = 0;
 let revealPaintFrame = 0;
@@ -305,22 +329,155 @@ async function refreshRooms() {
   }
 }
 function roomNameDefault() {
-  const name = context?.adventures.find(entry => entry.id === roomDraft.adventure)?.name ?? (roomDraft.adventure === "training" ? trainingMap.title : roomDraft.adventure);
+  const name = context?.adventures.find(entry => entry.id === roomDraft.adventure)?.name ?? (roomDraft.adventure === "training" ? trainingMap.title : roomDraft.adventure === "YPHub" ? "Yawning Portal" : roomDraft.adventure);
   return (name + ' · Room ' + (rooms.filter(room => room.adventure === roomDraft.adventure).length + 1)).slice(0, 80);
 }
+function preferredCharacterId() {
+  const id = context?.preferredCharacter;
+  return id && context.characters.some((character) => character.id === id) ? id : null;
+}
+/** Default starting party: only the preferred character when set; otherwise the first sheet. */
+function defaultPartyIds() {
+  const preferred = preferredCharacterId();
+  if (preferred) return [preferred];
+  const first = context.characters[0]?.id;
+  return first ? [first] : [];
+}
+function charactersForParty(ids) {
+  const preferred = preferredCharacterId();
+  const chosen = context.characters.filter((character) => ids.has(character.id));
+  if (!preferred) return chosen;
+  return [
+    ...chosen.filter((character) => character.id === preferred),
+    ...chosen.filter((character) => character.id !== preferred),
+  ];
+}
+function preferredPartyActor(actors = battle.actors) {
+  const preferred = preferredCharacterId();
+  const party = actors.filter((actor) => actor.side === "party" && actorIsUp(actor) && !actor.kennelAlly);
+  if (preferred) {
+    const match = party.find((actor) => actor.id === "party:" + preferred && canControl(actor));
+    if (match) return match;
+  }
+  return party.find((actor) => canControl(actor)) ?? party[0] ?? null;
+}
+function rememberPreferredFromActor(actor) {
+  const id = actor?.id?.startsWith("party:") ? actor.id.slice(6) : "";
+  if (!id || !context?.characters.some((character) => character.id === id)) return;
+  context.preferredCharacter = id;
+  document.dispatchEvent(new CustomEvent("wayfarer:prefer-character", { detail: { id } }));
+}
+function adventureLevelLabel(entry) {
+  const range = entry?.level;
+  if (!range?.start) return "";
+  return range.end && range.end !== range.start
+    ? `Levels ${range.start}–${range.end}`
+    : `Level ${range.start}${range.end ? "" : "+"}`;
+}
+function adventureBriefing(selected) {
+  const id = roomDraft.adventure;
+  const party = context.characters.filter((character) => selected.has(character.id)).map((record) => enrichCharacter(record));
+  const partyLevels = party.map((character) => Number(character.level)).filter((level) => Number.isFinite(level));
+  const partyLine = partyLevels.length
+    ? `Your party · ${partyLevels.length === 1 ? `level ${partyLevels[0]}` : `levels ${Math.min(...partyLevels)}–${Math.max(...partyLevels)}`}`
+    : "No starting characters selected yet";
+
+  if (id === "YPHub" || context?.hubEntry) {
+    return `<aside class="adventure-brief" aria-label="Adventure details">
+      <div class="adventure-brief-main">
+        <strong>Yawning Portal</strong>
+        <p>Central hub — socialize, accept leads, then depart into a separate campaign room. Not listed under Adventure rooms.</p>
+      </div>
+      <ul class="adventure-brief-facts">
+        <li><span>Recommended</span><b>Any level</b></li>
+        <li><span>Style</span><b>Social hub</b></li>
+        <li><span>Party</span><b>${escape(partyLine)}</b></li>
+      </ul>
+    </aside>`;
+  }
+  if (id === "training") {
+    return `<aside class="adventure-brief" aria-label="Adventure details">
+      <div class="adventure-brief-main">
+        <strong>Wayfarer practice yard</strong>
+        <p>A safe map for testing movement, combat, and sheets. Includes a ready-to-play character if you start empty.</p>
+      </div>
+      <ul class="adventure-brief-facts">
+        <li><span>Recommended</span><b>Any level</b></li>
+        <li><span>Style</span><b>Practice</b></li>
+        <li><span>Party</span><b>${escape(partyLine)}</b></li>
+      </ul>
+    </aside>`;
+  }
+
+  const entry = context.adventures.find((adventure) => adventure.id === id);
+  if (!entry) {
+    return `<aside class="adventure-brief" aria-label="Adventure details">
+      <div class="adventure-brief-main"><strong>${escape(id)}</strong><p>Attach your 5etools archive to load this module’s maps and room notes.</p></div>
+      <ul class="adventure-brief-facts"><li><span>Party</span><b>${escape(partyLine)}</b></li></ul>
+    </aside>`;
+  }
+
+  const levelLabel = adventureLevelLabel(entry) || "Levels vary";
+  const squareMaps = (entry.maps ?? []).filter((item) => item.grid === "square" && !item.player).length;
+  const facts = [
+    ["Recommended", levelLabel],
+    entry.storyline ? ["Series", entry.storyline] : null,
+    entry.source ? ["Source", entry.source] : null,
+    entry.chapters?.length ? ["Chapters", String(entry.chapters.length)] : null,
+    squareMaps ? ["Square maps", String(squareMaps)] : null,
+    ["Party", partyLine],
+  ].filter(Boolean);
+
+  let fit = "";
+  const start = entry.level?.start, end = entry.level?.end ?? entry.level?.start;
+  if (start && partyLevels.length) {
+    const low = Math.min(...partyLevels), high = Math.max(...partyLevels);
+    if (high < start) fit = `Your party is below the recommended band (level ${start}${end && end !== start ? "–" + end : ""}).`;
+    else if (low > end) fit = `Your party is above the recommended band (level ${start}${end && end !== start ? "–" + end : ""}).`;
+    else if (low < start || high > end) fit = `Some characters sit outside the recommended band (level ${start}${end && end !== start ? "–" + end : ""}).`;
+    else fit = `Fits the recommended level band.`;
+  }
+
+  return `<aside class="adventure-brief" aria-label="Adventure details">
+    <div class="adventure-brief-main">
+      <strong>${escape(entry.name)}</strong>
+      <p>${escape([entry.author, entry.published?.slice(0, 4)].filter(Boolean).join(" · ") || "Published 5e adventure module.")}</p>
+      ${fit ? `<p class="adventure-brief-fit">${escape(fit)}</p>` : ""}
+    </div>
+    <ul class="adventure-brief-facts">${facts.map(([label, value]) =>
+      `<li><span>${escape(label)}</span><b>${escape(value)}</b></li>`).join("")}</ul>
+  </aside>`;
+}
 function roomCreationForm(moduleOptions, ready) {
-  const selected = roomDraft.party ?? new Set(context.characters.slice(0, 4).map(character => character.id));
+  const selected = roomDraft.party ?? new Set(defaultPartyIds());
+  const preferred = preferredCharacterId();
   return `<form id="create-room-form" class="room-create-form">
     <div class="play-field-row">
       ${field("Adventure","play-module",moduleOptions,pending?"disabled":"")}
       ${roomDraft.adventure!=="training"&&ready?field("Starting map","play-map",maps.map(entry=>option(entry.key,entry.title,map.key===entry.key)),pending?"disabled":""):""}
     </div>
-    ${roomDraft.adventure!=="training"&&!hasArchive()?archivePanel():""}
+    ${adventureBriefing(selected)}
+    ${!isBuiltinModule(roomDraft.adventure)&&!hasArchive()?archivePanel():""}
     <div class="play-field-row">${input('Room name', 'new-room-name', roomDraft.name || roomNameDefault(), 'text', 'required maxlength="80"')}
       ${input('Your username', 'new-room-username', roomDraft.username || rememberedUsername(), 'text', 'required maxlength="24" autocomplete="nickname"')}</div>
-    <div class="room-party-guidance"><p>You can add more characters in the room.</p><button type="button" class="button outline small" data-action="upload">Import character sheets</button></div>
-    ${context.characters.length ? `<fieldset class="room-party-picker"><legend>Starting party · choose up to four</legend>${context.characters.map(character =>
-    `<label><input type="checkbox" name="room-character" value="${escape(character.id)}" ${selected.has(character.id) ? 'checked' : ''} ${roomDraft.prepared ? 'disabled' : ''}>${escape(character.name)}</label>`).join('')}</fieldset>` :
+    <div class="room-party-guidance"><p>You can add more characters in the room after you arrive.</p><button type="button" class="button outline small" data-action="upload">Import character sheets</button></div>
+    ${context.characters.length ? `<fieldset class="room-party-picker"${roomDraft.prepared?' disabled':''}>
+      <legend>Starting party <span class="room-party-count">${selected.size} selected</span><span class="room-party-limit">· up to four</span></legend>
+      <div class="room-party-grid">${context.characters.map((record, index) => {
+        const character = enrichCharacter(record);
+        const checked = selected.has(character.id);
+        const isDefault = preferred === character.id;
+        const profile = characterProfile(character);
+        const level = character.level != null ? 'Level ' + text(character.level) : '';
+        const meta = [profile, level].filter(Boolean).join(' · ');
+        return `<label class="room-party-tile${checked?' is-selected':''}${isDefault?' is-default':''}">
+          <input type="checkbox" class="sr-only" name="room-character" value="${escape(character.id)}" ${checked?'checked':''} ${roomDraft.prepared?'disabled':''}>
+          <span class="avatar${character.tokenImage?' has-photo':` tone-${index%4}`}" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage)}</span>
+          <span class="room-party-copy"><strong>${escape(character.name)}</strong>${meta?`<small>${meta}</small>`:''}${isDefault?'<small class="room-party-default">Default</small>':''}</span>
+          <span class="room-party-mark" aria-hidden="true">${icon('check',15)}</span>
+        </label>`;
+      }).join('')}</div>
+    </fieldset>` :
       (roomDraft.adventure==='training'?'<p class="play-hint">The practice yard includes a ready-to-play character.</p>':'')}
     ${roomDraft.prepared?'<p class="play-hint">The room will use your prepared encounter and its party.</p>':''}
     <div class="play-action-row"><button type="submit" class="button primary small" ${pending || !ready || sceneJobs.has(battle) ? 'disabled' : ''}>${pending ? 'Preparing room…' : 'Create room'}</button>
@@ -329,10 +486,11 @@ function roomCreationForm(moduleOptions, ready) {
   </form>`;
 }
 async function createAdventureRoom() {
-  if (pending || table || !context?.newRoom || map.module!==roomDraft.adventure || (map.module!=="training"&&!hasArchive())) return;
+  if (pending || table || !context?.newRoom || map.module!==roomDraft.adventure || (!isBuiltinModule(map.module)&&!hasArchive())) return;
+  if (roomDraft.adventure === "YPHub") { location.hash = "#hub"; return; }
   const name = (roomDraft.name || roomNameDefault()).normalize('NFKC').trim(), username = (roomDraft.username || rememberedUsername()).normalize('NFKC').trim();
   if (!name || name.length > 80 || !username || username.length > 24) { status = 'Enter a room name and a username.'; redraw(); return; }
-  const characters = context.characters.filter(character => (roomDraft.party ?? new Set(context.characters.slice(0, 4).map(character => character.id))).has(character.id));
+  const characters = charactersForParty(roomDraft.party ?? new Set(defaultPartyIds()));
   if (!roomDraft.prepared && characters.length > 4) { status = 'Choose up to four starting characters.'; redraw(); return; }
   const previous = { battle, selectedId, room, tool, category,previewState }, route = location.hash;
   const fresh = roomDraft.prepared ? structuredClone(battle) : newBattle();
@@ -341,7 +499,7 @@ async function createAdventureRoom() {
   if(!roomDraft.prepared)previewState=null;
   battle = fresh; selectedId = ''; pending = true; status = ''; redraw();
   try {
-    await launchGame({ roomName: name, username }, characters);
+    await launchGame({ roomName: name, username, roomKind: "campaign" }, characters);
     roomDraft.name = ''; roomDraft.prepared = false; rooms = knownRooms();
   } catch (error) { if (location.hash === route) status = error.message; }
   finally {
@@ -350,8 +508,143 @@ async function createAdventureRoom() {
   }
 }
 
+function hubEntryPage() {
+  const selected = roomDraft.party ?? new Set(defaultPartyIds());
+  const resumeId = rememberedHubSession();
+  return `<section id="hub-entry" class="room-setup hub-entry">
+    <header class="play-header"><div><h1>Yawning Portal</h1>
+      <p>Central hub for meeting friends and choosing expeditions. Adventures themselves run in separate campaign rooms.</p></div>
+      <a class="text-link" href="#play">Adventure rooms</a></header>
+    <form id="enter-hub-form" class="room-create-form">
+      ${adventureBriefing(selected)}
+      <div class="play-field-row">${input("Your username", "hub-username", roomDraft.username || rememberedUsername(), "text", 'required maxlength="24" autocomplete="nickname"')}</div>
+      <div class="room-party-guidance"><p>Bring up to four characters into the tavern. Depart later opens a campaign room with this party.</p>
+        <button type="button" class="button outline small" data-action="upload">Import character sheets</button></div>
+      ${context.characters.length ? `<fieldset class="room-party-picker">
+        <legend>Party at the tavern <span class="room-party-count">${selected.size} selected</span><span class="room-party-limit">· up to four</span></legend>
+        <div class="room-party-grid">${context.characters.map((record, index) => {
+          const character = enrichCharacter(record);
+          const checked = selected.has(character.id);
+          const isDefault = preferredCharacterId() === character.id;
+          const profile = characterProfile(character);
+          const level = character.level != null ? "Level " + text(character.level) : "";
+          const meta = [profile, level].filter(Boolean).join(" · ");
+          return `<label class="room-party-tile${checked ? " is-selected" : ""}${isDefault ? " is-default" : ""}">
+            <input type="checkbox" class="sr-only" name="room-character" value="${escape(character.id)}" ${checked ? "checked" : ""}>
+            <span class="avatar${character.tokenImage ? " has-photo" : ` tone-${index % 4}`}" aria-hidden="true">${tokenPortrait(initials(character.name), character.tokenImage)}</span>
+            <span class="room-party-copy"><strong>${escape(character.name)}</strong>${meta ? `<small>${meta}</small>` : ""}${isDefault ? '<small class="room-party-default">Default</small>' : ""}</span>
+            <span class="room-party-mark" aria-hidden="true">${icon("check", 15)}</span>
+          </label>`;
+        }).join("")}</div>
+      </fieldset>` : '<p class="play-hint">Import or create a character before entering the tavern.</p>'}
+      <div class="play-action-row">
+        <button type="submit" class="button primary small" ${pending || !context.characters.length ? "disabled" : ""}>${pending ? "Opening…" : "Enter the tavern"}</button>
+        ${resumeId ? `<a class="button outline small" href="${sessionHash(resumeId)}">Resume last hub</a>` : ""}
+      </div>
+      <p class="room-create-status" role="status">${escape(status || tableMessage)}</p>
+    </form>
+  </section>`;
+}
+
+async function enterHubSession() {
+  if (pending || table || !context?.hubEntry) return;
+  const username = (roomDraft.username || rememberedUsername()).normalize("NFKC").trim();
+  if (!username || username.length > 24) { status = "Enter a username."; redraw(); return; }
+  const characters = charactersForParty(roomDraft.party ?? new Set(defaultPartyIds()));
+  if (!characters.length) { status = "Choose at least one character."; redraw(); return; }
+  if (characters.length > 4) { status = "Choose up to four characters."; redraw(); return; }
+  const previous = { battle, selectedId, room, tool, category, previewState, map }, route = location.hash;
+  const hubMap = ypDefaultMap();
+  map = hubMap;
+  moduleId = "YPHub";
+  const fresh = newBattle();
+  delete fresh.controllers;
+  previewState = null;
+  battle = fresh;
+  selectedId = "";
+  pending = true;
+  status = "";
+  redraw();
+  try {
+    await launchGame({ roomName: "Yawning Portal", username, roomKind: "hub" }, characters);
+  } catch (error) {
+    if (location.hash === route) status = error.message;
+  } finally {
+    if (battle === fresh) ({ battle, selectedId, room, tool, category, previewState, map } = previous);
+    pending = false;
+    if (context && !context.game && root()) redraw();
+  }
+}
+
+/** Leave the hub session and open a campaign room seeded with the party at the destination map. */
+async function openCampaignFromHub(destinationMap) {
+  if (!table?.state) throw new Error("Depart from the Yawning Portal hub session.");
+  const hubId = table.id;
+  const username = rememberedUsername() || table.player || "Adventurer";
+  status = "Opening the expedition room…";
+  redraw();
+  const resolved = await resolveExpeditionMap(destinationMap);
+  if (resolved.module === "LMoP" && resolved.id === "1ab" && (resolved.regions?.length ?? 0) < 3) {
+    throw new Error("Attach your 5etools archive so Cragmaw Hideout can load its rooms, creatures, and map art.");
+  }
+  // Resume the linked campaign when returning to the same expedition from the hub.
+  const linked = knownRooms().find((room) =>
+    room.kind === "campaign" &&
+    room.hubSession === hubId &&
+    (room.mapKey === resolved.key || room.adventure === resolved.module));
+  if (linked?.id) {
+    rememberedHubSession(hubId);
+    leaveTable();
+    location.hash = sessionHash(linked.id);
+    return;
+  }
+  const previous = tableState();
+  const moved = travelExpedition(previous, resolved);
+  const destination = moved.currentMap;
+  const active = roomBattle(moved, destination);
+  if (!active.sceneReady && destination.module !== "training") await populateScene(destination, active);
+  await applyBakedWalls(destination, active);
+  const hostiles = active.actors.filter((actor) => actor.side === "hostile" || actor.side === "neutral");
+  if (destination.module === "LMoP" && destination.id === "1ab" && !hostiles.length) {
+    throw new Error("Cragmaw Hideout did not load its creatures. Re-attach the 5etools archive and depart again.");
+  }
+  for (const member of active.actors.filter((entry) => entry.side === "party")) discoverStory(active, destination, member);
+  rememberVision(active, destination);
+  const state = commitRoomState(moved, destination, active, moved.alignment);
+  const adventureName = context.adventures.find((entry) => entry.id === destination.module)?.name ?? destination.title;
+  state.room = {
+    name: destination.title,
+    adventure: destination.module,
+    adventureName,
+    kind: "campaign",
+    hubSession: hubId,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const tokens = new Map();
+  for (const actor of state.battle.actors) {
+    const hash = partyTokenImage(actor);
+    if (!hash) { delete actor.tokenImage; continue; }
+    actor.tokenImage = hash;
+    if (!tokens.has(hash)) tokens.set(hash, await localTokenBlob(hash));
+  }
+  const arrivalKeys = (state.battle.story?.discoveries ?? []).slice(-2).map((entry) => entry.key).filter(Boolean);
+  try { sessionStorage.setItem("wayfarer-arrival-story", JSON.stringify(arrivalKeys)); } catch { /* ignore */ }
+  const result = await createSession({ ...destination, detectedGrid: null }, state, null, tokens, controller);
+  rememberedHubSession(hubId);
+  rooms = rememberRoom(result.id, destination, state);
+  await syncSessionPlayers(result.id, controller, username).catch(() => null);
+  leaveTable();
+  location.hash = sessionHash(result.id);
+}
+
 let pathPreview;
 let previewMessage = "";
+/** After a hub interact saves, open a campaign room or return to the tavern. */
+let pendingHubDepart = null;
+let pendingHubReturn = false;
+/** Weapon attack waiting for move-into-range (and any opportunity attacks) to finish. */
+let pendingStrike = null;
 let interactionPosition = null;
 let objectTarget = null, bodyPlacement = '', potionUse = 'drink', featureTargetId = '';
 let spellEnd=null,spellHotSide='left',spellWallForm='wall',controlledZone=null;
@@ -436,15 +729,26 @@ function visibleMarkers(sight = context?.game ? displayVision() : null) {
 function boardFeatureMarkers(sight = context?.game ? displayVision() : null) {
   const dm = !table || table.role === "dm" || !fogActive();
   const pips = visibleFeaturePips(battle, { dm, sight, fogOn: fogActive() });
-  return pips.map((feature) => ({
-    id: feature.id,
-    type: feature.state === "hinted" ? "hint" : (feature.kind === "creature_hint" ? "creature" : feature.kind === "secret" || feature.kind === "mechanism" || feature.kind === "lore" ? "object" : feature.kind),
-    name: feature.name,
-    x: feature.x,
-    y: feature.y,
-    hinted: feature.state === "hinted",
-    feature: true,
-  }));
+  return pips.map((feature) => {
+    const kind = feature.kind || "object";
+    const type = feature.state === "hinted" ? "hint"
+      : kind === "creature_hint" ? "creature"
+      : kind === "secret" || kind === "mechanism" || kind === "lore" ? "object"
+      : kind;
+    return {
+      id: feature.id,
+      type,
+      kind,
+      state: feature.state,
+      name: feature.name,
+      x: feature.x,
+      y: feature.y,
+      hinted: feature.state === "hinted",
+      revealed: feature.state === "revealed" || feature.state === "resolved" || feature.state === "triggered",
+      looted: feature.looted,
+      feature: true,
+    };
+  });
 }
 
 function repaintCreatureArt() {
@@ -496,13 +800,25 @@ function paintTokenPreviews(images) {
 
 function ensureScene(entry = map, state = battle) {
   if (entry.module === "training") return Promise.resolve();
-  if (state.sceneReady && state.wallData) return Promise.resolve();
+  if (entry.module === "YPHub") seedYpHubScene(entry, state);
+  if (entry.module === "LMoP" && entry.id === "1ab" && state.sceneReady) seedKennelWolves(entry, state);
+  if (state.sceneReady && (state.wallData || entry.module === "YPHub")) return Promise.resolve();
   if (sceneJobs.has(state)) return sceneJobs.get(state);
   const fresh = !state.sceneReady;
-  const loading = Promise.all([applyBakedWalls(entry, state), fresh ? populateScene(entry, state) : null]).then(([baked]) => {
+  const loading = (async () => {
+    // Seed Map Studio walls/fog/grid before baked walls so studio walls win.
+    if (fresh && !state._fromTemplate) {
+      try {
+        const template = await loadMapTemplate(entry.module, entry.key);
+        if (template) await applyMapTemplate(entry, state, template);
+      } catch { /* offline / unsigned-in */ }
+    }
+    const [baked] = await Promise.all([applyBakedWalls(entry, state), fresh ? populateScene(entry, state) : null]);
+    if (entry.module === "YPHub") seedYpHubScene(entry, state);
+    if (entry.module === "LMoP" && entry.id === "1ab") seedKennelWolves(entry, state);
     if (baked && map === entry && battle === state) rememberVision(state, entry);
     if ((baked || fresh) && !table && battle===state && map.key===entry.key) saveBattle(entry,state);
-  }).catch(() => {
+  })().catch(() => {
     if (map === entry && battle === state) status = "Some starting tokens could not be read. Reopen the map to retry.";
   }).finally(() => {
     sceneJobs.delete(state);
@@ -554,7 +870,8 @@ function paintBoard() {
     tokenPositions: context.game ? tokenMotion.positions : null, movementLabels: context.game ? tokenMotion.labels : null,
     path: pathPreview, visible, fog: fogActive() && sight ? { ...vision, memory: viewerMemory(battle, map, table ? controller : null), settings: fogSettings(battle) } : null,
     wallEditor: wallEditor.active ? wallEditor : null,
-    footprint, showRegions: alignmentOpen || !context.game || !art || tool === "room",
+    // Hide 5etools room outlines while artwork is loading — show a loader instead of the schematic.
+    footprint, showRegions: !artworkLoading && (alignmentOpen || !context.game || !art || tool === "room"),
     markers: (() => {
       const shown = visibleMarkers(sight);
       const ids = new Set(shown.map((marker) => marker.id));
@@ -562,14 +879,28 @@ function paintBoard() {
       for (const pip of boardFeatureMarkers(sight)) {
         if (ids.has(pip.id)) {
           const existing = shown.find((marker) => marker.id === pip.id);
-          if (existing && pip.hinted) existing.hinted = true;
+          if (existing) {
+            if (pip.hinted) existing.hinted = true;
+            if (pip.kind) existing.kind = pip.kind;
+            if (pip.state) existing.state = pip.state;
+            if (pip.looted != null) existing.looted = pip.looted;
+          }
+          // Kennel hitch stays rope-only — never promote it back to rock art or a crate pip.
+          if (existing && (existing.id === "LMoP|1ab|021|chain-pole" || existing.visual === "rock" || existing.type === "rock" || existing.visual === "pole" || existing.type === "pole")) {
+            existing.type = "rock";
+            existing.visual = "rock";
+            existing.hidden = true;
+            delete existing.image;
+          }
           continue;
         }
+        // Skip a fresh kennel hitch pip — ropes are drawn from the feature/marker separately.
+        if (pip.id === "LMoP|1ab|021|chain-pole") continue;
         ids.add(pip.id);
         shown.push(pip);
       }
       return shown;
-    })(), tokenImages, overlay: alignmentOpen ? "printed" : battle.gridOverlay ?? "artwork",
+    })(), tokenImages, overlay: artworkLoading ? "none" : alignmentOpen ? "printed" : battle.gridOverlay ?? "artwork",
   };
   // Stable string key — a fresh object every paint defeated the layered board cache and
   // forced full artwork/fog/marker redraws on every token-motion frame (huge on giant maps).
@@ -588,16 +919,22 @@ function paintBoard() {
     fit ? [fit.scale, fit.offsetX, fit.offsetY].join(",") : "",
     Object.keys(battle.terrain || {}).length,
     (battle.spellZones || []).map((zone) => zone.id || zone.name || "").join(","),
-    options.markers.map((marker) => [marker.id, marker.x, marker.y, marker.type, marker.hinted ? 1 : 0, marker.revealed ? 1 : 0].join(":")).join("|"),
+    options.markers.map((marker) => [marker.id, marker.x, marker.y, marker.type, marker.kind || "", marker.state || "", marker.hinted ? 1 : 0, marker.revealed ? 1 : 0, marker.looted ? 1 : 0].join(":")).join("|"),
     options.footprint ? [...options.footprint].join(",") : "",
     options.wallEditor ? "walls" : "",
   ].join("/");
   const paintState = { ...battle, artworkFit: liveArtFit, actors: battle.actors.map(actor => displayedActor(actor)) };
   animatedBoard = { camera, drawingMap, state: paintState, options };
   camera.paint((canvas, view) => drawGrid(canvas, view, drawingMap, paintState, options));
+  syncMapLoadingOverlay();
   const frame = element.querySelector('.board-frame')?.parentElement;
   if (frame) { let bar = frame.querySelector('.wall-editor-host'); if (wallEditor.active) { if (!bar) { bar = document.createElement('div'); bar.className = 'wall-editor-host'; frame.append(bar); } bar.innerHTML = wallEditor.toolbar(); } else bar?.remove(); }
   tokenHover.sync({ map: drawingMap, battle: { ...battle, actors: battle.actors.map(actor => tokenMotion.positions.has(actor.id) && context.game ? { ...displayedActor(actor), ...tokenMotion.positions.get(actor.id) } : displayedActor(actor)) }, visible, surface: element.querySelector('#play-grid'), gesturing: () => camera?.gesturing() });
+  speechBubbles.sync({
+    map: drawingMap,
+    battle,
+    surface: element.querySelector("#play-grid"),
+  });
   combatCues.aimPreview(aimingWall && aimEnd ? {
     square: spellSquare,
     end: aimEnd,
@@ -722,11 +1059,47 @@ function readArtworkFit() {
   return normalizeArtworkFit({ x, y, scale: scale / 100 });
 }
 
+function mapLoadingHost() {
+  // Prefer the non-scrolling stage so pan/zoom never leaves the loader behind.
+  return root()?.querySelector(".game-stage")
+    ?? root()?.querySelector(".board-frame")?.parentElement
+    ?? root()?.querySelector(".board-frame");
+}
+
+function syncMapLoadingOverlay() {
+  const host = mapLoadingHost();
+  if (!host) return;
+  // Drop any loader stuck inside the scrollable board from an older mount.
+  root()?.querySelector(".board-frame > .map-loading")?.remove();
+  let overlay = host.querySelector(":scope > .map-loading");
+  if (!artworkLoading) {
+    overlay?.remove();
+    return;
+  }
+  if (overlay) return;
+  overlay = document.createElement("div");
+  overlay.className = "map-loading";
+  overlay.setAttribute("role", "status");
+  overlay.setAttribute("aria-live", "polite");
+  overlay.innerHTML = `<div class="map-loading-stage" aria-hidden="true">
+      <div class="map-loading-grid"></div>
+      <div class="map-loading-path"></div>
+      <div class="map-loading-compass">
+        <span class="map-loading-needle"></span>
+        <span class="map-loading-ring"></span>
+        <span class="map-loading-n">N</span>
+      </div>
+    </div>
+    <p class="map-loading-copy"><strong>Charting the map</strong><span>Unfurling the expedition…</span></p>`;
+  host.append(overlay);
+}
+
 function updateArtwork() {
   const note = root()?.querySelector("#map-art-note");
   const picker = root()?.querySelector('[data-play="art"]');
   if (note) note.textContent = artworkNote;
   if (picker) picker.textContent = art ? "Change map image" : "Choose map image";
+  syncMapLoadingOverlay();
   paintBoard();
 }
 
@@ -734,7 +1107,7 @@ async function loadArtwork(entry, file, sharedURL) {
   artworkRequest?.abort();
   const request = new AbortController();
   artworkRequest = request;
-  const current = () => artworkRequest === request && map === entry;
+  const current = () => artworkRequest === request && map.key === entry.key;
   // When a DM map has a paired player variant, prefer the clean player artwork
   // so players see the map without room numbers, trap markers, or DM annotations.
   // The DM can toggle to view DM notes via table tools if desired.
@@ -743,9 +1116,17 @@ async function loadArtwork(entry, file, sharedURL) {
   const fallbackAsset = preferredAsset === entry.playerAsset ? entry.asset : (entry.playerAsset ?? null);
   const displayAsset = preferredAsset;
   if (!displayAsset && !file && !sharedURL) {
+    art = null;
+    customArtwork = null;
+    artworkLoading = false;
     artworkNote = "Showing the schematic. Choose a map image to add artwork.";
+    updateArtwork();
     return;
   }
+  // Drop the previous map image immediately so travel never keeps the old board art or schematic rooms.
+  art = null;
+  customArtwork = null;
+  artworkLoading = true;
   artworkNote = "Loading map artwork…";
   updateArtwork();
   const timeout = setTimeout(() => request.abort(), 12000);
@@ -757,16 +1138,24 @@ async function loadArtwork(entry, file, sharedURL) {
     } else if (file) {
       image = await decodeMapImage(file, entry);
     } else {
-      let embedded = await mapImage(displayAsset).catch(() => null);
+      if (typeof displayAsset === "string" && displayAsset.startsWith("/assets/")) {
+        const response = await fetch(displayAsset, { signal: request.signal });
+        if (response.ok) image = await decodeMapImage(await response.blob(), entry);
+      }
+      let embedded = image ? null : await mapImage(displayAsset).catch(() => null);
       if (!current()) return;
-      if (embedded) image = await decodeMapImage(embedded, entry).catch(() => null);
+      if (!image && embedded) image = await decodeMapImage(embedded, entry).catch(() => null);
       if (!image && current()) {
         const hosted = await hostedMapImage(displayAsset, request.signal);
         if (hosted) image = await decodeMapImage(hosted, entry).catch(() => null);
       }
       // Resilient fallback: if the preferred variant fails to load, fall back to the alternate
       if (!image && fallbackAsset && fallbackAsset !== displayAsset && current()) {
-        const fbEmbedded = await mapImage(fallbackAsset).catch(() => null);
+        if (typeof fallbackAsset === "string" && fallbackAsset.startsWith("/assets/")) {
+          const response = await fetch(fallbackAsset, { signal: request.signal });
+          if (response.ok) image = await decodeMapImage(await response.blob(), entry).catch(() => null);
+        }
+        const fbEmbedded = image ? null : await mapImage(fallbackAsset).catch(() => null);
         if (fbEmbedded) image = await decodeMapImage(fbEmbedded, entry).catch(() => null);
         if (!image && current()) {
           const fbHosted = await hostedMapImage(fallbackAsset, request.signal);
@@ -779,27 +1168,71 @@ async function loadArtwork(entry, file, sharedURL) {
       art = image;
       customArtwork = file;
       if (!table) alignImage(image);
-      artworkNote = sharedURL ? "Shared map artwork." : file ? "Using your map image." : (entry.playerAsset && !useDm) ? "Player map artwork (hidden DM notes)" + (entry.artist ? " by " + entry.artist : "") + "." : (entry.playerAsset && useDm) ? "DM map artwork with annotations" + (entry.artist ? " by " + entry.artist : "") + "." : entry.artist ? "Map artwork by " + entry.artist + "." : "Map artwork loaded from 5etools.";
+      artworkNote = sharedURL ? "Shared map artwork." : file ? "Using your map image." : (entry.playerAsset && !useDm) ? "Player map artwork (hidden DM notes)" + (entry.artist ? " by " + entry.artist : "") + "." : (entry.playerAsset && useDm) ? "DM map artwork with annotations" + (entry.artist ? " by " + entry.artist : "") + "." : entry.artist ? "Map artwork by " + entry.artist + "." : displayAsset?.startsWith?.("/assets/") ? "Hub map artwork loaded." : "Map artwork loaded from 5etools.";
       if (file && map.sourceGrid && !table) {
         calibrateGrid = true;
         if ((battle.gridOverlay ?? "artwork") === "artwork") battle.gridOverlay = "printed";
         artworkNote = "Using your map image. Move the picture under the rooms (image scale / shift), then save placement. Grid guides are optional.";
       }
     } else {
+      art = null;
+      customArtwork = null;
       artworkNote = "Map artwork is unavailable. Showing the schematic.";
     }
   } catch (error) {
     if (!current()) return;
+    art = null;
+    customArtwork = null;
     artworkNote = file
       ? (error instanceof Error && error.message.includes("aspect ratio") ? error.message : "The map image could not be read.")
       : "Map artwork is unavailable. Showing the schematic.";
   } finally {
     clearTimeout(timeout);
     if (current()) {
+      artworkLoading = false;
       if (calibrateGrid) redraw();
       else updateArtwork();
     }
   }
+}
+
+/** Reset camera/art/selection when hub stairs or expedition travel changes the active map. */
+function adoptTravelMap(destination, active, state) {
+  artworkRequest?.abort();
+  artworkRequest = null;
+  camera?.destroy();
+  camera = null;
+  focusedGameMap = null;
+  tokenMotion.reset();
+  combatCues.reset();
+  speechBubbles.clear();
+  tokenHover.clear();
+  art = null;
+  customArtwork = null;
+  detectedGrid = null;
+  gridDraft = null;
+  artFitDraft = null;
+  calibrateGrid = false;
+  map = structuredClone(destination);
+  if (map.sourceGrid) Object.assign(map, gridGeometry(map, state.alignment ?? map.sourceGrid));
+  battle = active;
+  moduleId = map.module;
+  room = startingRegion(map);
+  cursor = null;
+  queuedMove = null;
+  pathPreview = null;
+  previewMessage = "";
+  spellSquare = null;
+  pendingSquare = null;
+  resetActionSelection();
+  tool = "move";
+  category = "move";
+  maps = roomMapChoices(state, moduleMapsOrBuiltin(moduleId) ?? [destination]);
+  if (table) table.state = state;
+  else previewState = state;
+  preferredGame = { module: moduleId, map: map.key };
+  try { localStorage.setItem(activeMapKey, JSON.stringify(preferredGame)); } catch { }
+  loadArtwork(map);
 }
 
 function useMap(entry,{fresh=false}={}) {
@@ -875,12 +1308,34 @@ function selectedActor() {
 }
 function canControl(actor) {
   if (actor?.side !== "party") return false;
+  // Befriended kennel wolves are AI allies — never player-controllable.
+  if (actor?.kennelAlly) return false;
   const owner = table && battle.controllers?.[actor.id];
   return !owner || owner === controller;
 }
 function requireControl(actor) {
   if (actor?.side === "hostile") throw new Error("The game controls " + actor.name + ".");
+  if (actor?.kennelAlly) throw new Error(actor.name + " follows the party on their own.");
   if (!canControl(actor)) throw new Error("Wait for " + (actor?.name ?? "the active character") + " to act.");
+}
+function resolveKennelBetrayal() {
+  const pending = battle.kennelBetrayal;
+  if (!pending) return null;
+  delete battle.kennelBetrayal;
+  const attacker = battle.actors.find((actor) => actor.id === pending.attackerId);
+  const victim = battle.actors.find((actor) => actor.id === pending.victimId);
+  const result = betrayKennelPack(battle, map, attacker, victim);
+  if (!result) return null;
+  if (result.status) status = result.status;
+  if (result.toast) storyToasts.show(result.toast, { force: true, duration: 11000 });
+  if (result.engage) pullAlertedDen(battle, map);
+  return result;
+}
+function presentKennelResult(result) {
+  if (!result) return;
+  if (result.status) status = result.status;
+  if (result.toast) storyToasts.show(result.toast, { force: true, duration: 10000 });
+  if (result.engage) pullAlertedDen(battle, map);
 }
 function onlinePlayerIds(players) {
   const online = new Set((players ?? []).filter((player) => player.online).map((player) => player.id));
@@ -1268,7 +1723,7 @@ function roomPanel() {
        ${starting.length ? `<p>${plural(starting.length, "room token")}${starting.some(({ dead }) => dead) ?
         " · " + starting.filter(({ dead }) => dead).length + " defeated" : ""}</p>` : ""}
        ${unavailable ? `<p>${plural(unavailable, "creature")} need more space for placement.</p>` : ""}
-       ${authored && room.id === "021" && !battle.round && starting.some((actor) => actor.side === "neutral" && !actor.dead)
+       ${authored && room.id === "021" && !battle.round && starting.some((actor) => actor.kennelWolf && actor.chained && !actor.dead)
         ? actionButton("Set wolves hostile", "release-wolves") : ""}
        ${!battle.round && !sceneJobs.has(battle) && roster.length ? `<div class="play-inline">
          ${field("Creature reference", "room-creature", roster.map((entry, index) => option(index, entry.nickname ?? entry.name, index === selectedCreature)))}
@@ -1432,13 +1887,17 @@ function readAlignment() {
 }
 
 function playPage() {
+  if (context.hubEntry) return hubEntryPage();
   if(!context.newRoom)return roomList(rooms,{loading:roomsLoading,error:roomsError,deleting:deletingRoom})+joinPanel();
+  if (roomDraft.adventure === "YPHub") roomDraft.adventure = "training";
   const isTraining=roomDraft.adventure==="training";
-  const ready=map.module===roomDraft.adventure && (isTraining||hasArchive());
+  const ready=map.module===roomDraft.adventure && (isBuiltinModule(roomDraft.adventure)||hasArchive());
   const adventures=context.adventures.filter(entry=>entry.maps?.some(item=>item.grid==="square"));
-  const moduleOptions=[option("training","Wayfarer practice yard",isTraining),...adventures
-    .map(entry=>option(entry.id,entry.name,roomDraft.adventure===entry.id))];
-  if(!isTraining&&!adventures.some(entry=>entry.id===roomDraft.adventure))moduleOptions.push(option(roomDraft.adventure,roomDraft.adventure,true));
+  const moduleOptions=[
+    option("training","Wayfarer practice yard",isTraining),
+    ...adventures.map(entry=>option(entry.id,entry.name,roomDraft.adventure===entry.id)),
+  ];
+  if(!isBuiltinModule(roomDraft.adventure)&&!adventures.some(entry=>entry.id===roomDraft.adventure))moduleOptions.push(option(roomDraft.adventure,roomDraft.adventure,true));
   const tools = [
     ["room", "Inspect room"],
     ["move", battle.round ? "Move token" : "Place token"],
@@ -1447,7 +1906,8 @@ function playPage() {
     ["clear", "Clear terrain"]
   ];
   return `<section id="room-setup" class="room-setup">
-    <header class="play-header"><div><h1>New adventure room</h1><p>Choose where to start and who’s coming with you.</p></div><a class="text-link" href="#play">Back to rooms</a></header>
+    <header class="play-header"><div><h1>New adventure room</h1><p>Start a campaign or practice table. Meet at the Yawning Portal first if you want a shared hub.</p></div>
+      <div class="play-header-actions"><a class="button outline small" href="#hub">Yawning Portal</a><a class="text-link" href="#play">Back to rooms</a></div></header>
     ${roomCreationForm(moduleOptions,ready)}
     ${ready?`<details class="room-advanced"><summary>Advanced encounter setup</summary>
     <div class="room-advanced-body">
@@ -1460,7 +1920,7 @@ function playPage() {
       <div class="play-main">
         <section class="play-panel play-board-panel">
           <div class="play-heading board-title"><h2>${escape(map.title)}</h2>
-            ${!isTraining ? actionButton(art ? "Change map image" : "Choose map image", "art") : ""}
+            ${!isBuiltinModule(roomDraft.adventure) ? actionButton(art ? "Change map image" : "Choose map image", "art") : ""}
           </div>
           <input type="file" id="play-art" accept="image/png,image/jpeg,image/webp" hidden>
           ${mapViewport(map)}
@@ -1468,10 +1928,10 @@ function playPage() {
             ${field("Grid tool", "grid-tool", tools.map(([id, label]) => option(id, label, tool === id)))}
             ${mapControls(Boolean(cameraToken()))}
             ${mapHint()}
-            <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span><span><i class="map-marker-key"></i> Room marker</span><span><i class="map-spawn-key"></i> Spawn</span></div>
+            <div class="board-key"><span><i></i> Party</span><span><i></i> Hostile</span><span><i></i> Difficult terrain</span><span><i class="map-marker-key"></i> Discovery</span><span><i class="map-spawn-key"></i> Spawn</span></div>
           </div>
           ${tool === "spawn" ? spawnToolPanel() : ""}
-          ${!isTraining ? `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` : ""}
+          ${!isBuiltinModule(roomDraft.adventure) ? `<p id="map-art-note" class="play-hint" role="status">${escape(artworkNote)}</p>` : ""}
           ${gridSettings()}
           <p class="play-status" role="status">${escape(status)}</p>
         </section>
@@ -1487,15 +1947,34 @@ function redraw() {
   closeDistantInteraction();
   const active = document.activeElement?.id;
   if (context.game && table?.state) document.title = (table.state.room?.name || map.title) + ' · Wayfarer';
+  if (!(context.sessionRoute && !table?.state)) clearTimeout(sessionConnectingTimer);
   if (context.sessionRoute && !table?.state) {
-    element.innerHTML = `<section class="session-entry play-panel"><h1>Enter adventure room</h1>
-      ${table?.needsUsername ? `<form id="session-username-form" class="session-inline">
-        ${input("Username", "session-username", table.usernameDraft ?? rememberedUsername(), "text", 'required maxlength="24" autocomplete="nickname"')}
-        <button class="button primary small" type="submit" ${table.joining ? "disabled" : ""}>${table.joining ? "Joining…" : "Join room"}</button><a href="#profile" data-account-return="${escape(sessionHash(table.id))}">Sign in with Google instead</a>
-      </form><p role="status">${escape(tableMessage)}</p>` : `<p role="status">${escape(tableMessage || "Connecting to the table…")}</p>
-      ${table?.error ? actionButton("Try again", "retry-session") : ""}`}
-      <a href="#play" class="button outline small">Back to rooms</a></section>`;
-    if (active === "session-username") element.querySelector("#session-username")?.focus({ preventScroll: true });
+    // Dark full-bleed wait — a light paper card flashbangs when the room loads quickly.
+    if (table?.needsUsername) {
+      element.innerHTML = `<section class="session-entry session-entry-dark"><h1>Join the room</h1>
+        <form id="session-username-form" class="session-inline">
+          ${input("Username", "session-username", table.usernameDraft ?? rememberedUsername(), "text", 'required maxlength="24" autocomplete="nickname"')}
+          <button class="button primary small" type="submit" ${table.joining ? "disabled" : ""}>${table.joining ? "Joining…" : "Join room"}</button><a href="#profile" data-account-return="${escape(sessionHash(table.id))}">Sign in with Google instead</a>
+        </form><p role="status">${escape(tableMessage)}</p>
+        <a href="#play" class="button outline small">Back to rooms</a></section>`;
+      if (active === "session-username") element.querySelector("#session-username")?.focus({ preventScroll: true });
+    } else if (table?.error) {
+      element.innerHTML = `<div class="session-connecting" role="alert">
+        <p>${escape(tableMessage || "Could not reach the room.")}</p>
+        ${actionButton("Try again", "retry-session")}
+        <a href="#play" class="button outline small">Back to rooms</a>
+      </div>`;
+    } else {
+      // Keep the viewport dark immediately; only show copy after a beat so fast joins never flash.
+      element.innerHTML = `<div class="session-connecting" role="status" aria-live="polite" data-pending="true"></div>`;
+      const host = element.querySelector(".session-connecting");
+      clearTimeout(sessionConnectingTimer);
+      sessionConnectingTimer = setTimeout(() => {
+        if (!host?.isConnected || table?.state || !context?.sessionRoute) return;
+        host.removeAttribute("data-pending");
+        host.innerHTML = `<p>${escape(tableMessage || "Entering the room…")}</p>`;
+      }, 280);
+    }
     return;
   }
   let cameraState = camera?.state();
@@ -1538,7 +2017,10 @@ function redraw() {
     visibleInitiative: visibleTokens(),
     category, actions: gameOptions(selectedNow), tacticalTools: tableTools(), status,
     hotbar: hotbarActorNow ? renderActionBar(barEntries, hotbarActorNow, { tab: hotbarTab, filter: hotbarFilter, query: hotbarSearch, selected: hotbarSelection, expanded: hotbarExpanded || (compact && showActionsSheet), utilitiesOpen: hotbarTools }) : '',
-    actionPanelOpen: Boolean(hotbarTools || selectedEntry && selectedEntry.mode !== 'move' || pendingSquare || battle.classReaction || battle.movement || ['investigate','use-feature','interact'].includes(category) || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && canRescue(battle, map, hotbarActorNow)),
+    hubActions: canControl(selectedNow)
+      ? [...hubActions(battle, map, selectedNow), ...kennelActions(battle, map, selectedNow)]
+      : [],
+    actionPanelOpen: Boolean(hotbarTools || selectedEntry && selectedEntry.mode !== 'move' || pendingSquare || battle.classReaction || battle.movement || ['investigate','use-feature','interact'].includes(category) || hotbarActorNow && (!actorIsUp(hotbarActorNow) || incapacitated(hotbarActorNow)) || canControl(hotbarActorNow) && (canRescue(battle, map, hotbarActorNow) || hubActions(battle, map, hotbarActorNow).length || kennelActions(battle, map, hotbarActorNow).length)),
     resourceControls: renderActionResources(hotbarActorNow, battle, hotbarFilter),
     logOpen: eventLogPlacement !== 'hidden' && eventLogMode !== 'collapsed' && (eventLogPlacement !== 'chat' || !table || Boolean(table?.chat?.isOpen)), logHistory: table?.state?.battle.log ?? battle.log, eventLogMode, eventLogPlacement, toolsOpen, destination: previewMessage, cursor, hasToken: Boolean(cameraToken()),
     storyOpen, storyContent: storyOpen ? storyPanel(battle, map) : "",
@@ -1632,9 +2114,11 @@ function redraw() {
     fogEnabled: fogActive(), feed: element.querySelector(".game-live-log"), motion: tokenMotion,
   } : null);
   restoreEventLogScroll();
-  camera = frame ? createCamera(frame, element.querySelector(".map-controls"), map, cameraState, () => { combatCues.place(); tokenHover.refresh(); }) : null;
+  camera = frame ? createCamera(frame, element.querySelector(".map-controls"), map, cameraState, () => { combatCues.place(); speechBubbles.place(); tokenHover.refresh(); }) : null;
   if(frame)paintBoard();
+  if (context.game && isYpHub(map)) scheduleHubAmbience();
   if (active) element.querySelector("#" + CSS.escape(active))?.focus({ preventScroll: true });
+  if (!context.game) paintCharacterPortraits(element);
   if (enemyTurnPending(battle) && scheduledEnemyBattle !== battle && (!table || table.online && !table.writing)) {
     const queued = battle;
     scheduledEnemyBattle = queued;
@@ -1709,12 +2193,7 @@ function dynamicFogTools() {
   return `<section class="fog-controls"><h3>Dynamic fog</h3>
   <div class="fog-action-buttons">
     <button type="button" data-play="edit-walls" class="button outline small">Draw / edit walls</button>
-    <button type="button" data-play="ai-forecast" class="button outline small ai-forecast-btn" ${aiForecasting ? 'disabled' : ''}>
-      ${aiForecasting ? '<span class="ai-spinner"></span> Scanning…' : '✨ AI Forecast'}
-    </button>
   </div>
-  ${aiForecasting ? '<button type="button" class="button outline small" data-play="cancel-ai-forecast">Cancel scan</button>' : ''}
-  ${aiForecastMessage ? `<p class="play-hint ai-forecast-msg" role="status">${escape(aiForecastMessage)}</p>` : ''}
   <p class="play-hint">Place points freely on the map. Nearby vertices snap together. All room players share wall edits and fog settings.</p>
   <form id="fog-settings"><label><input type="checkbox" name="sharedVision" ${settings.sharedVision ? 'checked' : ''}> Share vision within your party</label>
   <label><input type="checkbox" name="remember" ${settings.remember ? 'checked' : ''}> Remember explored areas</label>
@@ -1730,120 +2209,6 @@ function dynamicFogTools() {
   <div class="vision-fields"><label>Range (ft)<input name="range" type="number" min="0" max="300" value="${v.range}" required></label><label>Cone (°)<input name="angle" type="number" min="1" max="360" value="${v.angle}" required></label><label>Facing (°)<input name="facing" type="number" min="0" max="360" value="${v.facing}" required></label></div>
   <small>0° right · 90° down · 180° left · 270° up</small><button class="button outline small">Save vision</button></form>`;
   }).join('')}</section>`;
-}
-
-function openAiForecastDialog() {
-  const dialog = document.querySelector('#dialog');
-  if (!dialog) return;
-  const currentKey = getApiKey();
-  const remembered = isKeyRemembered();
-  const sections=art?forecastTiles(art.naturalWidth||art.width,art.naturalHeight||art.height).length:1;
-  const existingCount = (battle?.wallData?.walls?.length || 0) + (battle?.wallData?.doors?.length || 0);
-
-  dialog.className = "";
-  dialog.innerHTML = `<header class="dialog-header">
-    <span class="dialog-icon" style="font-size:22px;line-height:1;">✨</span>
-    <div><h2 id="dialog-title">AI Forecast Walls & Doors</h2>
-      <p>Scan map artwork with Gemini to generate editable walls and dynamic fog.</p></div>
-    <button class="icon-button" type="button" data-action="close" aria-label="Close">${icon('close', 21)}</button>
-  </header>
-  <div class="dialog-content">
-    ${!art ? '<p class="play-hint" style="color:#f5b54c;margin-bottom:12px;">⚠️ No map image is currently loaded. Upload or select a map image before scanning.</p>' : ''}
-    <form id="ai-forecast-form" class="ai-forecast-form">
-      <label>
-        <strong>Gemini API Key</strong>
-        <div class="ai-key-input-row">
-          <input type="password" name="apiKey" id="ai-gemini-key-input"
-            value="${escape(currentKey)}"
-            placeholder="AIzaSy..."
-            autocomplete="off"
-            spellcheck="false"
-            ${currentKey ? '' : 'required'}>
-          <button type="button" class="button outline small" id="ai-toggle-key-visibility">Show</button>
-        </div>
-        <small class="play-hint" style="margin-top:4px;">
-          Your key is saved only in this browser and never shared with players. Requests go to Google; if the browser blocks that connection, Wayfarer relays the request without storing your key.
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" style="color:#75e2df;text-decoration:underline;">Get a key from Google AI Studio</a>.
-        </small>
-      </label>
-
-      <label class="ai-checkbox-label">
-        <input type="checkbox" name="remember" ${remembered || !currentKey ? 'checked' : ''}>
-        <span>Remember API key in this browser</span>
-      </label>
-
-      <label>Model<select name="model"><option value="gemini-3.8-flash">Gemini 3.8 Flash</option><option value="gemini-3.6-flash">Gemini 3.6 Flash</option></select></label>
-      <label class="ai-checkbox-label"><input type="checkbox" name="fallback" checked><span>Try the other Flash model if this one stays busy</span></label>
-      <label class="ai-checkbox-label"><input type="checkbox" name="detail" checked><span>Detailed scan · ${sections} overlapping section${sections===1?'':'s'}</span></label><small class="play-hint">Detailed mode uses ${sections} image request${sections===1?'':'s'} to preserve narrow walls and doors. Uncheck for one faster overview request. Temporary errors retry up to four times per section. Results open as a draft to review.</small>
-      ${existingCount > 0 ? `
-        <fieldset class="ai-merge-options">
-          <legend>Existing Map Walls (${existingCount} segments)</legend>
-          <label><input type="radio" name="mode" value="replace" checked> <span>Replace existing walls with forecasted walls</span></label>
-          <label><input type="radio" name="mode" value="merge"> <span>Merge forecasted walls with existing walls</span></label>
-        </fieldset>
-      ` : '<input type="hidden" name="mode" value="replace">'}
-
-      <div class="ai-forecast-dialog-actions">
-        ${currentKey ? `<button type="button" class="button outline small" id="ai-clear-key-btn" style="color:#ff8a8a;border-color:#ff8a8a60;">Forget Key</button>` : ''}
-        <div style="flex:1;"></div>
-        <button type="button" class="button outline" data-action="close">Cancel</button>
-        <button type="submit" class="button primary" id="ai-run-forecast-btn" ${!art ? 'disabled' : ''}>Scan & review</button>
-      </div>
-    </form>
-  </div>`;
-  if (!dialog.open) dialog.showModal();
-}
-
-async function runAiForecast({ apiKey, remember, mode = 'replace', model='gemini-3.8-flash', fallback=false, detail=true } = {}) {
-  if(aiForecasting)return;
-  const sourceRoom=table?.id,sourceMap=map.key,sourceRoute=location.hash,sourceWalls=JSON.stringify(battle.wallData??null);
-  const sameMap=()=>sourceRoom===table?.id&&sourceMap===map.key&&sourceRoute===location.hash;
-  aiForecastAbort=new AbortController();
-  if (apiKey) setApiKey(apiKey, remember);
-  const key = getApiKey();
-  if (!key) { openAiForecastDialog(); return; }
-  if (!art) {
-    aiForecastMessage = "Upload or select a map image first to forecast walls.";
-    redraw();
-    return;
-  }
-
-  aiForecasting = true;
-  aiForecastMessage = "Downscaling and analyzing floor plan with Gemini…";
-  redraw();
-
-  try {
-    const source=art;
-    const result=await scanForecastTiles(source,{detail,signal:aiForecastAbort.signal,onProgress:message=>{if(!sameMap()){aiForecastAbort.abort();return;}aiForecastMessage=message;redraw();},scan:options=>callGeminiVision({...options,apiKey:key,model,fallbackModel:fallback?(model==='gemini-3.8-flash'?'gemini-3.6-flash':'gemini-3.8-flash'):undefined})});
-    if(!sameMap())throw new Error('The room or map changed while scanning. Scan the current map again.');
-    if(JSON.stringify(battle.wallData??null)!==sourceWalls)throw new Error('Walls changed while scanning. Scan again to keep the latest edits.');
-
-    const geometry=processForecastGeometry({rawWalls:result.walls,rawDoors:result.doors,map});
-    if(!geometry.walls.length&&!geometry.doors.length)throw new Error('No usable walls were detected. Existing walls are unchanged.');
-    let quality={data:geometry,adjusted:0,weakWalls:[]};
-    try{quality=refineForecastPixels(geometry,map,forecastImageData(source));}catch{/* Geometry can still be reviewed if pixel access is unavailable. */}
-    const processed=quality.data;
-    aiForecastMessage=`Draft ready: ${processed.walls.length} walls and ${processed.doors.length} doors. Review before applying.`;
-    openForecastReview({source,map:structuredClone(map),data:processed,...quality,sections:result.sections,
-      onDiscard:()=>{aiForecastMessage='Forecast draft discarded. Existing walls are unchanged.';redraw();},
-      onApply:async()=>{
-        if(!sameMap())throw new Error('The room or map changed. Discard this draft and scan the current map.');
-        if(JSON.stringify(battle.wallData??null)!==sourceWalls)throw new Error('Walls changed after this scan. Discard this draft and scan again to keep the latest edits.');
-        const next={manual:true,walls:mode==='merge'?[...(battle.wallData?.walls??[]),...processed.walls]:processed.walls,doors:mode==='merge'?[...(battle.wallData?.doors??[]),...processed.doors]:processed.doors};
-        if(next.walls.length>2000||next.doors.length>2000)throw new Error('The combined forecast exceeds this room’s wall limit. Scan in replace mode.');
-        const applied=await wallEditor.replace(next);
-        if(!applied)throw new Error(status||'Could not save the forecast. Try again after the current action.');
-        aiForecastMessage=`Applied ${processed.walls.length} walls and ${processed.doors.length} doors. Use Undo in the wall editor to restore the previous tracing.`;
-        toolsOpen=false;tool='move';resetActionSelection();wallEditor.setMode('edit');redraw();return true;
-      }
-    });
-  } catch (err) {
-    aiForecastMessage = err.name==='AbortError'?'Scan cancelled. Existing walls are unchanged.':`Forecast failed: ${err.message || 'Check your Gemini API key.'}`;
-    redraw();
-  } finally {
-    aiForecasting = false;
-    redraw();
-  }
 }
 
 function resetActionSelection() {
@@ -1862,7 +2227,9 @@ function canRollInitiative() {
 }
 
 function advanceCombat() {
+  resolveKennelBetrayal();
   if (!battle.round) return;
+  const roundBefore = battle.round;
   if (partyEscaped(battle)) { endInitiative(battle); status = "Your party escaped. Free movement restored."; return; }
   checkSpellTethers(battle, map);
   const message = runEnemyTurns(battle, map);
@@ -1871,6 +2238,9 @@ function advanceCombat() {
     !battle.actors.some((actor) => actor.side === "hostile" && battle.order.includes(actor.id) && actorIsUp(actor) && occupies(actor))) {
     endInitiative(battle);
     status = context.game ? "Encounter cleared. Free movement restored." : "Encounter cleared.";
+  }
+  if (context?.game && shouldPlayCombatVictory(roundBefore, battle, { partyWiped: partyDefeated(battle) })) {
+    playCombatVictory();
   }
 }
 
@@ -1902,9 +2272,24 @@ function checkGameCell(x, y, region, token) {
   }
   if (category === 'interact' && bodyPlacement) { requireControl(actor); const body = battle.actors.find(body => body.id === actor.carrying); placeBody(battle, actor, body, { x, y }, map, { thrown: bodyPlacement === 'throw' }); bodyPlacement = ''; status = battle.log.at(-1); return; }
   if (category === 'move' || category === 'interact') {
-    const corpse = token?.hp === 0 ? token : !token && battle.actors.find(body => body.dead && !body.carriedBy && !body.draggedBy && body.x != null && containsCell(body, x, y));
-    const treasure = !token && visibleMarkers().find(marker => marker.type === 'treasure' && !marker.looted && marker.x === x && marker.y === y);
-    if ((corpse || treasure) && (!fogActive() || displayVision().has(keyAt(x, y)))) { requireControl(actor); interactionPosition = null; objectTarget = { type: corpse ? 'body' : 'treasure', id: (corpse ?? treasure).id }; bodyPlacement = ''; category = 'interact'; hotbarSelection = 'common:interact'; return; }
+    // Dead/unconscious bodies and loot do not block walking — only Interact (or
+    // clicking the square you already stand on) opens the underfoot object.
+    const corpse = battle.actors.find((body) =>
+      (body.dead || body.hp === 0) && !body.carriedBy && !body.draggedBy && body.x != null &&
+      containsCell(body, x, y) && body.id !== actor?.id && !occupies(body));
+    const treasure = visibleMarkers().find((marker) => marker.type === 'treasure' && !marker.looted && marker.x === x && marker.y === y);
+    const underfoot = corpse || treasure;
+    const standingHere = actor && occupies(actor) && containsCell(actor, x, y);
+    if (underfoot && (!fogActive() || displayVision().has(keyAt(x, y))) &&
+        (category === 'interact' || standingHere)) {
+      requireControl(actor);
+      interactionPosition = null;
+      objectTarget = { type: corpse ? 'body' : 'treasure', id: underfoot.id };
+      bodyPlacement = '';
+      category = 'interact';
+      hotbarSelection = 'common:interact';
+      return;
+    }
   }
   if (!battle.round && token?.side === "party" && category === "move" && canControl(token)) {
     selectPartyMember(token);
@@ -1959,8 +2344,20 @@ function checkGameCell(x, y, region, token) {
     }
     const hinted = applyPassiveFeatureHints(battle, map, moving);
     if (hinted.length) log(battle, moving.name + " senses something odd nearby.");
+    const kennel = checkKennelApproach(battle, map, moving);
+    if (kennel) {
+      status = kennel;
+      log(battle, kennel);
+      pullAlertedDen(battle, map);
+      return true;
+    }
     return detectNearby(moving);
   });
+  followKennelAllies(battle, map, actor);
+  if (actor.hubSitting) {
+    const table = HUB_TABLES.find((entry) => entry.id === actor.hubSitting);
+    if (!table || actor.x !== table.x || actor.y !== table.y) delete actor.hubSitting;
+  }
   room = regionAt(map, ...cellCenter(map, actor)) ?? null;
 }
 
@@ -1972,6 +2369,7 @@ async function loadRoster(records, area) {
 
 async function launchGame(hostOptions = null, characters = context.characters) {
   battle.spellRules=loadSpellRules();
+  if (map.module === "YPHub") seedYpHubScene(map, battle);
   await ensureScene();
   const entry = startingRegion(map);
   if (entry) room = entry;
@@ -2006,6 +2404,7 @@ async function launchGame(hostOptions = null, characters = context.characters) {
     for (const [ability, save] of Object.entries(imported.saves)) actor.saves[ability] ??= save;
   }
   const selected = battle.actors.find((actor) => actor.side === "party" && actor.id === selectedId && actorIsUp(actor)) ??
+    preferredPartyActor() ??
     battle.actors.find((actor) => actor.side === "party" && actorIsUp(actor));
   selectedId = selected?.id ?? "";
   category = "move"; tool = "move"; status = ""; resetActionSelection();
@@ -2054,12 +2453,13 @@ async function selectModule(id, preferred) {
   pending = true;
   redraw();
   try {
-    const loaded = id === "training" ? [trainingMap] : await moduleMaps(id);
+    const loaded = moduleMapsOrBuiltin(id) ?? await moduleMaps(id);
     if (request !== revision) return;
     if (!loaded.length) throw new Error("This adventure has no supported square-grid maps in the attached archive.");
     moduleId = id;
     maps = loaded;
     const defaultMap = loaded.find((entry) => entry.key === preferred)
+      ?? loaded.find((entry) => entry.sceneId === "hub:yawning-portal:first")
       ?? loaded.find((entry) => entry.id === "1ab" && !entry.title.includes("(Player)"))
       ?? loaded.find((entry) => entry.regions.length) ?? loaded[0];
     useMap(defaultMap);
@@ -2243,7 +2643,7 @@ const tableState=()=>upgradeRoomState(
   commitRoomState(table?.state ?? previewState,map,battle,map.printedGrid ?? null),map
 );
 
-async function hostTable({ roomName, username } = {}) {
+async function hostTable({ roomName, username, roomKind, hubSession } = {}) {
   const route = location.hash;
   pending = true;
   setTableMessage("Starting shared session…");
@@ -2251,10 +2651,24 @@ async function hostTable({ roomName, username } = {}) {
     rememberVision(battle, map);
     saveExplored(battle, map);
     const state = tableState();
-    state.room = { name: roomName || map.title, adventure: map.module, adventureName: context.adventures.find(entry => entry.id === map.module)?.name ?? map.title, createdAt: Date.now(), updatedAt: Date.now() };
+    const kind = roomKind === "hub" || map.module === "YPHub" ? "hub" : "campaign";
+    const adventureName = kind === "hub"
+      ? "Yawning Portal"
+      : (context.adventures.find(entry => entry.id === map.module)?.name ?? map.title);
+    state.room = {
+      name: roomName || (kind === "hub" ? "Yawning Portal" : map.title),
+      adventure: map.module,
+      adventureName,
+      kind,
+      ...(hubSession ? { hubSession } : {}),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
     state.battle = structuredClone(state.battle);
     if (roomName) {
-      const first = state.battle.actors.find(actor => actor.side === 'party');
+      const preferred = preferredCharacterId();
+      const first = (preferred && state.battle.actors.find((actor) => actor.id === "party:" + preferred))
+        ?? state.battle.actors.find((actor) => actor.side === "party");
       if (first) (state.battle.controllers ??= {})[first.id] = controller;
     }
     state.battle.sheets = Object.fromEntries(context.characters
@@ -2270,6 +2684,7 @@ async function hostTable({ roomName, username } = {}) {
     if (location.hash !== route) return;
     const result = await createSession({ ...map, detectedGrid }, state, customArtwork, tokens, controller);
     rooms = rememberRoom(result.id, map, state);
+    if (kind === "hub") rememberedHubSession(result.id);
     if (username) {
       rememberedUsername(username);
       // If joining is interrupted, the saved room link still lets the player finish joining.
@@ -2302,7 +2717,7 @@ function applyTableState(connection, snapshot) {
   const storyBefore = connection.state ? storyVersion(battle) : 0;
   snapshot={...snapshot,state:normalizeRoomState(snapshot.state,snapshot.state.currentMap ?? map)};
   const incomingMap=snapshot.state.currentMap;
-  if(incomingMap.key!==map.key){artworkRequest?.abort();camera?.destroy();camera=null;focusedGameMap=null;tokenMotion.reset();combatCues.reset();tokenHover.clear();map=structuredClone(incomingMap);art=null;customArtwork=null;detectedGrid=map.detectedGrid;gridDraft=null;room=startingRegion(map);cursor=null;queuedMove=null;resetActionSelection();tool='move';category='move';if(map.sourceGrid)Object.assign(map,gridGeometry(map,snapshot.state.alignment ?? map.sourceGrid));if(map.asset || map.playerAsset || snapshot.state.artworkMapKey===map.key)loadArtwork(map,null,snapshot.state.artworkMapKey===map.key?artworkURL(connection.id):null);}
+  if(incomingMap.key!==map.key){artworkRequest?.abort();camera?.destroy();camera=null;focusedGameMap=null;tokenMotion.reset();combatCues.reset();speechBubbles.clear();tokenHover.clear();map=structuredClone(incomingMap);art=null;customArtwork=null;detectedGrid=map.detectedGrid;gridDraft=null;room=startingRegion(map);cursor=null;queuedMove=null;resetActionSelection();tool='move';category='move';if(map.sourceGrid)Object.assign(map,gridGeometry(map,snapshot.state.alignment ?? map.sourceGrid));if(map.asset || map.playerAsset || snapshot.state.artworkMapKey===map.key)loadArtwork(map,null,snapshot.state.artworkMapKey===map.key?artworkURL(connection.id):null);}
   setSpellRuleContext(snapshot.state.battle.spellRules ?? {});
   const geometryChanged = JSON.stringify(map.printedGrid ?? null) !== JSON.stringify(snapshot.state.alignment);
   connection.state = snapshot.state;maps=roomMapChoices(snapshot.state,maps);
@@ -2328,17 +2743,33 @@ function applyTableState(connection, snapshot) {
   }
   repairWallPlacement(map, battle);
   const owned = battle.actors.find(({ id }) => battle.controllers?.[id] === controller);
+  // Prefer an already-owned token, then the player's default character, then any controllable party token.
   if (!battle.actors.some(actor => actor.id === selectedId && canControl(actor))) {
-    selectedId = owned?.id ?? battle.actors.find(actor => actorIsUp(actor) && canControl(actor))?.id ?? "";
+    selectedId = owned?.id ?? preferredPartyActor()?.id ?? battle.actors.find(actor => actorIsUp(actor) && canControl(actor))?.id ?? "";
   }
   // Remote catch-up: mark existing journal entries seen. Live discoveries still toast via revealStory.
-  if (storyBefore === 0) storyToasts.remember(battle);
-  else if (storyBefore > 0 || !showInvitation) revealStory(storyBefore);
+  if (storyBefore === 0) {
+    storyToasts.remember(battle);
+    // Hub → campaign depart stashes keys so arrival toasts still fire after the session switch.
+    try {
+      const keys = JSON.parse(sessionStorage.getItem("wayfarer-arrival-story") || "[]");
+      sessionStorage.removeItem("wayfarer-arrival-story");
+      if (Array.isArray(keys)) {
+        for (const key of keys) {
+          const entry = battle.story?.discoveries?.find((item) => item.key === key);
+          if (entry) storyToasts.show(entry, { force: true });
+        }
+      }
+    } catch { /* ignore */ }
+  } else if (storyBefore > 0 || !showInvitation) revealStory(storyBefore);
   if (turn !== selectedActor()?.id || round !== battle.round) {
     resetActionSelection();
     category = "move";
   }
   pathPreview = null; pendingSquare = null; previewMessage = "";
+  if (context?.game && shouldPlayCombatVictory(round, battle, { partyWiped: partyDefeated(battle) })) {
+    playCombatVictory();
+  }
 }
 
 async function pollTable(connection) {
@@ -2433,6 +2864,7 @@ async function connectTable(connection, username) {
     connection.chat ??= createGameChat(connection.id, controller);
     connection.voice ??= createSpatialVoice(connection.id, controller);
     recentSession(connection.id);
+    if (connection.state.room?.kind === "hub" || map.module === "YPHub") rememberedHubSession(connection.id);
     rooms = rememberRoom(connection.id, map, connection.state);
     tableOpen = showInvitation === connection.id;
     showInvitation = null;
@@ -2478,6 +2910,7 @@ export function showPlay(data) {
   if (!data) {
     tokenHover.clear();
     combatCues.reset();
+    speechBubbles.clear();
     return;
   }
   if (!battle) useMap(previewState?.currentMap ?? trainingMap);
@@ -2495,11 +2928,20 @@ export function showPlay(data) {
     else { tableMessage = "Check the session link and try again."; redraw(); }
     return;
   }
+  if (data.hubEntry) {
+    if (!previousContext?.hubEntry) {
+      Object.assign(roomDraft, { name: "", prepared: false, party: null, adventure: "YPHub" });
+      status = "";
+      tableMessage = "";
+    }
+    redraw();
+    return;
+  }
   if(data.newRoom){
     if(!previousContext?.newRoom||previousContext.roomAdventure!==data.roomAdventure){
-      Object.assign(roomDraft,{name:'',prepared:false,party:null,adventure:data.roomAdventure??data.activeAdventure??'training'});
+      Object.assign(roomDraft,{name:'',prepared:false,party:null,adventure:data.roomAdventure==="YPHub"?"training":(data.roomAdventure??data.activeAdventure??'training')});
       status='';
-      if(roomDraft.adventure==='training'||hasArchive())void selectModule(roomDraft.adventure);
+      if(isBuiltinModule(roomDraft.adventure)||hasArchive())void selectModule(roomDraft.adventure);
     }
     redraw();
     return;
@@ -2573,6 +3015,8 @@ async function interact(run, { cosmetic = false, retryMove, remaining = 6 } = {}
     }
     if (!cosmetic && context) {
       advanceCombat();
+      // Hostile OA (or walk finish after a player OA) may clear movement for a queued move-then-attack.
+      if (resumePendingStrike()) advanceCombat();
       if (turnBefore !== selectedActor()?.id || roundBefore !== battle.round) {
         resetActionSelection();
         category = "move";
@@ -2592,6 +3036,9 @@ async function interact(run, { cosmetic = false, retryMove, remaining = 6 } = {}
   } catch (failure) {
     status = failure instanceof Error ? failure.message : "The action could not be completed.";
     succeeded = false;
+    pendingHubDepart = null;
+    pendingHubReturn = false;
+    clearPendingStrike();
     if (connection && connection === table) {
       queuedMove = null;
       applyTableState(connection, connection);
@@ -2632,6 +3079,29 @@ async function interact(run, { cosmetic = false, retryMove, remaining = 6 } = {}
       connection.online = false;
       status = error.message;
     } finally { connection.writing = false; }
+  }
+  if (!succeeded) {
+    pendingHubDepart = null;
+    pendingHubReturn = false;
+    clearPendingStrike();
+  } else if (pendingHubDepart) {
+    const destination = pendingHubDepart;
+    pendingHubDepart = null;
+    pendingHubReturn = false;
+    try {
+      await openCampaignFromHub(destination);
+      return true;
+    } catch (error) {
+      status = error instanceof Error ? error.message : "The expedition room could not be opened.";
+      if (context) redraw();
+      return false;
+    }
+  } else if (pendingHubReturn) {
+    pendingHubReturn = false;
+    const hubId = table?.state?.room?.hubSession || rememberedHubSession();
+    leaveTable();
+    location.hash = hubId ? sessionHash(hubId) : "#hub";
+    return true;
   }
   if (context) redraw();
   if (connection === table && queuedMove) {
@@ -2705,6 +3175,7 @@ function selectPartyMember(actor) {
   if(!canSelectPartyMember(actor))return;
   const same = selectedId === actor.id;
   selectedId=actor.id;tool="move";category="move";resetActionSelection();
+  rememberPreferredFromActor(actor);
   if (compactPlayUi()) actionsSheetOpen = same ? !actionsSheetOpen : true;
   if(!battle.round)detectNearby(actor);
 }
@@ -2935,7 +3406,11 @@ document.addEventListener("click", (event) => {
       if(entry.actionId==='zone-beam'){controlledZone=entry.zoneId;category='zone-beam';}
       if(entry.mode==='spell'){spellSquare=null;spellEnd=null;spellWallForm='wall';const rule=customSpellRule(entry.data.reference||entry.data.key);spellHotSide=rule?.shape==='ring'||spellWallForm==='ring'?'inside':'left';}
       if(entry.controlZone){controlledZone=entry.controlZone;category='spell-zone-choice';}
-      if (entry.actionId === 'interact') { category = 'interact'; objectTarget = null; bodyPlacement = ''; }
+      if (entry.actionId === 'interact') {
+        category = 'interact';
+        objectTarget = selectUnderfootObject(selectedActor());
+        bodyPlacement = '';
+      }
       if (entry.actionId === 'investigate') { category = 'investigate'; featureTargetId = ''; }
       if (entry.actionId === 'use-feature') { category = 'use-feature'; featureTargetId = ''; }
       if (entry.mode === 'potion') potionUse = 'drink';
@@ -2979,8 +3454,6 @@ document.addEventListener("click", (event) => {
   if (play === 'edit-walls') { toolsOpen = false; tool = 'move'; resetActionSelection(); wallEditor.setMode('draw'); redraw(); return; }
   if(play==='sphere-control'){category='spell-zone';redraw();return;}
   if(play==='sphere-recast'){category='spell';controlledZone=null;spellSquare=null;redraw();return;}
-  if (play === 'cancel-ai-forecast') { aiForecastAbort?.abort(); return; }
-  if (play === 'ai-forecast') { openAiForecastDialog(); return; }
   if (play === 'reset-fog-memory') { void interact(() => { forgetExploration(battle); delete battle.fogMemoryByActor; rememberVision(battle, map); saveExplored(battle, map); }, { cosmetic: true }); return; }
   if (play === "toggle-fog") {
     void interact(() => { battle.fogEnabled = !(battle.fogEnabled ?? fogOfWarEnabled); }, { cosmetic: true }); return;
@@ -3112,8 +3585,9 @@ document.addEventListener("click", (event) => {
       }
       case "release-wolves":
         if (!battle.round && map.module === "LMoP" && map.id === "1ab" && room?.id === "021") {
-          for (const actor of battle.actors.filter((entry) => entry.origin === areaKey(room) && entry.side === "neutral" && !entry.dead)) {
-            actor.side = "hostile";
+          for (const entry of battle.actors.filter((actor) => actor.origin === areaKey(room) && actor.kennelWolf && !actor.kennelAlly && !actor.dead)) {
+            entry.side = "hostile";
+            entry.chained = false;
           }
           if (context.game) battle.actors.filter((actor) => actor.side === "party").some(detectNearby);
         }
@@ -3122,7 +3596,9 @@ document.addEventListener("click", (event) => {
         selectPartyMember(battle.actors.find(entry=>entry.id===id));
         break;
       case "claim-party": {
-        if (!table || !battle.actors.some((actor) => actor.id === id && actor.side === "party")) break;
+        const claimTarget = battle.actors.find((actor) => actor.id === id && actor.side === "party");
+        if (!table || !claimTarget) break;
+        if (claimTarget.kennelAlly) throw new Error("Befriended wolves act on their own — they cannot be claimed.");
         const controllers = battle.controllers ??= {};
         if (controllers[id] && controllers[id] !== controller) throw new Error("Another player claimed this character.");
         if (controllers[id] === controller) delete controllers[id];
@@ -3130,6 +3606,7 @@ document.addEventListener("click", (event) => {
           // Multi-claim: keep any other characters this player already controls.
           controllers[id] = controller;
           selectedId = id;
+          rememberPreferredFromActor(claimTarget);
           resetActionSelection();
         }
         break;
@@ -3138,6 +3615,45 @@ document.addEventListener("click", (event) => {
         requireControl(selectedActor());
         rescueSildar(battle, map, selectedActor());
         break;
+      case "hub-action": {
+        requireControl(selectedActor());
+        const kennel = runKennelAction(id, battle, map, selectedActor());
+        if (kennel) {
+          presentKennelResult(kennel);
+          break;
+        }
+        const result = runHubAction(id, battle, map, selectedActor());
+        if (result.discovery) storyToasts.show(result.discovery);
+        if (result.speech?.actorId) speechBubbles.say(result.speech.actorId, result.speech.lines, { name: result.speech.name });
+        if (result.status) status = result.status;
+        const roomKind = table?.state?.room?.kind ?? (isYpHub(map) ? "hub" : "campaign");
+        // Hub ↔ campaign are separate sessions; stairs stay in-session.
+        if (result.travelExpedition && roomKind === "hub" && !isYpHub(result.travelExpedition)) {
+          pendingHubDepart = structuredClone(result.travelExpedition);
+          break;
+        }
+        if (result.travelExpedition && roomKind === "campaign" && isYpHub(result.travelExpedition)) {
+          pendingHubReturn = true;
+          break;
+        }
+        if (result.travel || result.travelExpedition) {
+          const nextMap = result.travel ?? result.travelExpedition;
+          const expedition = Boolean(result.travelExpedition);
+          const previous = table ? tableState() : (previewState ?? commitRoomState({ battle }, map, battle));
+          const moved = expedition ? travelExpedition(previous, nextMap) : travelRoom(previous, nextMap);
+          const destination = moved.currentMap;
+          const active = roomBattle(moved, destination);
+          if (!active.sceneReady && destination.module !== "training") await populateScene(destination, active);
+          await applyBakedWalls(destination, active);
+          if (destination.module === "YPHub") seedYpHubScene(destination, active);
+          for (const member of active.actors.filter((entry) => entry.side === "party")) discoverStory(active, destination, member);
+          rememberVision(active, destination);
+          const state = commitRoomState(moved, destination, active, moved.alignment);
+          adoptTravelMap(destination, active, state);
+          if (!table) saveBattle(map, battle);
+        }
+        break;
+      }
       case "archive-local": {
         pending = true;
         status = "Opening the supplied archive…";
@@ -3206,7 +3722,7 @@ document.addEventListener("click", (event) => {
       case "start":
         if (!canRollInitiative()) throw new Error("Place a party member and a hostile creature — or two rival parties — to roll initiative.");
         startInitiative(battle); resetActionSelection(); tool = "move"; break;
-      case "end-initiative": endInitiative(battle); combatChoice = ""; targetId = ""; tool = "move"; break;
+      case "end-initiative": endInitiative(battle); clearPendingStrike(); combatChoice = ""; targetId = ""; tool = "move"; break;
       case "leave-combat": {
         const actor = selectedActor();
         requireControl(actor);
@@ -3223,7 +3739,7 @@ document.addEventListener("click", (event) => {
         break;
       }
       case "end":
-        requireControl(selectedActor()); endTurn(battle, Math.random, selectedActor()); resetActionSelection(); category = "move"; break;
+        requireControl(selectedActor()); endTurn(battle, Math.random, selectedActor()); clearPendingStrike(); resetActionSelection(); category = "move"; break;
       case "death": requireControl(selectedActor()); deathSave(battle, selectedActor()); break;
       case "arm-inspiration": {
         const actor = selectedActor();
@@ -3265,7 +3781,7 @@ document.addEventListener("click", (event) => {
           requireControl(selectedActor());
           battle = await resetSceneBoard(battle, map, { populate: populateScene, training: trainingActors });
           tokenMotion.reset(); queuedMove = null; objectTarget = null; bodyPlacement = '';
-          resetActionSelection(); category = 'move'; tool = 'move';
+          clearPendingStrike(); resetActionSelection(); category = 'move'; tool = 'move';
           status = 'Encounter and board reset.'; log(battle, status);
         }
         break;
@@ -3500,11 +4016,29 @@ document.addEventListener("input", (event) => {
     return;
   }
   if (event.target.id === 'new-room-name') { roomDraft.name = event.target.value; return; }
-  if (event.target.id === 'new-room-username') { roomDraft.username = event.target.value; return; }
+  if (event.target.id === 'new-room-username' || event.target.id === "hub-username") { roomDraft.username = event.target.value; return; }
   if (event.target.id === 'new-room-prepared') { roomDraft.prepared = event.target.checked; redraw(); return; }
   if (event.target.id === 'spawn-point-name') { spawnNameDraft = event.target.value; return; }
   if (event.target.id === 'play-spawn' || event.target.id === 'session-spawn') { selectedSpawnId = event.target.value; return; }
-  if (event.target.name === 'room-character') { roomDraft.party = new Set([...root().querySelectorAll('[name="room-character"]:checked')].map(input => input.value)); return; }
+  if (event.target.name === 'room-character') {
+    const checked = [...root().querySelectorAll('[name="room-character"]:checked')];
+    if (checked.length > 4) {
+      event.target.checked = false;
+      status = 'Choose up to four starting characters.';
+      const note = root().querySelector('.room-create-status');
+      if (note) note.textContent = status;
+    }
+    roomDraft.party = new Set([...root().querySelectorAll('[name="room-character"]:checked')].map(input => input.value));
+    for (const tile of root().querySelectorAll('.room-party-tile')) {
+      const on = tile.querySelector('input')?.checked;
+      tile.classList.toggle('is-selected', Boolean(on));
+    }
+    const count = root().querySelector('.room-party-count');
+    if (count) count.textContent = roomDraft.party.size + ' selected';
+    const brief = root().querySelector('.adventure-brief');
+    if (brief) brief.outerHTML = adventureBriefing(roomDraft.party);
+    return;
+  }
   if (event.target.id === "session-username" && table?.needsUsername) {
     table.usernameDraft = event.target.value;
     return;
@@ -3555,7 +4089,7 @@ document.addEventListener("change", (event) => {
       roomDraft.adventure=value;
       roomDraft.prepared=false;
       status="";
-      if(value==="training"||hasArchive())void selectModule(value);else redraw();
+      if(isBuiltinModule(value)||hasArchive())void selectModule(value);else redraw();
       return;
     case 'room-map':{const entry=maps.find(entry=>entry.key===value);if(entry)void changeRoomMap(entry);return;}
     case "play-map": { const entry = maps.find(({ key }) => key === value); if (entry) useMap(entry); break; }
@@ -3670,10 +4204,69 @@ function executeCombatSelection(form) {
       damage: value("custom-damage"), normalRange: Number(value("custom-range")) || undefined,
       reach: Number(value("custom-reach")) || 5,
     };
-    rollStrike(battle, actor, target, weapon, options);
-    if (target && isCombatFoe(actor, target)) joinInitiative(battle, target);
+    performWeaponStrike(actor, target, weapon, options);
   }
 
+}
+
+function queuePendingStrike(actor, target, weapon, options) {
+  pendingStrike = {
+    actorId: actor.id,
+    targetId: target.id,
+    weapon: structuredClone(weapon),
+    options: {
+      mode: options.mode,
+      cover: options.cover,
+      stun: options.stun,
+      focusedAim: options.focusedAim,
+      bonusStrike: options.bonusStrike,
+      kiFueled: options.kiFueled,
+    },
+    mapKey: map.key,
+    round: battle.round,
+  };
+}
+
+function clearPendingStrike() {
+  pendingStrike = null;
+}
+
+/** Move into range when needed, then strike — or queue the strike if opportunity attacks pause movement. */
+function performWeaponStrike(actor, target, weapon, options) {
+  if (!target) throw new Error("Choose a target.");
+  if (battle.round) {
+    const moved = approachForStrike(battle, actor, target, weapon, map);
+    if (moved && battle.movement) {
+      queuePendingStrike(actor, target, weapon, options);
+      status = actor.name + " moves into range…";
+      return;
+    }
+  }
+  rollStrike(battle, actor, target, weapon, options);
+  if (target && isCombatFoe(actor, target)) joinInitiative(battle, target);
+  status = battle.log.at(-1) ?? status;
+}
+
+function resumePendingStrike() {
+  if (!pendingStrike || battle.movement || battle.classReaction) return false;
+  const job = pendingStrike;
+  pendingStrike = null;
+  if (map.key !== job.mapKey || battle.round !== job.round) return false;
+  const actor = battle.actors.find((entry) => entry.id === job.actorId);
+  const target = battle.actors.find((entry) => entry.id === job.targetId);
+  if (!actor || !target || !actorIsUp(actor) || !canControl(actor) || !occupies(actor) || !occupies(target)) {
+    status = "The attack could not continue after moving.";
+    return false;
+  }
+  try {
+    rollStrike(battle, actor, target, job.weapon, { ...job.options, map });
+    if (isCombatFoe(actor, target)) joinInitiative(battle, target);
+    status = battle.log.at(-1) ?? status;
+    return true;
+  } catch (failure) {
+    status = failure instanceof Error ? failure.message : "The attack could not continue after moving.";
+    return false;
+  }
 }
 
 function executeClassSelection(form, targetOverride) {
@@ -3688,7 +4281,12 @@ function executeClassSelection(form, targetOverride) {
     const unarmed = classWeapons(actor, battle).filter((weapon) => weapon.unarmed || action.monkWeapon && weapon.monkWeapon);
     const weapon = unarmed[Number(value("feature-unarmed"))];
     if (!weapon) throw new Error("Choose an unarmed strike.");
-    rollStrike(battle, actor, target, weapon, { map, bonusStrike: true, kiFueled: action.id === "ki-fueled", stun: Boolean(actor.stunArmed && actor.resources?.ki?.current > 0 && !weapon.normalRange) });
+    performWeaponStrike(actor, target, weapon, {
+      map,
+      bonusStrike: true,
+      kiFueled: action.id === "ki-fueled",
+      stun: Boolean(actor.stunArmed && actor.resources?.ki?.current > 0 && !weapon.normalRange),
+    });
   } else {
     const ids = [...form.querySelectorAll('[name="burst-target"]:checked')].map((input) => input.value);
     useClassAction(battle, actor, id, { map, target, targets: battle.actors.filter((entry) => ids.includes(entry.id)) });
@@ -3701,6 +4299,7 @@ document.addEventListener("submit", (event) => {
   event.preventDefault();
   const value = (id) => event.target.querySelector("#" + id)?.value;
   if (event.target.id === 'create-room-form') { createAdventureRoom(); return; }
+  if (event.target.id === "enter-hub-form") { void enterHubSession(); return; }
   if (event.target.id === "session-join-form") {
     const id = sessionCode(value("session-invite"));
     if (id) location.hash = sessionHash(id);
@@ -3854,46 +4453,10 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener('click', event => {
-  if (event.target.id === 'ai-toggle-key-visibility') {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const input = document.querySelector('#ai-gemini-key-input');
-    if (input) {
-      const isPass = input.type === 'password';
-      input.type = isPass ? 'text' : 'password';
-      event.target.textContent = isPass ? 'Hide' : 'Show';
-    }
-    return;
-  }
-  if (event.target.id === 'ai-clear-key-btn') {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    clearApiKey();
-    const input = document.querySelector('#ai-gemini-key-input');
-    if (input) {
-      input.value = '';
-      input.type = 'text';
-      input.focus();
-    }
-    event.target.remove();
-    return;
-  }
   const button = event.target.closest?.('[data-wall-editor]'); if (button) { event.preventDefault(); event.stopImmediatePropagation(); void wallEditor.action(button.dataset.wallEditor); }
 }, true);
 document.addEventListener('submit', event => {
   const form = event.target;
-  if (form.id === 'ai-forecast-form') {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const values = new FormData(form);
-    const key = values.get('apiKey')?.trim() || '';
-    const remember = values.has('remember');
-    const mode = values.get('mode') || 'replace';
-    const dialog = document.querySelector('#dialog');
-    dialog?.close();
-    void runAiForecast({ apiKey: key, remember, mode, model:values.get('model'),fallback:values.has('fallback'),detail:values.has('detail') });
-    return;
-  }
   if (form.id !== 'fog-settings' && !form.matches?.('[data-vision-actor]')) return; event.preventDefault(); event.stopImmediatePropagation(); const values = new FormData(form);
   if (form.id === 'fog-settings') void interact(() => { battle.fogSettings = { sharedVision: values.has('sharedVision'), remember: values.has('remember'), blockMovement: values.has('blockMovement'), opacity: Number(values.get('opacity')) / 100, exploredOpacity: Number(values.get('exploredOpacity')) / 100, softness: Number(values.get('softness')) }; rememberVision(battle, map); saveExplored(battle, map); }, { cosmetic: true });
   else { const id = form.dataset.visionActor; void interact(() => { const actor = battle.actors.find(a => a.id === id); if (actor) { actor.vision = { enabled: values.has('enabled'), range: Number(values.get('range')), angle: Number(values.get('angle')), facing: Number(values.get('facing')) }; rememberVision(battle, map); saveExplored(battle, map); } }, { cosmetic: true }); }
@@ -3949,6 +4512,17 @@ function featureExplorationPanel(actor, mode) {
     <p>${escape(card.text)}</p>
     <div class="item-action-choices">${mode === 'investigate' && card.canInvestigate ? actionButton('Investigate', 'feature-investigate', { primary: true }) : ''}${mode === 'use-feature' && card.canUse ? actionButton('Use', 'feature-use', { primary: true }) : ''}</div></div>`;
 }
+function selectUnderfootObject(actor) {
+  if (!actor || !occupies(actor)) return null;
+  const body = battle.actors.find((entry) =>
+    (entry.dead || entry.hp === 0) && !entry.carriedBy && !entry.draggedBy && entry.x != null &&
+    entry.id !== actor.id && containsCell(entry, actor.x, actor.y));
+  if (body) return { type: 'body', id: body.id };
+  const treasure = visibleMarkers().find((marker) =>
+    marker.type === 'treasure' && !marker.looted && marker.x === actor.x && marker.y === actor.y);
+  return treasure ? { type: 'treasure', id: treasure.id } : null;
+}
+
 function worldInteractionPanel(actor) {
   const source = worldObject();
   const carrying = actor.carrying && battle.actors.find(body => body.id === actor.carrying);
@@ -3959,7 +4533,7 @@ function worldInteractionPanel(actor) {
   if (bodyPlacement) return `<p>Choose an open square on the map to ${bodyPlacement === 'throw' ? 'throw the body (20 ft, action, 1d4 impact damage)' : 'place the body (5 ft, free)'}. Throwing an unconscious creature can kill them.</p>`;
   const attachedButtons = (carrying ? `<button type="button" class="game-button" data-play="world-select" data-type="body" data-id="${escape(carrying.id)}">Carrying ${escape(carrying.name)}</button>` : '') +
     (dragging ? `<button type="button" class="game-button" data-play="world-select" data-type="body" data-id="${escape(dragging.id)}">Dragging ${escape(dragging.name)}</button>` : '');
-  if (!source) return `<p>Select a body or treasure on the map. Move within 5 feet to interact.</p><div class="world-objects">${[...bodies, ...treasures].map(object => `<button type="button" class="game-button" data-play="world-select" data-type="${object.side ? 'body' : 'treasure'}" data-id="${escape(object.id)}">${escape(object.name)}${object.dead ? ' · Dead' : object.hp === 0 ? ' · Unconscious' : ''}</button>`).join('') || '<p>No bodies or treasure nearby.</p>'}${attachedButtons}</div>`;
+  if (!source) return `<p>Select a body or treasure on the map. You can walk onto a corpse and still loot or drag it.</p><div class="world-objects">${[...bodies, ...treasures].map(object => `<button type="button" class="game-button" data-play="world-select" data-type="${object.side ? 'body' : 'treasure'}" data-id="${escape(object.id)}">${escape(object.name)}${object.dead ? ' · Dead' : object.hp === 0 ? ' · Unconscious' : ''}${actor && occupies(actor) && object.x != null && containsCell(object, actor.x, actor.y) ? ' · Underfoot' : ''}</button>`).join('') || '<p>No bodies or treasure nearby.</p>'}${attachedButtons}</div>`;
   const contents = lootContents(source), lootable = contents.items.length || Object.keys(contents.currency).length;
   const free = !source.carriedBy && !source.draggedBy;
   return `<div class="world-object-heading"><strong>${escape(source.name)}</strong><small>${source.side ? (source.dead ? 'Dead' : 'Unconscious') + ' · ' + bodyWeight(source) + ' lb' : 'Treasure'}</small></div>
@@ -3967,7 +4541,7 @@ function worldInteractionPanel(actor) {
  <div class="item-action-choices">${lootable && (!source.side || source.dead) && !actor.dragging ? actionButton('Take all', 'world-loot') : ''}${source.side && free ? actionButton('Pick up body', 'world-carry') + actionButton('Drag body', 'world-drag') : ''}${source.side && !source.dead && source.hp === 0 && source.side === actor.side && !actor.dragging ? actionButton('Help Up · 1 HP', 'world-help') : ''}${carrying?.id === source.id ? actionButton('Place body', 'world-place') + actionButton('Throw body', 'world-throw') : ''}${dragging?.id === source.id ? actionButton('Drop body', 'world-drop') : ''}</div>`;
 }
 
-async function loadRoomMaps(connection){try{const available=map.module==='training'?[trainingMap]:await moduleMaps(map.module);if(table!==connection)return;const fresh=available.find(m=>m.key===map.key);if(fresh?.playerAsset&&!map.playerAsset){map.playerAsset=fresh.playerAsset;if(!customArtwork&&!battle.showDmArtwork)loadArtwork(map);}maps=roomMapChoices(connection.state,available);if(toolsOpen)redraw();}catch{if(table===connection)maps=roomMapChoices(connection.state);}}
-async function changeRoomMap(entry){const connection=table;if(!connection?.state||connection.writing)return;connection.writing=true;status='Changing map…';redraw();try{const previous=tableState(),next=travelRoom(previous,entry),destination=next.currentMap,active=roomBattle(next,destination);if(!active.sceneReady&&destination.module!=='training')await populateScene(destination,active);await applyBakedWalls(destination,active);for(const actor of active.actors.filter(actor=>actor.side==='party'))discoverStory(active,destination,actor);rememberVision(active,destination);for(const actor of active.actors.filter(actor=>actor.side==='party')){const enemy=enemyInSight(active,destination,actor);if(enemy){engageEnemy(active,destination,actor,enemy,true);break;}}const state=commitRoomState(next,destination,active,next.alignment),result=await writeSession(connection.id,connection.revision,state);if(table!==connection)return;if(result.state){applyTableState(connection,result);status='Another player acted first. Review the room before changing maps.';}else{applyTableState(connection,{state,revision:result.revision});rooms=rememberRoom(connection.id,map,state);status='Party arrived at '+map.title+'.';}}catch(error){status=error.message;}finally{connection.writing=false;if(table===connection)redraw();}}
+async function loadRoomMaps(connection){try{const available=moduleMapsOrBuiltin(map.module)??await moduleMaps(map.module);if(table!==connection)return;const fresh=available.find(m=>m.key===map.key);if(fresh?.playerAsset&&!map.playerAsset){map.playerAsset=fresh.playerAsset;if(!customArtwork&&!battle.showDmArtwork)loadArtwork(map);}maps=roomMapChoices(connection.state,available);if(toolsOpen)redraw();}catch{if(table===connection)maps=roomMapChoices(connection.state);}}
+async function changeRoomMap(entry){const connection=table;if(!connection?.state||connection.writing)return;connection.writing=true;status='Changing map…';redraw();try{const previous=tableState(),next=travelRoom(previous,entry),destination=next.currentMap,active=roomBattle(next,destination);if(!active.sceneReady&&destination.module!=='training')await populateScene(destination,active);await applyBakedWalls(destination,active);if(destination.module==='YPHub')seedYpHubScene(destination,active);for(const actor of active.actors.filter(actor=>actor.side==='party'))discoverStory(active,destination,actor);rememberVision(active,destination);for(const actor of active.actors.filter(actor=>actor.side==='party')){const enemy=enemyInSight(active,destination,actor);if(enemy){engageEnemy(active,destination,actor,enemy,true);break;}}const state=commitRoomState(next,destination,active,next.alignment),result=await writeSession(connection.id,connection.revision,state);if(table!==connection)return;if(result.state){applyTableState(connection,result);status='Another player acted first. Review the room before changing maps.';}else{applyTableState(connection,{state,revision:result.revision});rooms=rememberRoom(connection.id,map,state);status='Party arrived at '+map.title+'.';}}catch(error){status=error.message;}finally{connection.writing=false;if(table===connection)redraw();}}
 
 export function syncAccountCharacters(characters){if(context)context.characters=characters;}

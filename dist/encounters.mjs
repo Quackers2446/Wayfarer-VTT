@@ -126,7 +126,7 @@ const pilotRooms = {
 };
 
 export const roomNotes = {
-  "021":"The wolves start chained. Set them hostile when they can attack.",
+  "021":"Wolves start chained to the pole. Calm (Animal Handling), free, or befriend them. Failure alerts the eastern den.",
   "025":"The passage’s hazards are resolved manually.",
   "029":"The lookout can raise the alarm. Flood triggers are resolved manually.",
   "02f":"Sildar starts bound, unarmed, and at 1 hit point.",
@@ -405,6 +405,145 @@ export const trainingMap = {
     {id:"yard",entry:{name:"Practice ring", entries:["The guard acts on its own initiative. Use the terrain tools to mark barriers and difficult squares."]},points:rect(420,70,560,490)},
   ],
 };
+
+/** Built-in modules that do not require a 5etools adventure ZIP. */
+export function isBuiltinModule(id) {
+  return id === "training" || id === "YPHub";
+}
+
+const YP_W = 4480, YP_H = 3584, YP_SIZE = 128;
+const ypCell = (cx, cy, w = 1, h = 1) => rect(cx * YP_SIZE, cy * YP_SIZE, w * YP_SIZE, h * YP_SIZE);
+const ypGeo = {
+  width: YP_W, height: YP_H, size: YP_SIZE,
+  cols: 35, rows: 28, offsetX: 0, offsetY: 0, cellWidth: YP_SIZE, cellHeight: YP_SIZE,
+  sourceGrid: { width: YP_SIZE, height: YP_SIZE, x: 0, y: 0, divisions: 1 },
+};
+
+function ypFloor({ key, sceneId, title, asset, regions, id }) {
+  return {
+    module: "YPHub", key, sceneId, id: id ?? sceneId, title, asset, caption: "Yawning Portal",
+    artist: "Yawning Portal map pack", regions, ...ypGeo,
+  };
+}
+
+/** Five-floor private hub. Runtime MVP focuses on 1st ↔ 2nd; others stay selectable. */
+export const ypHubMaps = [
+  ypFloor({
+    key: "/assets/yawning-portal/1st-floor.webp",
+    sceneId: "hub:yawning-portal:first",
+    id: "yp-first",
+    title: "Yawning Portal — First floor",
+    asset: "/assets/yawning-portal/1st-floor.webp",
+    regions: [
+      { id: "entry", entry: { name: "Front entrance", entries: [
+        { type: "insetReadaloud", entries: ["Warm light spills from the Yawning Portal. Adventurers come and go; the well in the common room yawns toward Undermountain."] },
+      ] }, points: ypCell(12, 22, 11, 5) },
+      { id: "common", entry: { name: "Common room", entries: [
+        { type: "insetReadaloud", entries: ["Tables ring the famous well. Durnan keeps an eye on newcomers from the bar."] },
+      ] }, points: ypCell(8, 8, 19, 12) },
+      { id: "well", entry: { name: "The well", entries: [
+        { type: "insetReadaloud", entries: ["A black shaft drops into Undermountain. Rope and rumor cling to the rim; descent waits for another day."] },
+      ] }, points: ypCell(15, 11, 5, 5) },
+      { id: "stairs-up", entry: { name: "Stairs up", entries: [
+        { type: "insetReadaloud", entries: ["Wooden stairs climb to the guest floors above."] },
+      ] }, points: ypCell(3, 9, 4, 4) },
+      { id: "board", entry: { name: "Quest board", entries: [
+        { type: "insetReadaloud", entries: ["A battered board near the door holds notices and leads for hire."] },
+      ] }, points: ypCell(20, 21, 4, 3) },
+    ],
+  }),
+  ypFloor({
+    key: "/assets/yawning-portal/2nd-floor.webp",
+    sceneId: "hub:yawning-portal:second",
+    id: "yp-second",
+    title: "Yawning Portal — Second floor",
+    asset: "/assets/yawning-portal/2nd-floor.webp",
+    regions: [
+      { id: "entry", entry: { name: "Landing", entries: [
+        { type: "insetReadaloud", entries: ["Quieter halls and guest rooms open off the landing. Stairs lead back to the common room."] },
+      ] }, points: ypCell(3, 9, 4, 4) },
+      { id: "lodging", entry: { name: "Guest rooms", entries: [
+        { type: "insetReadaloud", entries: ["A place to plan in private before the next departure."] },
+      ] }, points: ypCell(8, 8, 18, 12) },
+    ],
+  }),
+  ypFloor({
+    key: "/assets/yawning-portal/3rd-floor.webp",
+    sceneId: "hub:yawning-portal:third",
+    id: "yp-third",
+    title: "Yawning Portal — Third floor",
+    asset: "/assets/yawning-portal/3rd-floor.webp",
+    regions: [
+      { id: "entry", entry: { name: "Upper landing", entries: ["More lodging above the bustle of the common room."] }, points: ypCell(3, 9, 4, 4) },
+    ],
+  }),
+  ypFloor({
+    key: "/assets/yawning-portal/roof.webp",
+    sceneId: "hub:yawning-portal:roof",
+    id: "yp-roof",
+    title: "Yawning Portal — Roof",
+    asset: "/assets/yawning-portal/roof.webp",
+    regions: [
+      { id: "entry", entry: { name: "Rooftop", entries: ["Wind off the city. The street sprawls far below."] }, points: ypCell(12, 12, 10, 8) },
+    ],
+  }),
+  ypFloor({
+    key: "/assets/yawning-portal/cellar.webp",
+    sceneId: "hub:yawning-portal:cellar",
+    id: "yp-cellar",
+    title: "Yawning Portal — Cellar",
+    asset: "/assets/yawning-portal/cellar.webp",
+    regions: [
+      { id: "entry", entry: { name: "Cellar", entries: ["Casks, stores, and a colder draft from somewhere deeper."] }, points: ypCell(10, 10, 14, 10) },
+    ],
+  }),
+];
+
+/** Hardcoded Cragmaw Hideout stub for hub depart when the archive is not attached yet. */
+const cragmawSource = { width: 165, height: 165, x: -7, y: -13, divisions: 1 };
+export const cragmawHideoutMap = {
+  module: "LMoP",
+  key: "adventure/LMoP/Cragmaw Hideout.webp",
+  id: "1ab",
+  title: "Cragmaw Hideout",
+  caption: "Goblin Arrows",
+  asset: "adventure/LMoP/Cragmaw Hideout.webp",
+  artist: "Mike Schley",
+  width: 4937,
+  height: 3439,
+  sourceGrid: cragmawSource,
+  legacyGrid: legacyGeometry({ size: 165, offsetX: -7, offsetY: -13 }, 4937, 3439),
+  ...gridGeometry({ width: 4937, height: 3439, sourceGrid: cragmawSource }),
+  regions: [
+    { id: "entry", entry: { name: "Cave mouth", entries: [
+      { type: "insetReadaloud", entries: ["The goblin trail ends at a damp cave mouth. Somewhere inside, a captive waits."] },
+    ] }, points: rect(200, 2800, 900, 500) },
+  ],
+};
+
+/**
+ * Prefer the full archive Cragmaw map (regions + roster hooks). The stub alone cannot
+ * populate goblins/Sildar because authored rooms use 5etools area ids (021, 02f, …).
+ */
+export async function resolveExpeditionMap(destination) {
+  const stub = destination ?? cragmawHideoutMap;
+  if (stub.module !== "LMoP" || stub.id !== "1ab") return structuredClone(stub);
+  try {
+    const maps = await moduleMaps("LMoP");
+    const full = maps.find((entry) => entry.id === "1ab" && !/\(player\)/i.test(entry.title ?? ""))
+      ?? maps.find((entry) => /cragmaw\s*hideout/i.test(entry.title ?? "") && !/player/i.test(entry.title ?? ""));
+    if (full?.regions?.length > 1) return structuredClone(full);
+  } catch {
+    // Archive missing or unreadable — keep the stub.
+  }
+  return structuredClone(stub);
+}
+
+export function moduleMapsOrBuiltin(id) {
+  if (id === "training") return [trainingMap];
+  if (id === "YPHub") return ypHubMaps.map((entry) => structuredClone(entry));
+  return null;
+}
 
 export function trainingActors() {
   return [

@@ -20,21 +20,24 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
     const id = escape(character.id);
     const initials = character.name.split(/\s+/).slice(0,2).map((word) => word[0]).join("");
     const hp = Math.max(0, Math.min(character.hp,character.maxHp));
+    const allyNpc = Boolean(character.kennelAlly);
     const owner = controllers?.[character.id];
     const mine = owner === controller;
-    const selectable=(!owner||mine)&&actorIsUp(character)&&(!inCombat||movers.includes(character));
+    const selectable=!allyNpc&&(!owner||mine)&&actorIsUp(character)&&(!inCombat||movers.includes(character));
     const selectedHere=character.id===selected?.id;
-    const hint=selectable?'Click to select. Double-click to open sheet.':'Double-click to open sheet.';
+    const hint=allyNpc?'Pack ally — acts automatically.':selectable?'Click to select. Double-click to open sheet.':'Double-click to open sheet.';
     return `<div class="game-character ${character.id === selected?.id ? "game-character-current" : ""}">
       <button type="button" class="game-portrait" id="game-portrait-${id}" data-play="party-portrait" data-id="${id}"
         aria-label="${selectable?'Select':'Inspect'} ${name}" aria-pressed="${selectedHere}" aria-keyshortcuts="Shift+Enter"
-        title="${escape(hint+' · '+character.hp+'/'+character.maxHp+' HP'+(owner ? ' · '+(mine ? 'Your character' : names.get(owner) ?? 'Claimed') : ''))}">
+        title="${escape(hint+' · '+character.hp+'/'+character.maxHp+' HP'+(allyNpc ? ' · Ally (AI)' : owner ? ' · '+(mine ? 'Your character' : names.get(owner) ?? 'Claimed') : ''))}">
         <span class="game-avatar palette-${index%4}" aria-hidden="true">
           <span data-token-initial>${escape(initials)}</span><canvas data-creature-portrait="${id}" hidden></canvas>
         </span>
         <span class="game-character-info"><strong>${name}</strong><small>${character.hp} / ${character.maxHp} HP${character.tempHp ? " · +" + character.tempHp : ""}</small>
           <progress max="${character.maxHp}" value="${hp}" aria-label="${name} hit points"></progress>
-          ${owner
+          ${allyNpc
+            ? `<small>Ally (AI)</small>`
+            : owner
             ? `<small>${mine ? "Your character" : escape(names.get(owner) ?? "Claimed")}</small>`
             : (controllers ? `<small>Unclaimed</small>` : "")}
           ${multi ? `<small class="game-party-tag">${escape(partyLabel(actorPartyId(character)))}</small>` : ""}
@@ -42,7 +45,7 @@ function portraits(party, selected, inCombat, controllers, controller, players, 
       </button>
       ${selectable && !selectedHere
         ? button("Control","", "control-party", `data-id="${id}" aria-label="${inCombat ? "Control " + name : "Control"}"`) : ""}
-      ${controllers && (!owner || mine) ? button(mine ? "Release" : "Claim","","claim-party",`data-id="${id}" aria-label="${mine ? "Release" : "Claim"} ${name}"`) : ""}
+      ${!allyNpc && controllers && (!owner || mine) ? button(mine ? "Release" : "Claim","","claim-party",`data-id="${id}" aria-label="${mine ? "Release" : "Claim"} ${name}"`) : ""}
     </div>`;
   }).join("")}`).join("");
 }
@@ -63,7 +66,7 @@ function activityLog(history,mode) {
 
 export function gameScreen({
   map, battle, roomName, saveStatus, selected, party, category, actions, tacticalTools, status,
-  logOpen, logHistory=battle.log, eventLogMode="compact", eventLogPlacement="separate", toolsOpen, storyOpen, storyContent, rescueAvailable, canAct, controllers, controller,hotbar,resourceControls,
+  logOpen, logHistory=battle.log, eventLogMode="compact", eventLogPlacement="separate", toolsOpen, storyOpen, storyContent, rescueAvailable, hubActions=[], canAct, controllers, controller,hotbar,resourceControls,
   destination, adventureName, hasToken, tableOpen, tableContent, shared, partyOpen=false,partyContent='',restOpen=false,restContent='',chatOpen=false, visibleInitiative, players = [],busy=false,actionPanelOpen=false,
   defeated=false, pvpLeave=false, truceVoted=false,
   compact=false, actionsSheetOpen=true, aiming=false, aimMessage="",
@@ -179,8 +182,11 @@ export function gameScreen({
             </header>` : ""}
             ${hotbar}
           </div>` : ""}
-        <div class="game-action-content"${actionPanelOpen && (rescueAvailable || actions?.trim?.()) ? ' role="region" aria-label="Selected action controls"' : ' hidden'}>
-          ${rescueAvailable ? button("Free Sildar","users","rescue-sildar") : ""}
+        <div class="game-action-content"${actionPanelOpen && (rescueAvailable || hubActions.length || actions?.trim?.()) ? ' role="region" aria-label="Selected action controls"' : ' hidden'}>
+          ${rescueAvailable || hubActions.length ? `<div class="hub-action-stack">${
+            (rescueAvailable ? button("Free Sildar","users","rescue-sildar") : "") +
+            hubActions.map((entry) => button(entry.label, "flag", "hub-action", `data-id="${escape(entry.id)}"`)).join("")
+          }</div>` : ""}
           ${actions}
         </div>
       </div>

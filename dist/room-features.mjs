@@ -95,10 +95,13 @@ export function markerFromFeature(feature) {
   return {
     id: feature.id,
     type,
+    kind: feature.kind,
+    state: feature.state,
     name: feature.name,
     detail: feature.truthText || feature.surfaceText,
     hidden: feature.state === "hidden" || feature.state === "hinted",
     revealed: feature.state === "revealed" || feature.state === "resolved" || feature.state === "triggered",
+    hinted: feature.state === "hinted",
     featureId: feature.id,
     origin: feature.origin ?? feature.regionId,
     ...(feature.items ? { items: feature.items } : {}),
@@ -156,6 +159,9 @@ export function syncMarkerForFeature(battle, feature) {
   if (!marker) return;
   marker.hidden = feature.hidden;
   marker.revealed = feature.revealed;
+  marker.hinted = feature.state === "hinted";
+  marker.kind = feature.kind;
+  marker.state = feature.state;
   marker.detail = feature.truthText || marker.detail;
   if (feature.looted != null) marker.looted = feature.looted;
 }

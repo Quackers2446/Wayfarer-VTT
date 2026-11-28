@@ -84,12 +84,13 @@ export function sharedTurnGroup(battle) {
   let start=battle.turn,end=battle.turn;
   const partyAt=index=>{
     const actor=battle.actors.find(a=>a.id===battle.order[index]);
-    return actor?.side==='party' && (actor.partyId || 'party-1')===leadParty;
+    // Kennel pack allies are AI-controlled and keep their own initiative slots.
+    return actor?.side==='party' && !actor.kennelAlly && (actor.partyId || 'party-1')===leadParty;
   };
   // Older saves already finished characters before the cursor; do not reopen those turns.
   while(battle.sharedEnded && start>0 && partyAt(start-1)) start--;
   while(end+1<battle.order.length && partyAt(end+1)) end++;
-  return battle.order.slice(start,end+1).map(id=>battle.actors.find(a=>a.id===id)).filter(a=>a && !a.dead);
+  return battle.order.slice(start,end+1).map(id=>battle.actors.find(a=>a.id===id)).filter(a=>a && !a.dead && !a.kennelAlly);
 }
 export const canTakeTurn=(battle,actor)=>Boolean(actor && battle.round && !battle.sharedEnded?.[actor.id] &&
   (actor.side==='party' ? sharedTurnGroup(battle).includes(actor) : initiativeActor(battle)?.id===actor.id));
@@ -441,6 +442,8 @@ export function requestTruce(battle, actor) {
 
 export function speedOf(actor) {
   const mods = modsOf(actor);
+  // Kennel wolves stay fixed while tethered to the rock.
+  if (actor?.chained) return 0;
   if (mods.incapacitated || mods.speedZero || actor.steadyAim) return 0;
   let speed = Math.max(0, actor.speed+(actor.bladesong ? 10 : 0)-(actor.slowedBy ? 10 : 0)+mods.speedBonus);
   if (mods.speedMultiplier !== 1) speed = Math.floor(speed*mods.speedMultiplier/5)*5;
@@ -523,6 +526,46 @@ export function approachPath(battle, actor, board, goal) {
   return findPath(battle,actor,null,null,board,false,{goal,budget:Math.max(90,moveLeft(battle,actor)+speedOf(actor))});
 }
 
+/** Preferred attack range (melee reach or normal ranged). */
+export function preferredStrikeRange(weapon) {
+  return weapon?.normalRange || weapon?.reach || 5;
+}
+
+/** Maximum attack range (melee reach or long ranged). */
+export function strikeRange(weapon) {
+  return weapon?.normalRange ? (weapon.longRange || weapon.normalRange) : (weapon?.reach || 5);
+}
+
+/**
+ * If the target is beyond strike range, move into the nearest square in range.
+ * Returns true when a move was started/completed. Opportunity attacks may leave
+ * battle.movement set — callers should queue the strike until movement clears.
+ */
+export function approachForStrike(battle, attacker, target, weapon, map) {
+  battle = turnView(battle, attacker);
+  assertTurn(battle, attacker);
+  if (!occupies(attacker) || !occupies(target)) error("Choose a target on the board.");
+  if (attacker.id === target.id) error("Choose a different target.");
+  const max = strikeRange(weapon);
+  const inRange = (from, range) => distanceFt(from, target) <= range && lineClear(battle, from, target, map);
+  if (inRange(attacker, max)) return false;
+  if (!moveLeft(battle, attacker)) error("The target is out of range.");
+  const preferred = preferredStrikeRange(weapon);
+  let path = approachPath(battle, attacker, map, (cell) => inRange(cell, preferred));
+  if ((!path || !path.cost) && preferred < max) {
+    path = approachPath(battle, attacker, map, (cell) => inRange(cell, max));
+  }
+  if (!path?.cost) error("No path into attack range.");
+  const budget = moveLeft(battle, attacker);
+  if (path.cost > budget) error("Not enough movement to get into attack range.");
+  const step = path.path.slice().reverse().find((cell) =>
+    cell.cost <= budget &&
+    !battle.actors.some((other) => other.id !== attacker.id && occupies(other) && overlaps({ ...attacker, ...cell }, other)));
+  if (!step) error("Not enough movement to get into attack range.");
+  moveToken(battle, attacker, step.x, step.y, map);
+  return true;
+}
+
 export function previewMovement(battle, actor, x, y, board) {
   battle=turnView(battle,actor);
   if (!actorIsUp(actor) || !occupies(actor) || incapacitated(actor) || battle.movement || x < 0 || y < 0 || x >= board.cols || y >= board.rows) return null;
@@ -538,7 +581,7 @@ export function exploreToken(battle, actor, x, y, board, stopAt) {
   let distance = 0;
   for (const step of result.path) {
     advanceTime(battle,30/Math.max(5,speedOf(actor)));
-    const previousSquare={x:actor.x,y:actor.y};actor.x = step.x; actor.y = step.y;syncCarriedBody(battle,actor);
+    const previousSquare={x:actor.x,y:actor.y};actor.x = step.x; actor.y = step.y;syncCarriedBody(battle,actor,previousSquare);
     travelled.push({x:step.x,y:step.y});
     distance = step.cost;
     customZoneTriggers(battle,actor,'enter',previousSquare);refreshFollowZones(battle,actor,board);if(!actorIsUp(actor))break;
@@ -592,7 +635,7 @@ function walkRemaining(battle, actor, board) {
       return;
     }
     const previousSquare={x:actor.x,y:actor.y};actor.x = next.x;
-    actor.y = next.y;customZoneTriggers(battle,actor,'enter',previousSquare);syncCarriedBody(battle,actor);refreshFollowZones(battle,actor,board);
+    actor.y = next.y;customZoneTriggers(battle,actor,'enter',previousSquare);syncCarriedBody(battle,actor,previousSquare);refreshFollowZones(battle,actor,board);
     walk.index += 1;
     walk.passed = [];
     checkSpellTethers(battle,board);
@@ -784,6 +827,10 @@ export function applyDamage(battle, actor, rawDamage, type, critical = false, ra
   const outcome={damage,absorbed,defeated:actor.dead,unconscious:!actor.dead && actor.hp===0 && before>0};
   captureImpact(battle,actor,{amount:damage,type,critical,defeated:outcome.defeated,absorbed});
   if (damage > 0 && actor.reactions?.length && source && !properties.noReaction) fireReactions(battle,'damaged',{reactor:actor,source,damageType:type,amount:damage,properties,map:properties.map},random);
+  // Party harm to a befriended kennel wolf — play layer resolves the pack betrayal.
+  if (damage > 0 && actor.kennelAlly && source?.side === "party" && !source.kennelAlly) {
+    battle.kennelBetrayal = { attackerId: source.id, victimId: actor.id };
+  }
   return outcome;
 }
 
@@ -1758,11 +1805,14 @@ export function spendObjectAction(battle,actor,name){
   if(battle.round){assertTurn(battle,actor);if(battle.action)error("This token has used its action.");battle.action=name;}
   else if(!actorIsUp(actor)||incapacitated(actor))error("Choose a conscious character.");
 }
-function syncCarriedBody(battle,actor){
+function syncCarriedBody(battle,actor,previousSquare){
   const carried=actor.carrying && battle.actors.find(body=>body.id===actor.carrying);
   if(carried){carried.x=actor.x;carried.y=actor.y;}
   const dragged=actor.dragging && battle.actors.find(body=>body.id===actor.dragging);
-  if(dragged){dragged.x=actor.x;dragged.y=actor.y;}
+  // Dragged bodies stay on the ground one square behind the mover.
+  if(dragged && previousSquare && (previousSquare.x!==actor.x || previousSquare.y!==actor.y)){
+    dragged.x=previousSquare.x;dragged.y=previousSquare.y;
+  }
 }
 
 function consumePotionInventory(actor,item){const stored=actor.items?.find(entry=>entry.name.toLowerCase()===item.name.toLowerCase());if(stored)stored.quantity=Math.max(0,(stored.quantity??0)-1);}

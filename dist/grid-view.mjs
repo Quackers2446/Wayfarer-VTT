@@ -12,8 +12,15 @@ const maxRasterPixels = 8 * 1024 * 1024;
 const fogTextures = new WeakMap();
 const fogDark = "#101a19";
 
-export const defeatedCreature = (actor) => actor.dead && actor.side !== "party" &&
-  Number.isInteger(actor.x) && Number.isInteger(actor.y);
+function isKennelTetherMarker(marker) {
+  if (!marker) return false;
+  if (marker.id === "LMoP|1ab|021|chain-pole" || marker.featureId === "LMoP|1ab|021|chain-pole") return true;
+  if (marker.type === "rock" || marker.visual === "rock" || marker.type === "pole" || marker.visual === "pole") return true;
+  return typeof marker.image === "string" && /tether-rock|kennel\/tether/i.test(marker.image);
+}
+
+export const defeatedCreature = (actor) => !actor.carriedBy && Number.isInteger(actor.x) && Number.isInteger(actor.y) &&
+  (Boolean(actor.draggedBy) || actor.dead && actor.side !== "party");
 
 export function tokenAtPoint(map,battle,x,y,visible=null) {
   // Match the circles and stacking order used by drawGrid, including corpses.
@@ -66,24 +73,109 @@ function fogTexture(visible,memory) {
 }
 
 const dynamicTextures=new WeakMap();
+function ensureFogScratch(entry, width, height, key) {
+  let canvas = entry[key];
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    entry[key] = canvas;
+  }
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  return canvas;
+}
+
+/**
+ * Low-res fog atlas: circular vision polygons + soft explored edges.
+ * Stays efficient (capped atlas) while bilinear upscale avoids a square-cell look.
+ */
 function dynamicFogTexture(map,{visible,memory,polygons,settings}) {
   const signature=JSON.stringify(settings),old=dynamicTextures.get(memory);
   if(old?.visible===visible && old.revision===memory.revision && old.signature===signature)return old.texture;
   // Cap fog to a few pixels per cell. Full map-pixel fog on giant boards (~7MP) freezes the UI.
-  const maxFogEdge = 1024;
-  const cellW = Math.max(1, Math.min(3, Math.floor(maxFogEdge / Math.max(1, map.cols))));
-  const cellH = Math.max(1, Math.min(3, Math.floor(maxFogEdge / Math.max(1, map.rows))));
+  const maxFogEdge = 1536;
+  const cellW = Math.max(1, Math.min(4, Math.floor(maxFogEdge / Math.max(1, map.cols))));
+  const cellH = Math.max(1, Math.min(4, Math.floor(maxFogEdge / Math.max(1, map.rows))));
   const width=cellW*map.cols,height=cellH*map.rows;
-  const texture=document.createElement('canvas');texture.width=width;texture.height=height;const c=texture.getContext('2d'),sx=cellW,sy=cellH;
-  c.fillStyle=`rgba(16,26,25,${settings.opacity})`;c.fillRect(0,0,width,height);
-  c.fillStyle=`rgba(16,26,25,${settings.exploredOpacity})`;
-  if(settings.remember)for(let y=0;y<map.rows;y++)for(let x=0;x<map.cols;x++)if(hasExplored(memory,x,y)){c.clearRect(x*sx,y*sy,sx,sy);c.fillRect(x*sx,y*sy,sx,sy);}
-  const mask=document.createElement('canvas');mask.width=width;mask.height=height;const m=mask.getContext('2d'),path=new Path2D();
-  for(const points of polygons){if(!points.length)continue;path.moveTo(points[0].x*sx,points[0].y*sy);for(const p of points.slice(1))path.lineTo(p.x*sx,p.y*sy);path.closePath();}
-  m.fillStyle='#fff';m.fill(path);
-  // Feather inward: the clipping path prevents the blur from revealing beyond a wall.
-  c.save();c.clip(path);c.globalCompositeOperation='destination-out';c.filter=`blur(${Math.max(0,settings.softness)/5*Math.min(sx,sy)}px)`;c.drawImage(mask,0,0);c.restore();
-  dynamicTextures.set(memory,{visible,revision:memory.revision,signature,texture});return texture;
+  const entry = old ?? {};
+  const texture = entry.texture ?? document.createElement("canvas");
+  if (texture.width !== width) texture.width = width;
+  if (texture.height !== height) texture.height = height;
+  const c = texture.getContext("2d");
+  const sx = cellW, sy = cellH;
+  const cellPx = Math.min(sx, sy);
+  // Softness is feet; 5 ft ≈ one cell. Keep a visible feather even at low softness.
+  const visionBlur = Math.max(cellPx * 0.35, (Math.max(0, settings.softness) / 5) * cellPx * 1.25);
+  const exploredBlur = Math.max(0.75, cellPx * 0.55);
+
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = "source-over";
+  c.filter = "none";
+  c.fillStyle = `rgba(16,26,25,${settings.opacity})`;
+  c.fillRect(0, 0, width, height);
+
+  // Explored memory: soft perimeter instead of a grid of cleared squares.
+  if (settings.remember) {
+    const explored = ensureFogScratch(entry, width, height, "exploredMask");
+    const e = explored.getContext("2d");
+    e.setTransform(1, 0, 0, 1, 0, 0);
+    e.globalAlpha = 1;
+    e.globalCompositeOperation = "source-over";
+    e.filter = "none";
+    e.clearRect(0, 0, width, height);
+    e.fillStyle = "#fff";
+    for (let y = 0; y < map.rows; y++) {
+      for (let x = 0; x < map.cols; x++) {
+        if (!hasExplored(memory, x, y)) continue;
+        e.fillRect(x * sx, y * sy, sx, sy);
+      }
+    }
+    // Punch down to exploredOpacity with a blurred mask so borders aren't square tiles.
+    const punch = 1 - Math.min(1, settings.exploredOpacity / Math.max(1e-6, settings.opacity));
+    if (punch > 0) {
+      c.save();
+      c.globalCompositeOperation = "destination-out";
+      c.globalAlpha = punch;
+      c.filter = `blur(${exploredBlur}px)`;
+      c.drawImage(explored, 0, 0);
+      c.restore();
+    }
+  }
+
+  // Live sight: raycast polygons are already circular / wall-bounded — feather the cutout.
+  const mask = ensureFogScratch(entry, width, height, "visionMask");
+  const m = mask.getContext("2d");
+  m.setTransform(1, 0, 0, 1, 0, 0);
+  m.globalAlpha = 1;
+  m.globalCompositeOperation = "source-over";
+  m.filter = "none";
+  m.clearRect(0, 0, width, height);
+  const path = new Path2D();
+  for (const points of polygons) {
+    if (!points.length) continue;
+    path.moveTo(points[0].x * sx, points[0].y * sy);
+    for (const p of points.slice(1)) path.lineTo(p.x * sx, p.y * sy);
+    path.closePath();
+  }
+  m.fillStyle = "#fff";
+  m.fill(path);
+  // Clip to the hard polygon so blur cannot leak past walls; feather only inward.
+  c.save();
+  c.clip(path);
+  c.globalCompositeOperation = "destination-out";
+  c.filter = `blur(${visionBlur}px)`;
+  c.drawImage(mask, 0, 0);
+  c.restore();
+
+  dynamicTextures.set(memory, {
+    visible,
+    revision: memory.revision,
+    signature,
+    texture,
+    exploredMask: entry.exploredMask,
+    visionMask: entry.visionMask,
+  });
+  return texture;
 }
 
 function drawFog(context,map,options) {
@@ -99,7 +191,9 @@ function drawFog(context,map,options) {
   context.save();
   context.fillStyle = fogDark;
   context.fill(border,"evenodd");
-  context.imageSmoothingEnabled = false;
+  // Bilinear upscale keeps the low-res fog atlas cheap while avoiding a square-cell silhouette.
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
   context.drawImage(texture,x,y,width,height);
   context.restore();
 }
@@ -225,6 +319,281 @@ function drawToken(c,map,actor,portrait,highlight,scale) {
   }
 }
 
+/** Stable 0–1 noise from a marker id (keeps speckles still across paints). */
+function featureNoise(id = "", salt = 0) {
+  let h = (2166136261 ^ salt) >>> 0;
+  const text = String(id);
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 1000) / 1000;
+}
+
+function featureKindOf(marker) {
+  if (marker.kind) return marker.kind;
+  if (marker.type === "creature") return "creature_hint";
+  if (marker.type === "hint") return "object";
+  return marker.type || "object";
+}
+
+function featurePhase(marker) {
+  if (marker.state) return marker.state;
+  if (marker.hinted) return "hinted";
+  if (marker.looted || marker.resolved) return "resolved";
+  if (marker.triggered) return "triggered";
+  if (marker.revealed || marker.hidden === false) return "revealed";
+  return "revealed";
+}
+
+/** Soft floor bloom — reads as light catching something, not a HUD badge. */
+function drawFloorBloom(c, x, y, radius, color, alpha = 0.35) {
+  const glow = c.createRadialGradient(x, y, radius * 0.12, x, y, radius);
+  const rgb = color.match(/\w\w/g).map((hex) => parseInt(hex, 16));
+  glow.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`);
+  glow.addColorStop(0.55, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha * 0.35})`);
+  glow.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
+  c.fillStyle = glow;
+  c.beginPath();
+  c.arc(x, y, radius, 0, Math.PI * 2);
+  c.fill();
+}
+
+function drawDustMotes(c, map, x, y, id, color, count = 5, spread = 1) {
+  const reach = map.size * 0.28 * spread;
+  for (let i = 0; i < count; i++) {
+    const px = x + (featureNoise(id, 11 + i) - 0.5) * reach * 2;
+    const py = y + (featureNoise(id, 41 + i) - 0.5) * reach * 1.6;
+    const r = map.size * (0.018 + featureNoise(id, 71 + i) * 0.028);
+    c.fillStyle = color;
+    c.beginPath();
+    c.arc(px, py, r, 0, Math.PI * 2);
+    c.fill();
+  }
+}
+
+function drawCrack(c, map, x, y, id, color, weight = 0.02) {
+  c.strokeStyle = color;
+  c.lineWidth = Math.max(1, map.size * weight);
+  c.lineCap = "round";
+  c.lineJoin = "round";
+  c.beginPath();
+  const span = map.size * 0.32;
+  let cx = x - span * 0.7;
+  let cy = y + (featureNoise(id, 3) - 0.5) * span * 0.4;
+  c.moveTo(cx, cy);
+  for (let i = 1; i <= 4; i++) {
+    cx = x - span * 0.7 + (span * 1.4 * i) / 4;
+    cy = y + (featureNoise(id, 3 + i) - 0.5) * span * 0.9;
+    c.lineTo(cx, cy);
+  }
+  c.stroke();
+}
+
+/**
+ * In-world discovery cues: grounded props / environmental tells instead of diamond HUD glyphs.
+ * Hinted = noticed (subtle). Revealed = known (readable prop). Triggered/resolved = spent.
+ */
+function drawWorldFeature(c, map, marker) {
+  const [x, y] = cellCenter(map, marker);
+  const kind = featureKindOf(marker);
+  const phase = featurePhase(marker);
+  const hinted = phase === "hinted" || marker.type === "hint";
+  const spent = phase === "triggered" || phase === "resolved";
+  const s = map.size;
+  c.save();
+  c.globalAlpha = hinted ? 0.62 : spent ? 0.48 : 1;
+
+  if (marker.type === "spawn") {
+    c.strokeStyle = "#8fd6a8";
+    c.lineWidth = Math.max(1.2, s * 0.028);
+    c.globalAlpha = 0.85;
+    c.beginPath();
+    c.ellipse(x, y + s * 0.02, s * 0.22, s * 0.14, 0, 0, Math.PI * 2);
+    c.stroke();
+    c.strokeStyle = "#c8f5d6aa";
+    c.lineWidth = Math.max(1, s * 0.016);
+    c.beginPath();
+    c.arc(x - s * 0.08, y + s * 0.02, s * 0.06, 0.2, Math.PI + 0.4);
+    c.stroke();
+    c.beginPath();
+    c.arc(x + s * 0.09, y - s * 0.01, s * 0.055, -0.3, Math.PI * 0.9);
+    c.stroke();
+    if (marker.name) {
+      c.font = "600 " + s * 0.16 + "px system-ui";
+      c.fillStyle = "#d9ffe6";
+      c.textAlign = "center";
+      c.textBaseline = "top";
+      c.fillText(marker.name, x, y + s * 0.22);
+    }
+    c.restore();
+    return;
+  }
+
+  if (hinted) {
+    if (kind === "trap" || kind === "hazard") {
+      drawFloorBloom(c, x, y, s * 0.34, kind === "trap" ? "a05142" : "8a6a3a", 0.22);
+      drawCrack(c, map, x, y, marker.id, kind === "trap" ? "#7a403688" : "#6a5a3888", 0.014);
+    } else if (kind === "treasure") {
+      drawFloorBloom(c, x, y, s * 0.36, "c4a35a", 0.28);
+      drawDustMotes(c, map, x, y, marker.id, "#f0d48acc", 4, 0.85);
+    } else if (kind === "creature_hint") {
+      drawFloorBloom(c, x, y, s * 0.3, "6a6558", 0.2);
+      drawDustMotes(c, map, x, y, marker.id, "#5a5348aa", 6, 1.1);
+    } else if (kind === "mechanism") {
+      drawFloorBloom(c, x, y, s * 0.3, "8a919c", 0.22);
+      drawDustMotes(c, map, x, y, marker.id, "#d7dde8bb", 3, 0.7);
+    } else {
+      // secret / lore / object — cool dust catching torchlight
+      drawFloorBloom(c, x, y, s * 0.32, "7a8a9a", 0.2);
+      drawDustMotes(c, map, x, y, marker.id, "#c5d4e0aa", 4, 0.9);
+    }
+    c.restore();
+    return;
+  }
+
+  if (kind === "treasure") {
+    drawFloorBloom(c, x, y + s * 0.04, s * 0.38, "b8893a", spent ? 0.12 : 0.32);
+    // Low chest body
+    const w = s * 0.28, h = s * 0.16;
+    c.fillStyle = spent || marker.looted ? "#4a3a2888" : "#6b4a28";
+    c.strokeStyle = spent || marker.looted ? "#8a7a5a88" : "#e2c27a";
+    c.lineWidth = Math.max(1, s * 0.02);
+    c.beginPath();
+    c.roundRect(x - w / 2, y - h * 0.15, w, h, s * 0.03);
+    c.fill();
+    c.stroke();
+    if (!(spent || marker.looted)) {
+      c.beginPath();
+      c.moveTo(x - w / 2, y + h * 0.05);
+      c.quadraticCurveTo(x, y - h * 0.55, x + w / 2, y + h * 0.05);
+      c.strokeStyle = "#f0d48a";
+      c.stroke();
+      // Coin scatter
+      const coins = ["#e8c45a", "#d4a84a", "#f2d98a"];
+      for (let i = 0; i < 3; i++) {
+        const cx = x + (i - 1) * s * 0.09 + (featureNoise(marker.id, i) - 0.5) * s * 0.04;
+        const cy = y + h * 0.55 + (featureNoise(marker.id, 9 + i) - 0.5) * s * 0.03;
+        c.fillStyle = coins[i];
+        c.beginPath();
+        c.ellipse(cx, cy, s * 0.045, s * 0.028, 0, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  } else if (kind === "trap") {
+    drawFloorBloom(c, x, y, s * 0.36, "8a4030", spent ? 0.28 : 0.18);
+    // Pressure plate flush with the floor
+    const pad = s * 0.22;
+    c.fillStyle = spent ? "#3a2218aa" : "#3a322caa";
+    c.strokeStyle = spent ? "#c0705088" : "#a87858cc";
+    c.lineWidth = Math.max(1, s * 0.018);
+    c.beginPath();
+    c.roundRect(x - pad, y - pad * 0.7, pad * 2, pad * 1.4, s * 0.02);
+    c.fill();
+    c.stroke();
+    drawCrack(c, map, x, y, marker.id, spent ? "#d0806088" : "#6a403888", spent ? 0.028 : 0.016);
+  } else if (kind === "hazard") {
+    drawFloorBloom(c, x, y, s * 0.4, "6a7a38", spent ? 0.3 : 0.26);
+    c.fillStyle = spent ? "#4a503888" : "#5a6848aa";
+    c.beginPath();
+    c.ellipse(x, y + s * 0.02, s * 0.24, s * 0.14, featureNoise(marker.id, 2) * 0.4, 0, Math.PI * 2);
+    c.fill();
+    // Static vapor wisps
+    c.strokeStyle = "#a8b86888";
+    c.lineWidth = Math.max(1, s * 0.015);
+    for (let i = 0; i < 2; i++) {
+      const ox = (i - 0.5) * s * 0.12;
+      c.beginPath();
+      c.moveTo(x + ox, y + s * 0.06);
+      c.quadraticCurveTo(x + ox + s * 0.06, y - s * 0.08, x + ox - s * 0.02, y - s * 0.2);
+      c.stroke();
+    }
+  } else if (kind === "mechanism") {
+    drawFloorBloom(c, x, y, s * 0.3, "6a727c", 0.2);
+    // Iron peg + lever arm
+    const post = s * 0.07;
+    c.fillStyle = "#3a4048";
+    c.strokeStyle = "#c5cdd8";
+    c.lineWidth = Math.max(1, s * 0.018);
+    c.beginPath();
+    c.roundRect(x - post * 0.45, y - post * 1.1, post * 0.9, post * 2.2, post * 0.2);
+    c.fill();
+    c.stroke();
+    c.strokeStyle = spent ? "#8a9098" : "#d7dde8";
+    c.lineWidth = Math.max(1.2, s * 0.03);
+    c.lineCap = "round";
+    c.beginPath();
+    c.moveTo(x, y - post * 0.5);
+    c.lineTo(x + (spent ? -post * 1.4 : post * 1.5), y - post * (spent ? 0.1 : 1.1));
+    c.stroke();
+    c.fillStyle = "#e8d7a8";
+    c.beginPath();
+    c.arc(x + (spent ? -post * 1.4 : post * 1.5), y - post * (spent ? 0.1 : 1.1), post * 0.35, 0, Math.PI * 2);
+    c.fill();
+  } else if (kind === "secret") {
+    drawFloorBloom(c, x, y, s * 0.3, "5a6e8a", 0.16);
+    // Hairline panel seam in the floor/wall plane
+    c.strokeStyle = "#c5d4e0aa";
+    c.lineWidth = Math.max(1, s * 0.014);
+    const w = s * 0.26, h = s * 0.32;
+    c.strokeRect(x - w / 2, y - h / 2, w, h);
+    c.beginPath();
+    c.moveTo(x, y - h / 2);
+    c.lineTo(x, y + h / 2);
+    c.stroke();
+  } else if (kind === "creature_hint") {
+    drawFloorBloom(c, x, y, s * 0.32, "5a5548", 0.22);
+    drawDustMotes(c, map, x, y, marker.id, "#4a4538bb", 7, 1.15);
+    c.strokeStyle = "#6a6558cc";
+    c.lineWidth = Math.max(1, s * 0.016);
+    c.lineCap = "round";
+    for (let i = 0; i < 3; i++) {
+      const a = -0.6 + i * 0.5;
+      c.beginPath();
+      c.moveTo(x + Math.cos(a) * s * 0.04, y + Math.sin(a) * s * 0.04);
+      c.lineTo(x + Math.cos(a) * s * 0.2, y + Math.sin(a) * s * 0.16);
+      c.stroke();
+    }
+  } else if (kind === "lore") {
+    drawFloorBloom(c, x, y, s * 0.28, "8a7a58", 0.18);
+    c.fillStyle = spent ? "#8a7a5a66" : "#d8c9a0cc";
+    c.strokeStyle = "#6a5a3acc";
+    c.lineWidth = Math.max(1, s * 0.014);
+    c.beginPath();
+    c.moveTo(x - s * 0.12, y - s * 0.1);
+    c.lineTo(x + s * 0.1, y - s * 0.12);
+    c.lineTo(x + s * 0.12, y + s * 0.12);
+    c.lineTo(x - s * 0.1, y + s * 0.1);
+    c.closePath();
+    c.fill();
+    c.stroke();
+    c.strokeStyle = "#5a4a2a88";
+    c.beginPath();
+    c.moveTo(x - s * 0.06, y - s * 0.02);
+    c.lineTo(x + s * 0.06, y - s * 0.04);
+    c.moveTo(x - s * 0.05, y + s * 0.04);
+    c.lineTo(x + s * 0.05, y + s * 0.02);
+    c.stroke();
+  } else {
+    // Generic object / prop — small urn or crate
+    drawFloorBloom(c, x, y, s * 0.3, "49647a", 0.18);
+    const w = s * 0.2, h = s * 0.22;
+    c.fillStyle = spent ? "#3a455088" : "#3a4a58cc";
+    c.strokeStyle = spent ? "#8a9aa888" : "#c5d4e0";
+    c.lineWidth = Math.max(1, s * 0.018);
+    c.beginPath();
+    c.moveTo(x - w * 0.35, y - h * 0.35);
+    c.lineTo(x + w * 0.35, y - h * 0.35);
+    c.lineTo(x + w * 0.45, y + h * 0.45);
+    c.lineTo(x - w * 0.45, y + h * 0.45);
+    c.closePath();
+    c.fill();
+    c.stroke();
+    c.beginPath();
+    c.ellipse(x, y - h * 0.35, w * 0.35, s * 0.03, 0, 0, Math.PI * 2);
+    c.stroke();
+  }
+
+  c.restore();
+}
+
 const backgroundFrames=new WeakMap();
 export function drawGrid(canvas, view, map, battle, {room, selected, target, hovered, cursor, art, path, visible, fog, footprint, showRegions = true, markers = [], tokenImages, tokenPositions, movementLabels, overlay = "artwork", wallEditor,backgroundKey}) {
   // Match the display density while keeping the backing buffer bounded by the visible area.
@@ -271,7 +640,7 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
     c.stroke();
   }
 
-  const layer = overlay === "artwork" ? (art ? null : "tactical") : overlay;
+  const layer = overlay === "none" ? null : overlay === "artwork" ? (art ? null : "tactical") : overlay;
   if (layer) {
     const spacing = layer === "printed" && map.printedGrid ? map.printedGrid : {
       x:map.offsetX,y:map.offsetY,width:map.cellWidth ?? map.size,height:map.cellHeight ?? map.size,
@@ -329,28 +698,36 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
   }
 
   for (const marker of markers) {
-    const [x,y] = cellCenter(map,marker);
-    const hinted = Boolean(marker.hinted);
-    const length = map.size * (hinted ? .22 : .30);
-    const tones = {treasure:"#926739",object:"#49647a",hazard:"#a2653b",trap:"#a05142",creature:"#62665c",spawn:"#2f7d5a",hint:"#6a7a88",secret:"#5a6e8a",mechanism:"#49647a",lore:"#5a6e8a"};
+    // Kennel hitch is rope-only — never draw the old rock/crate pip or PNG.
+    if (isKennelTetherMarker(marker)) continue;
+    drawWorldFeature(c, map, marker);
+  }
+
+  // Ropes from the kennel tether center to each still-tethered wolf.
+  const rock = markers.find(isKennelTetherMarker)
+    ?? (battle.features ?? []).find((feature) => feature.id === "LMoP|1ab|021|chain-pole" || feature.visual === "rock" || feature.type === "rock");
+  if (rock && Number.isInteger(rock.x) && Number.isInteger(rock.y)) {
+    const [px, py] = cellCenter(map, rock);
     c.save();
-    c.globalAlpha = hinted ? 0.55 : 1;
-    c.translate(x,y);
-    c.rotate(Math.PI/4);
-    c.fillStyle = tones[marker.type] ?? tones.object;
-    c.strokeStyle = marker.type === "spawn" ? "#b7f0c8" : hinted ? "#c5d4e0" : "#f5e8c5"; c.lineWidth = map.size * .034;
-    c.fillRect(-length,-length,2*length,2*length);
-    c.strokeRect(-length,-length,2*length,2*length);
-    c.restore();
-    c.textAlign="center"; c.textBaseline="middle";
-    c.font="700 "+map.size*(hinted?0.28:0.35)+"px system-ui"; c.fillStyle=hinted?"#d7e4ef":"#fff2d7";
-    c.fillText({treasure:"◆",object:"◈",hazard:"!",trap:"!",creature:"?",spawn:"＋",hint:"·",secret:"◈",mechanism:"◈",lore:"·"}[marker.type] ?? "·",x,y);
-    if (marker.type === "spawn" && marker.name) {
-      c.font = "600 " + map.size * .16 + "px system-ui";
-      c.fillStyle = "#d9ffe6";
-      c.textBaseline = "top";
-      c.fillText(marker.name, x, y + map.size * .28);
+    c.lineCap = "round";
+    c.setLineDash([]);
+    for (const actor of battle.actors ?? []) {
+      if (!actor.chained || actor.x == null || actor.dead) continue;
+      const [wx, wy] = cellCenter(map, actor);
+      c.strokeStyle = "#6b4f33";
+      c.lineWidth = Math.max(2, map.size * .034);
+      c.beginPath();
+      c.moveTo(px, py);
+      c.lineTo(wx, wy);
+      c.stroke();
+      c.strokeStyle = "#c4a574aa";
+      c.lineWidth = Math.max(1, map.size * .014);
+      c.beginPath();
+      c.moveTo(px, py);
+      c.lineTo(wx, wy);
+      c.stroke();
     }
+    c.restore();
   }
 
   }
@@ -368,15 +745,17 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
     c.imageSmoothingEnabled = true;
     drawFog(c, map, fog);
   }
-  const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).filter(actor=>!actor.carriedBy && !actor.draggedBy).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
+  // Carried bodies are held (hidden); dragged bodies stay visible on the ground behind the mover.
+  const tokens = (visible ? battle.actors.filter((actor) => visible.has(actor.id)) : battle.actors).filter(actor=>!actor.carriedBy).map(actor=>tokenPositions?.has(actor.id) ? {...actor,...tokenPositions.get(actor.id)} : actor);
   const scale=Math.min(mapScaleX,mapScaleY);
   const overToken=cursor&&tokens.some(actor=>(occupies(actor)||defeatedCreature(actor))&&containsCell(actor,cursor.x,cursor.y));
   if(path?.length || cursor?.movement&&!hovered&&!overToken)drawMovement(c,map,cursor,path,scale,fog);
   const highlight=actor=>actor.id===selected?'#ffe7a6':actor.id===target?'#ffb6a6':actor.id===hovered?'#fff7dc':'';
-  // Living tokens appear on top when they move through a defeated creature's square.
+  // Living tokens (and their HP bars) appear on top when they share a defeated creature's square.
   for (const actor of tokens.filter(defeatedCreature)) drawToken(c,map,actor,tokenImages?.get(actor.id),highlight(actor),scale);
   for (const actor of tokens.filter(occupies)) drawToken(c,map,actor,tokenImages?.get(actor.id),highlight(actor),scale);
-  for(const actor of tokens.filter(actor=>occupies(actor)||defeatedCreature(actor)))drawTokenHealth(c,map,actor,mapScaleX,mapScaleY,{selected:actor.id===selected});
+  for (const actor of tokens.filter(defeatedCreature)) drawTokenHealth(c,map,actor,mapScaleX,mapScaleY,{selected:actor.id===selected});
+  for (const actor of tokens.filter(occupies)) drawTokenHealth(c,map,actor,mapScaleX,mapScaleY,{selected:actor.id===selected});
   for(const actor of tokens) {
     const label=movementLabels?.get(actor.id);if(!label) continue;
     const [x,y]=cellCenter(map,actor),top=y-tokenRadius(map,actor)-map.size*.12;

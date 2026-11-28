@@ -73,7 +73,12 @@ export function engageEnemy(battle, map, actor, enemy, noticed = false, random =
     const enemyRoom = roomId(map,enemy);
     for (const entry of battle.actors.filter(hostile)) {
       const sameArea = (enemyRoom && roomId(map,entry) === enemyRoom) || (enemy.origin && enemy.origin === entry.origin);
-      if (entry.id === enemy.id || noticesEnemy(battle,map,actor,entry) || (!mapWalls(map,battle) && sameArea)) participants.add(entry.id);
+      const kennelAlert = battle.story?.kennel?.alerted && entry.origin === "034";
+      if (entry.id === enemy.id || noticesEnemy(battle,map,actor,entry) || kennelAlert || (!mapWalls(map,battle) && sameArea)) participants.add(entry.id);
+    }
+    // Befriended kennel wolves join the scrap on the party's side.
+    for (const ally of battle.actors.filter((entry) => entry.kennelAlly && entry.side === "party" && occupies(entry) && actorIsUp(entry))) {
+      if (actorPartyId(ally) === party) participants.add(ally.id);
     }
   }
   startInitiative(battle,random,participants);

@@ -32,9 +32,9 @@ export function normalizeRoomState(state,map){
  if(state.world?.version===1 && state.currentMap)return state;
  return commitRoomState(state,map,state.battle,state.alignment ?? null);
 }
-export function travelRoom(state,nextMap){
+function relocateParty(state,nextMap,{allowModuleChange=false}={}){
  state=normalizeRoomState(state,state.currentMap ?? nextMap);
- if(state.currentMap.module!==nextMap.module)throw Error('Choose a map from this room’s adventure.');
+ if(!allowModuleChange && state.currentMap.module!==nextMap.module)throw Error('Choose a map from this room’s adventure.');
  if(state.currentMap.key===nextMap.key)return clone(state);
  if(state.battle.round || state.battle.movement || state.battle.classReaction)throw Error('Finish combat and pending reactions before changing maps.');
  const next=clone(state),scene=next.world.maps[nextMap.key];
@@ -46,6 +46,18 @@ export function travelRoom(state,nextMap){
   nextMap={...nextMap,...gridGeometry(nextMap,scene?.alignment ?? nextMap.sourceGrid, squareFt)};
  }
  next.currentMap=clone(nextMap);next.alignment=scene?.alignment ?? null;
+ if(allowModuleChange){
+  // Hub turns fog off; expeditions should use the normal default again unless the destination saved an override.
+  if(scene?.environment && Object.prototype.hasOwnProperty.call(scene.environment,'fogEnabled'))next.battle.fogEnabled=scene.environment.fogEnabled;
+  else delete next.battle.fogEnabled;
+  // Always rebind room.adventure so shared-session writes can leave the hub module.
+  next.room={
+   ...(next.room ?? {}),
+   adventure:nextMap.module,
+   adventureName:nextMap.module==='YPHub'?'Yawning Portal':(next.room?.adventureName || nextMap.title),
+   updatedAt:Date.now(),
+  };
+ }
  const active=roomBattle(next),party=active.actors.filter(actor=>actor.side==='party');
  const attached=new Set(party.flatMap(actor=>[actor.carrying,actor.dragging]).filter(Boolean));
  // Carried/dragged creatures travel with their mover rather than remaining on the old map.
@@ -60,4 +72,11 @@ export function travelRoom(state,nextMap){
  }
  active.spellZones=(active.spellZones??[]).filter(zone=>{if(zone.custom){if(zone.expires!=null&&zone.expires<=(active.elapsed??0))return false;if(zone.concentration===false)return true;return active.actors.find(actor=>actor.id===zone.caster)?.concentration?.name===zone.name;}return !zone.caster || active.actors.find(actor=>actor.id===zone.caster)?.concentration;});
  return commitRoomState(next,nextMap,active,next.alignment);
+}
+export function travelRoom(state,nextMap){
+ return relocateParty(state,nextMap,{allowModuleChange:false});
+}
+/** Cross-module travel for authored hub ↔ expedition transitions. Preserves the party ledger. */
+export function travelExpedition(state,nextMap){
+ return relocateParty(state,nextMap,{allowModuleChange:true});
 }

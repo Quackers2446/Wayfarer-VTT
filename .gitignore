@@ -7,6 +7,9 @@ manifest.json
 scripts/map-bake/node_modules/
 scripts/map-bake/cache/
 
+# Local-only agent handoff (do not commit)
+AGENT_CONTEXT.md
+
 # Downloaded third-party media (BLFX / packs) — keep out of git
 vendor/
 
@@ -15,3 +18,6 @@ vendor/
 **/assets/animations/**
 !**/assets/animations/credits.json
 *.opaque.bak
+
+# Authoring-size Yawning Portal PNGs (runtime uses assets/yawning-portal/*.webp)
+authoring/Yawning Portal/

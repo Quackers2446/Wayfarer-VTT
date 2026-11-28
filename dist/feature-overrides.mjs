@@ -8,6 +8,19 @@ import { normalizeFeature } from "./room-features.mjs";
  */
 const LMoP_HIDEOUT = [
   {
+    id: "LMoP|1ab|021|chain-pole",
+    regionId: "021",
+    kind: "mechanism",
+    name: "Chain pole",
+    state: "revealed",
+    surfaceText: "A scarred iron pole anchors short chains. Three wolves strain against the rings.",
+    truthText: "The kennel pole holds the pack. Calm them with Animal Handling, free them, or leave them chained.",
+    visual: "pole",
+    outcomes: [
+      { on: "use", effect: "log", text: "The chains rattle on the iron pole." },
+    ],
+  },
+  {
     id: "LMoP|1ab|025|goblin-trail-snare",
     regionId: "025",
     kind: "trap",

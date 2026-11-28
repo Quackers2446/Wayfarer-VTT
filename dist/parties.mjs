@@ -17,7 +17,7 @@ export function sameParty(a, b) {
 }
 
 export function isPlayerCharacter(actor) {
-  return Boolean(actor && actor.side === 'party' && !actor.summoner);
+  return Boolean(actor && actor.side === 'party' && !actor.summoner && !actor.kennelAlly);
 }
 
 /** Another living PC that can be attacked (same or rival party). */
@@ -58,7 +58,8 @@ export function partyLabel(partyId) {
 
 export function partyMembers(battle, partyId) {
   const id = partyId || DEFAULT_PARTY_ID;
-  return battle.actors.filter(actor => actor.side === 'party' && actorPartyId(actor) === id);
+  // Kennel pack-bonds fight as party allies but do not fill adventurer slots.
+  return battle.actors.filter(actor => actor.side === 'party' && !actor.kennelAlly && actorPartyId(actor) === id);
 }
 
 export function partyFull(battle, partyId) {

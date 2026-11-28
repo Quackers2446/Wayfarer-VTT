@@ -5,11 +5,14 @@ import {formatEntries} from "./rules-library.mjs";
 
 const hideout = (map) => map.module === "LMoP" && map.id === "1ab";
 const practice = (map) => map.module === "training";
+const tavern = (map) => map.module === "YPHub";
 const intro = (map) => hideout(map)
   ? "The goblin trail ends at a cave. Sildar and Gundren never reached Phandalin. Search the hideout for them and find out where the goblins took Gundren."
   : practice(map)
     ? "Cross the yard to challenge the guard. When combat starts, choose your actions on the bottom bar. The guard acts automatically on its initiative."
-    : "Explore the map with your party. New places announce themselves as you enter; this journal keeps the record.";
+    : tavern(map)
+      ? "You are in the Yawning Portal. Talk to Durnan, check the quest board, and depart when the party is ready. Stairs lead to quieter floors above."
+      : "Explore the map with your party. New places announce themselves as you enter; this journal keeps the record.";
 
 const rescuedPassage = {
   key: "rescued:sildar",
@@ -80,29 +83,34 @@ export function storyPanel(battle, map) {
       ${Array.isArray(region.entries) && typeof region.entries[0] === "string" && !region.entries[0]?.type
         ? region.entries.map((line) => `<p>${escape(line)}</p>`).join("")
         : formatEntries(region.entries)}</section>`).join("")}
-    <section><h3>${hideout(map) ? "Follow the goblin trail" : practice(map) ? "Challenge the guard" : "Explore the area"}</h3><p>${intro(map)}${findKeys.size ? " Search, Investigate, and Use uncover traps, secrets, and mechanisms recorded above." : ""}</p></section>`;
+    <section><h3>${hideout(map) ? "Follow the goblin trail" : practice(map) ? "Challenge the guard" : tavern(map) ? "The Yawning Portal" : "Explore the area"}</h3><p>${intro(map)}${findKeys.size ? " Search, Investigate, and Use uncover traps, secrets, and mechanisms recorded above." : ""}</p></section>`;
 }
 
 /** Floating read-aloud toasts for newly entered areas / finds (journal stays a record). */
 export function createStoryToasts() {
   const host = document.createElement("div");
   host.className = "story-toast-hud";
+  host.hidden = true;
   host.setAttribute("aria-live", "polite");
   host.setAttribute("aria-label", "Story");
   const seen = new Set();
   const timers = new Map();
 
-  function dismiss(card) {
+  function dismiss(card, { immediate = false } = {}) {
     const timer = timers.get(card);
     if (timer) clearTimeout(timer);
     timers.delete(card);
     if (!card.isConnected) return;
+    if (immediate) {
+      card.remove();
+      return;
+    }
     card.classList.add("is-leaving");
     setTimeout(() => card.remove(), 240);
   }
 
-  function clear() {
-    for (const card of [...host.children]) dismiss(card);
+  function clear({ immediate = false } = {}) {
+    for (const card of [...host.children]) dismiss(card, { immediate });
   }
 
   function remember(battle) {
@@ -112,11 +120,14 @@ export function createStoryToasts() {
     if (battle?.story?.rescued) seen.add(rescuedPassage.key);
   }
 
-  function show(entry, { duration = 9000 } = {}) {
-    if (!entry?.key || seen.has(entry.key)) return false;
+  function show(entry, { duration = 9000, force = false } = {}) {
+    if (!entry?.key) return false;
+    if (seen.has(entry.key) && !force) return false;
     seen.add(entry.key);
     const text = storyEntryText(entry.entries);
     if (!entry.name && !text) return false;
+    // One story card at a time — new discovery replaces the previous toast.
+    clear({ immediate: true });
     const card = document.createElement("article");
     card.className = "story-toast-card";
     card.dataset.story = entry.key;
@@ -124,8 +135,12 @@ export function createStoryToasts() {
       <button type="button" class="story-toast-dismiss" aria-label="Dismiss story">×</button></header>
       ${text ? `<p>${escape(text)}</p>` : ""}`;
     card.querySelector(".story-toast-dismiss")?.addEventListener("click", () => dismiss(card));
-    host.prepend(card);
-    while (host.childElementCount > 2) dismiss(host.lastElementChild);
+    // Stay on body so map redraws do not remount/re-animate the card.
+    if (!host.isConnected) document.body.append(host);
+    host.hidden = false;
+    host.append(card);
+    const settle = () => card.classList.add("is-settled");
+    card.addEventListener("animationend", settle, { once: true });
     timers.set(card, setTimeout(() => dismiss(card), duration));
     return true;
   }
@@ -138,7 +153,10 @@ export function createStoryToasts() {
 
   return {
     mount(stage) {
-      if (stage && host.parentElement !== stage) stage.append(host);
+      // Keep the HUD outside #play-mount so movement redraws do not detach it.
+      if (!host.isConnected) document.body.append(host);
+      host.hidden = !stage;
+      if (!stage) clear({ immediate: true });
     },
     remember,
     reveal,

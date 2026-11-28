@@ -1,0 +1,5 @@
+Kennel tether rock
+==================
+File: tether-rock.png
+Source: User-provided custom map prop for Cragmaw kennel (area 021).
+Notes: Local gameplay prop, not from 5etools. Bundled for Wayfarer kennel ropes/tether visuals.

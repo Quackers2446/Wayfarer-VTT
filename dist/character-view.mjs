@@ -353,7 +353,7 @@ export function characterPage(character, requestedSection, {embedded = false, to
     rules: () => rulesContent(character,embedded),
     edit: () => sheetEditor(character,sheetSkills),
   };
-  const portrait = `<div class="sheet-avatar" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage,character.tokenSession)}</div>`;
+  const portrait = `<div class="sheet-avatar${character.tokenImage ? " has-photo" : ""}" aria-hidden="true">${tokenPortrait(initials(character.name),character.tokenImage,character.tokenSession)}</div>`;
   const tokenControls = tokenEditable ? `<div class="sheet-token-controls">
     <button type="button" class="game-button" data-action="pick-token">${character.tokenImage ? "Replace token" : "Upload token"}</button>
     ${character.tokenImage ? '<button type="button" class="game-button" data-action="edit-token">Edit token</button>' : ""}

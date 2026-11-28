@@ -11,6 +11,8 @@ import {
   normalizeFeature,
   stripSourceExcerpts,
 } from "./room-features.mjs";
+import { seedKennelWolves } from "./kennel-wolves.mjs";
+import { applyMapTemplate, loadMapTemplate } from "./map-templates.mjs";
 
 export const areaKey = (region) => region?.key ?? region?.id;
 
@@ -88,11 +90,23 @@ function alreadyPresent(battle, map, region, record) {
 
 export async function populateScene(map, battle, random = Math.random) {
   if (battle.sceneReady || map.module === "training") return;
+
+  // Shared Map Studio defaults: apply before authored/regex layers; unspecified fields still fall through.
+  if (!battle._fromTemplate) {
+    try {
+      const template = await loadMapTemplate(map.module, map.key);
+      if (template) await applyMapTemplate(map, battle, template);
+    } catch {
+      // Offline / unsigned-in: continue with authored populate.
+    }
+  }
+  const fromTemplate = battle._fromTemplate ?? {};
+
   const mappedIds = new Set(map.regions.map(({id}) => id));
   const facts = new Map();
-  const compiledBundle = await loadCompiledFeatures(map.module);
+  const compiledBundle = fromTemplate.features ? null : await loadCompiledFeatures(map.module);
   const compiled = compiledForMap(compiledBundle, map);
-  const overrides = authoredFeatureOverrides(map.module, map);
+  const overrides = fromTemplate.features ? [] : authoredFeatureOverrides(map.module, map);
   const plans = map.regions.map((region) => {
     if (!facts.has(region.id)) facts.set(region.id,automaticRoom(region,mappedIds));
     const result = facts.get(region.id);
@@ -113,8 +127,8 @@ export async function populateScene(map, battle, random = Math.random) {
     };
   });
 
-  const baselineFeatures = plans.flatMap((plan) => plan.features);
-  const merged = mergeFeatureLayers({ baseline: baselineFeatures, compiled, overrides });
+  const baselineFeatures = fromTemplate.features ? [] : plans.flatMap((plan) => plan.features);
+  const merged = fromTemplate.features ? [] : mergeFeatureLayers({ baseline: baselineFeatures, compiled, overrides });
   const featuresByRegion = new Map();
   for (const feature of merged) {
     const list = featuresByRegion.get(feature.regionId) ?? [];
@@ -124,44 +138,48 @@ export async function populateScene(map, battle, random = Math.random) {
 
   const prepared = [];
   const loads = new Map();
-  for (const {creatures} of plans) {
-    for (const record of creatures) {
-      const key = recordKey(record);
-      if (!loads.has(key)) loads.set(key,creatureActor({name:record.name,source:record.source,named:record.named}).catch(() => null));
+  if (!fromTemplate.actors) {
+    for (const {creatures} of plans) {
+      for (const record of creatures) {
+        const key = recordKey(record);
+        if (!loads.has(key)) loads.set(key,creatureActor({name:record.name,source:record.source,named:record.named}).catch(() => null));
+      }
     }
   }
   for (const plan of plans) {
-    const markers = [...plan.markers];
+    const markers = fromTemplate.features ? [] : [...plan.markers];
     const actors = [];
-    for (const record of plan.creatures) {
-      const count = startingCount(record,random);
-      const needed = count - alreadyPresent(battle,map,plan.region,record);
-      if (needed<=0) continue;
-      const base = await loads.get(recordKey(record));
-      if (!base) {
-        markers.push({type:"creature",name:record.nickname ?? record.name,
-          detail:"Starting creature reference · "+record.source+(record.detail ? " · "+record.detail : ""),hidden:true});
-        continue;
-      }
-      for (let index=count-needed; index<count; index++) {
-        const actor = structuredClone(base);
-        const nickname = record.nickname ?? base.statName ?? base.name;
-        actor.id = "scene:"+areaKey(plan.region)+":"+recordKey(record)+":"+(record.nickname ?? "")+":"+index;
-        actor.name = count>1 ? nickname+" "+(index+1) : nickname;
-        actor.marker = count>1 ? String(index+1) : undefined;
-        actor.origin = areaKey(plan.region);
-        actor.side = record.side ?? base.side;
-        actor.maxHp = record.hp ?? base.maxHp;
-        actor.hp = record.currentHp ?? actor.maxHp;
-        actor.attacks = record.disarmed ? [] : base.attacks;
-        actors.push(actor);
+    if (!fromTemplate.actors) {
+      for (const record of plan.creatures) {
+        const count = startingCount(record,random);
+        const needed = count - alreadyPresent(battle,map,plan.region,record);
+        if (needed<=0) continue;
+        const base = await loads.get(recordKey(record));
+        if (!base) {
+          markers.push({type:"creature",name:record.nickname ?? record.name,
+            detail:"Starting creature reference · "+record.source+(record.detail ? " · "+record.detail : ""),hidden:true});
+          continue;
+        }
+        for (let index=count-needed; index<count; index++) {
+          const actor = structuredClone(base);
+          const nickname = record.nickname ?? base.statName ?? base.name;
+          actor.id = "scene:"+areaKey(plan.region)+":"+recordKey(record)+":"+(record.nickname ?? "")+":"+index;
+          actor.name = count>1 ? nickname+" "+(index+1) : nickname;
+          actor.marker = count>1 ? String(index+1) : undefined;
+          actor.origin = areaKey(plan.region);
+          actor.side = record.side ?? base.side;
+          actor.maxHp = record.hp ?? base.maxHp;
+          actor.hp = record.currentHp ?? actor.maxHp;
+          actor.attacks = record.disarmed ? [] : base.attacks;
+          actors.push(actor);
+        }
       }
     }
     prepared.push({
       region: plan.region,
       actors,
       markers,
-      features: featuresByRegion.get(areaKey(plan.region)) ?? featuresByRegion.get(plan.region.id) ?? [],
+      features: fromTemplate.features ? [] : (featuresByRegion.get(areaKey(plan.region)) ?? featuresByRegion.get(plan.region.id) ?? []),
     });
   }
 
@@ -224,4 +242,5 @@ export async function populateScene(map, battle, random = Math.random) {
     }
   }
   battle.sceneReady = true;
+  seedKennelWolves(map, battle);
 }

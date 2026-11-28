@@ -14,6 +14,15 @@ function abilityGroups(source,id,draft){const alternatives=source?.ability??[];i
  if(choose?.weighted)for(const [i,amount] of choose.weighted.weights.entries())groups.push({id:id+':'+i,from:choose.weighted.from,amount,distinct:id,max:choose.max??record.max??20,label:source.name+' +'+amount});
  else if(choose)for(let i=0;i<(choose.count??1);i++)groups.push({id:id+':'+i,from:choose.from??abilities,amount:choose.amount??1,distinct:id,max:choose.max??record.max??20,label:source.name+' +'+(choose.amount??1)});
  return {fixed,groups,alternatives,option,max:record.max??20};}
+/** ASI / chosen feats allocate on Training; species, background, and automatic origin feats stay on Ability scores. */
+export function abilityIncreaseStep(info,draft){
+ if(info.id.startsWith('asi:'))return 3;
+ if(info.id.startsWith('feat:')){
+  const featId=info.id.slice(5);
+  if(Object.values(draft.featureChoices??{}).some(list=>list.includes(featId)))return 3;
+ }
+ return 2;
+}
 const equipmentTypeNames={weaponSimple:'Simple weapon',weaponMartial:'Martial weapon',weaponSimpleMelee:'Simple melee weapon',weaponMartialMelee:'Martial melee weapon',instrumentMusical:'Musical instrument',toolArtisan:"Artisan’s tools",setGaming:'Gaming set',focusSpellcastingHoly:'Holy symbol',focusSpellcastingDruidic:'Druidic focus',focusSpellcastingArcane:'Arcane focus'};
 function gearOptions(type,edition,db){return db.equipment.filter(i=>sourceAllowed(i,edition)&&i.source===(edition==='2024'?'XPHB':'PHB') && (
  type==='weaponSimple'?i.weaponCategory==='simple':type==='weaponMartial'?i.weaponCategory==='martial':type==='weaponSimpleMelee'?i.weaponCategory==='simple'&&i.type?.split('|')[0]==='M':type==='weaponMartialMelee'?i.weaponCategory==='martial'&&i.type?.split('|')[0]==='M':type==='instrumentMusical'?i.type?.split('|')[0]==='INS':type==='toolArtisan'?i.type?.split('|')[0]==='AT':type==='setGaming'?i.type?.split('|')[0]==='GS':type.startsWith('focusSpellcasting')?i.type?.split('|')[0]==='SCF' && (i.scfType===(type.endsWith('Holy')?'holy':type.endsWith('Druidic')?'druid':'arcane')):false));}
@@ -145,10 +154,10 @@ export function builderProblems(draft,context){
  if(draft.method==='standard' && scores.slice().sort((a,b)=>a-b).join(',')!=='8,10,12,13,14,15')problems.push({step:2,message:'Assign each standard-array score once.'});
  if(draft.method==='point' && (scores.some(s=>!(s in cost))||scores.reduce((n,s)=>n+(cost[s]??100),0)>27))problems.push({step:2,message:'Point buy uses at most 27 points with scores from 8 to 15.'});
  if(scores.some(s=>!Number.isInteger(s)||s<3||s>18))problems.push({step:2,message:'Base ability scores must be whole numbers from 3 to 18.'});
- for(const info of context.abilityInfo){const selected=[];for(const g of info.groups){const a=draft.allocations[g.id];if(!g.from.includes(a))problems.push({step:2,message:'Choose '+g.label+'.'});else if(g.distinct&&selected.includes(a))problems.push({step:2,message:info.source.name+' must increase different abilities.'});else selected.push(a);}}
+ for(const info of context.abilityInfo){const step=abilityIncreaseStep(info,draft),selected=[];for(const g of info.groups){const a=draft.allocations[g.id];if(!g.from.includes(a))problems.push({step,message:'Choose '+g.label+'.'});else if(g.distinct&&selected.includes(a))problems.push({step,message:info.source.name+' must increase different abilities.'});else selected.push(a);}}
  if(context.species.subraces?.length&&!draft.subraceId)problems.push({step:1,message:'Choose your subrace or variant.'});
  if(context.species.size?.length>1&&!context.species.size.includes(draft.size))problems.push({step:1,message:'Choose your character’s size.'});
- if(context.character.abilities.some(a=>a.score>Math.max(20,...context.abilityInfo.flatMap(i=>[i.max??20,...i.groups.filter(g=>draft.allocations[g.id]===a.abbr.toLowerCase()).map(g=>g.max??20)]))))problems.push({step:2,message:'An ability increase exceeds its source’s score limit.'});
+ if(context.character.abilities.some(a=>{const caps=context.abilityInfo.flatMap(i=>[i.max??20,...i.groups.filter(g=>draft.allocations[g.id]===a.abbr.toLowerCase()).map(g=>g.max??20)]);return a.score>Math.max(20,...caps);})){const step=context.abilityInfo.some(i=>abilityIncreaseStep(i,draft)===3)?3:2;problems.push({step,message:'An ability increase exceeds its source’s score limit.'});}
  const cls=context.character.rulesDetails.classDetails.classes[0];if(cls&&draft.level>=cls.subclassLevel&&!draft.subclass)problems.push({step:1,message:'Choose your '+cls.subclassTitle+'.'});
  const chosenSkills=[];for(const c of context.choices.filter(c=>c.kind==='skills'))for(const id of c.selected){if(chosenSkills.includes(id))problems.push({step:3,message:'Choose a different skill for each skill proficiency.'});chosenSkills.push(id);}
  const languages=[];for(const c of context.choices.filter(c=>c.kind==='languages'))for(const id of c.selected){if(languages.includes(id))problems.push({step:3,message:'Choose different languages for each language selection.'});languages.push(id);}

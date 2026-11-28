@@ -9,9 +9,12 @@ body:has(.game-main) {
   width: 100%
 }
 
-/* Dice theatre mounts on document.body, outside .game-screen — share the palette. */
+/* Dice theatre / story toasts / victory mount on document.body, outside .game-screen — share the palette. */
 .game-screen,
-.dice-theatre {
+.dice-theatre,
+.story-toast-hud,
+.combat-victory-hud,
+.speech-bubble-layer {
   --game-ground: var(--theme-ground, #19271f);
   --game-panel: var(--theme-panel, #24352a);
   --game-line: var(--theme-line, #4b5b48);
@@ -374,7 +377,8 @@ body:has(.game-main) {
   height: 100%;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  background: var(--game-shade)
+  background: var(--game-shade);
+  overflow: hidden
 }
 
 .game-board.board-frame {
@@ -1455,17 +1459,23 @@ body:has(.game-main) {
   color: var(--game-muted)
 }
 
-/* Read-aloud story cards when entering a new area (journal stays closed). */
+/* Read-aloud story cards when entering a new area (journal stays closed).
+   Fixed to the viewport (not .game-stage) so map redraws during movement do not remount/flicker. */
 .story-toast-hud {
-  position: absolute;
+  position: fixed;
   left: 50%;
-  bottom: 72px;
-  z-index: 29;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  bottom: auto;
+  z-index: 40;
   display: grid;
   gap: 8px;
   width: min(420px, calc(100% - 24px));
   transform: translateX(-50%);
   pointer-events: none
+}
+
+.story-toast-hud[hidden] {
+  display: none !important
 }
 
 .story-toast-card {
@@ -1478,6 +1488,10 @@ body:has(.game-main) {
   box-shadow: 0 10px 28px #0007;
   backdrop-filter: blur(8px);
   animation: story-toast-in .2s ease-out
+}
+
+.story-toast-card.is-settled {
+  animation: none
 }
 
 .story-toast-card.is-leaving {
@@ -1539,13 +1553,13 @@ body:has(.game-main) {
 }
 
 @keyframes story-toast-in {
-  from { opacity: 0; transform: translateY(10px) scale(.98) }
+  from { opacity: 0; transform: translateY(-10px) scale(.98) }
   to { opacity: 1; transform: none }
 }
 
 @keyframes story-toast-out {
   from { opacity: 1; transform: none }
-  to { opacity: 0; transform: translateY(8px) }
+  to { opacity: 0; transform: translateY(-8px) }
 }
 
 .game-chat-slot {
@@ -2972,7 +2986,25 @@ body:has(.game-main) {
   border-radius: 8px;
   background: var(--game-panel) !important;
   color: var(--game-text);
-  box-shadow: 0 5px 24px #0008
+  box-shadow: 0 5px 24px #0008;
+  display: flex;
+  flex-direction: column;
+  gap: 10px
+}
+
+.hub-action-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px
+}
+
+.hub-action-stack > .game-button {
+  width: 100%;
+  justify-content: flex-start;
+  white-space: normal;
+  text-align: left;
+  min-height: 36px;
+  padding: 8px 10px
 }
 
 .game-hud-body .game-action-content[hidden],
@@ -4799,19 +4831,15 @@ body:has(.game-main) {
     max-width: min(260px, 68vw)
   }
 
-  .game-compact .story-toast-hud {
-    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  body:has(.game-compact) .story-toast-hud {
+    top: calc(8px + env(safe-area-inset-top, 0px));
+    bottom: auto;
     width: min(100% - 16px, 420px)
   }
 
   .game-compact.game-aiming .chat-toast-hud,
   .game-compact.game-actions-open .chat-toast-hud {
     bottom: calc(96px + env(safe-area-inset-bottom, 0px))
-  }
-
-  .game-compact.game-aiming .story-toast-hud,
-  .game-compact.game-actions-open .story-toast-hud {
-    bottom: calc(108px + env(safe-area-inset-bottom, 0px))
   }
 
   .game-compact .game-party {
@@ -4986,5 +5014,152 @@ body:has(.game-main) {
 
   .game-compact .map-hint {
     display: none
+  }
+}
+
+/* Encounter victory — BG3-style brief fanfare over the board. */
+.combat-victory-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: var(--game-text, #f4efdf)
+}
+
+.combat-victory-hud[hidden] {
+  display: none
+}
+
+.combat-victory {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: .35rem;
+  padding: clamp(1.4rem, 4vw, 2.4rem) clamp(1.8rem, 8vw, 4.5rem);
+  text-align: center;
+  isolation: isolate;
+  animation: combat-victory-in .7s cubic-bezier(.16, 1, .3, 1) both
+}
+
+.combat-victory.is-settled {
+  animation: none;
+  opacity: 1;
+  transform: none
+}
+
+.combat-victory.is-leaving {
+  animation: combat-victory-out .4s ease-in forwards
+}
+
+.combat-victory-flare {
+  position: absolute;
+  inset: -18% -28%;
+  z-index: -2;
+  background:
+    radial-gradient(ellipse 55% 42% at 50% 48%, color-mix(in srgb, var(--game-gold, #edcf90) 42%, transparent), transparent 70%),
+    radial-gradient(ellipse 80% 60% at 50% 50%, color-mix(in srgb, var(--game-ground, #19271f) 55%, transparent), transparent 75%);
+  filter: blur(2px);
+  animation: combat-victory-flare 2.8s ease-out both
+}
+
+.combat-victory-rays {
+  position: absolute;
+  inset: -40% -10%;
+  z-index: -1;
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    transparent 0deg,
+    color-mix(in srgb, var(--game-gold, #edcf90) 28%, transparent) 8deg,
+    transparent 18deg,
+    transparent 40deg,
+    color-mix(in srgb, var(--game-gold, #edcf90) 18%, transparent) 48deg,
+    transparent 58deg,
+    transparent 80deg,
+    color-mix(in srgb, var(--game-gold, #edcf90) 22%, transparent) 88deg,
+    transparent 98deg,
+    transparent 130deg,
+    color-mix(in srgb, var(--game-gold, #edcf90) 16%, transparent) 138deg,
+    transparent 150deg,
+    transparent 200deg,
+    color-mix(in srgb, var(--game-gold, #edcf90) 20%, transparent) 208deg,
+    transparent 220deg,
+    transparent 280deg,
+    color-mix(in srgb, var(--game-gold, #edcf90) 14%, transparent) 288deg,
+    transparent 300deg,
+    transparent 360deg
+  );
+  opacity: .55;
+  mask-image: radial-gradient(circle at 50% 50%, #000 12%, transparent 68%);
+  animation: combat-victory-spin 3.2s linear both
+}
+
+.combat-victory-kicker {
+  margin: 0;
+  font: 650 .78rem/1.2 var(--display, "DM Sans", system-ui, sans-serif);
+  letter-spacing: .34em;
+  text-transform: uppercase;
+  color: var(--game-gold-soft, #f0d9a4);
+  text-shadow: 0 1px 0 var(--game-ink, #0c1410), 0 0 18px color-mix(in srgb, var(--game-gold, #edcf90) 45%, transparent)
+}
+
+.combat-victory-title {
+  font: 800 clamp(2.6rem, 9vw, 5.2rem)/.95 var(--display, "DM Sans", system-ui, sans-serif);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--game-gold, #edcf90);
+  text-shadow:
+    0 2px 0 color-mix(in srgb, var(--game-ink, #0c1410) 80%, transparent),
+    0 0 28px color-mix(in srgb, var(--game-gold, #edcf90) 55%, transparent),
+    0 0 60px color-mix(in srgb, var(--game-gold, #edcf90) 30%, transparent);
+  animation: combat-victory-title .85s cubic-bezier(.16, 1, .3, 1) both
+}
+
+.combat-victory-detail {
+  margin: .15rem 0 0;
+  font: 500 clamp(.95rem, 2.2vw, 1.15rem)/1.35 var(--body, "DM Sans", system-ui, sans-serif);
+  color: var(--game-text, #f4efdf);
+  text-shadow: 0 1px 8px var(--game-ink, #0c1410)
+}
+
+@keyframes combat-victory-in {
+  0% { opacity: 0; transform: scale(.92) translateY(12px) }
+  100% { opacity: 1; transform: scale(1) translateY(0) }
+}
+
+@keyframes combat-victory-out {
+  0% { opacity: 1; transform: scale(1) }
+  100% { opacity: 0; transform: scale(1.04) translateY(-8px) }
+}
+
+@keyframes combat-victory-title {
+  0% { opacity: 0; letter-spacing: .28em; transform: scale(1.18); filter: brightness(1.8) }
+  45% { opacity: 1; filter: brightness(1.25) }
+  100% { opacity: 1; letter-spacing: .08em; transform: scale(1); filter: brightness(1) }
+}
+
+@keyframes combat-victory-flare {
+  0% { opacity: 0; transform: scale(.7) }
+  30% { opacity: 1 }
+  100% { opacity: .55; transform: scale(1.15) }
+}
+
+@keyframes combat-victory-spin {
+  0% { transform: scale(.6) rotate(0deg); opacity: 0 }
+  20% { opacity: .65 }
+  100% { transform: scale(1.2) rotate(28deg); opacity: 0 }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .combat-victory,
+  .combat-victory-title,
+  .combat-victory-flare,
+  .combat-victory-rays {
+    animation: none !important
+  }
+
+  .combat-victory-rays {
+    opacity: .25
   }
 }

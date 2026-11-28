@@ -7,7 +7,7 @@ import {actorPartyId} from './parties.mjs';
 import {isCenterlineVisionZone,visionSegmentsForZone} from './spell-shapes.mjs';
 const cache=new WeakMap(),holders=new WeakMap(),combined=new WeakMap();
 const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
-export const fogSettings=b=>({sharedVision:true,remember:true,opacity:1,exploredOpacity:.65,softness:1,blockMovement:true,...b.fogSettings});
+export const fogSettings=b=>({sharedVision:true,remember:true,opacity:1,exploredOpacity:.65,softness:2,blockMovement:true,...b.fogSettings});
 export function visionSettings(actor) {
   const range=actor.astralVisage || hasFeature(actor,"Devil's Sight") ? 120 : Number.isFinite(actor.darkvision) ? Math.max(30,Math.min(120,actor.darkvision)) : 30;
   return {enabled:true,range,angle:360,facing:0,...actor.vision};

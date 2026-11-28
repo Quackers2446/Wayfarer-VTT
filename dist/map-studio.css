@@ -1,0 +1,355 @@
+/* Full-bleed Map Studio — same stage feel as the room UI. */
+body:has(.map-studio-main) {
+  overflow: hidden;
+  background: var(--theme-ground, #17231d);
+}
+
+.map-studio-main {
+  outline: none;
+  min-width: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Mount must fill main — otherwise screen height:100% collapses and the board paints at 0×0. */
+.map-studio-main > #map-studio-mount {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-studio-screen {
+  --studio-ground: var(--theme-ground, #19271f);
+  --studio-panel: var(--theme-panel, #24352a);
+  --studio-line: var(--theme-line, #4b5b48);
+  --studio-text: var(--theme-text, #f4efdf);
+  --studio-muted: var(--theme-muted, #b9c8b6);
+  --studio-gold: var(--theme-accent, #edcf90);
+  --studio-glass: color-mix(in srgb, var(--studio-ground) 88%, #000 12%);
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  height: 100%;
+  background: var(--studio-ground);
+  color: var(--studio-text);
+  font: 1rem/1.45 var(--body);
+  overflow: hidden;
+}
+
+.map-studio-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--studio-panel) 82%, #000 18%);
+  border-bottom: 1px solid color-mix(in srgb, var(--studio-line) 70%, transparent);
+  z-index: 3;
+}
+
+.map-studio-top-left,
+.map-studio-top-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.map-studio-top a.game-button,
+.map-studio-top .game-button,
+.map-studio-top .button {
+  text-decoration: none;
+}
+
+.map-studio-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.map-studio-title strong {
+  font: 600 1.05rem/1.15 var(--display);
+  letter-spacing: -.01em;
+}
+
+.map-studio-title small,
+.map-studio-status {
+  color: var(--studio-muted);
+  font-size: .8rem;
+}
+
+.map-studio-stage {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: #101910;
+}
+
+.map-studio-stage .board-frame.game-board {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: #101910;
+  overflow: auto;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+.map-studio-board-chrome {
+  position: absolute;
+  z-index: 2;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.map-studio-board-chrome .map-controls {
+  pointer-events: auto;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--studio-glass);
+}
+
+.map-studio-board-chrome .map-hint {
+  pointer-events: none;
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--studio-glass);
+  color: var(--studio-muted);
+  font-size: .78rem;
+  max-width: min(420px, 55vw);
+}
+
+.map-studio-rail,
+.map-studio-inspector {
+  position: absolute;
+  top: 12px;
+  z-index: 2;
+  width: min(280px, calc(100vw - 24px));
+  max-height: calc(100% - 72px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--studio-line) 75%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--studio-ground) 88%, #000 12%);
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 45%, transparent);
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.map-studio-rail { left: 12px; }
+.map-studio-inspector { right: 12px; }
+
+.map-studio-rail h2,
+.map-studio-inspector h2 {
+  margin: 0;
+  font: 600 1rem/1.2 var(--display);
+  color: var(--studio-gold);
+}
+
+.map-studio-rail label,
+.map-studio-inspector label {
+  display: grid;
+  gap: 4px;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--studio-muted);
+}
+
+.map-studio-rail input,
+.map-studio-rail select,
+.map-studio-inspector input,
+.map-studio-inspector select,
+.map-studio-inspector textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--studio-line) 80%, #000);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-panel) 88%, #000 12%);
+  color: var(--studio-text);
+  font: inherit;
+  font-weight: 500;
+}
+
+.map-studio-tools {
+  display: grid;
+  gap: 5px;
+}
+
+.map-studio-tools button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--studio-line) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-panel) 80%, transparent);
+  color: var(--studio-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-studio-tools button:hover {
+  border-color: var(--studio-gold);
+}
+
+.map-studio-tools button[aria-pressed=true] {
+  background: color-mix(in srgb, var(--studio-gold) 22%, var(--studio-panel));
+  border-color: var(--studio-gold);
+}
+
+.map-studio-map-list {
+  display: grid;
+  gap: 3px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.map-studio-map-list button {
+  text-align: left;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--studio-text);
+  cursor: pointer;
+  font-size: .82rem;
+}
+
+.map-studio-map-list button:hover {
+  background: color-mix(in srgb, var(--studio-panel) 70%, transparent);
+}
+
+.map-studio-map-list button[aria-pressed=true] {
+  background: color-mix(in srgb, var(--studio-gold) 20%, var(--studio-panel));
+  border-color: color-mix(in srgb, var(--studio-gold) 55%, transparent);
+}
+
+.map-studio-map-list small {
+  display: block;
+  color: var(--studio-muted);
+  font-size: .72rem;
+  margin-top: 2px;
+}
+
+.map-studio-hint {
+  margin: 0;
+  font-size: .78rem;
+  color: var(--studio-muted);
+  line-height: 1.4;
+}
+
+.map-studio-inspector .map-studio-check {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  color: var(--studio-text);
+}
+
+.map-studio-inspector .map-studio-check input { width: auto; }
+
+.map-studio-entity-list {
+  display: grid;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.map-studio-entity-list button {
+  text-align: left;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--studio-line) 70%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--studio-panel) 75%, transparent);
+  color: var(--studio-text);
+  font-size: .78rem;
+  cursor: pointer;
+}
+
+.map-studio-entity-list button[aria-pressed=true] {
+  border-color: var(--studio-gold);
+}
+
+.map-studio-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--studio-muted);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.map-studio-empty strong {
+  color: var(--studio-text);
+  font: 600 1.2rem/1.2 var(--display);
+}
+
+.map-studio-denied {
+  max-width: 36rem;
+  margin: 48px auto;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.map-studio-denied h1 { font-family: var(--display); margin: 0 0 8px; }
+.map-studio-denied p { color: var(--muted); margin: 0; }
+
+@media (max-width: 900px) {
+  .map-studio-rail,
+  .map-studio-inspector {
+    width: min(240px, calc(50vw - 18px));
+    max-height: 42vh;
+  }
+  .map-studio-board-chrome .map-hint { display: none; }
+}
+
+@media (max-width: 640px) {
+  .map-studio-rail {
+    top: auto;
+    bottom: 56px;
+    left: 8px;
+    right: auto;
+    width: min(220px, calc(100vw - 16px));
+    max-height: 36vh;
+  }
+  .map-studio-inspector {
+    top: auto;
+    bottom: 56px;
+    right: 8px;
+    width: min(220px, calc(100vw - 16px));
+    max-height: 36vh;
+  }
+}

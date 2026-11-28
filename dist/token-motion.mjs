@@ -43,7 +43,8 @@ export function createTokenMotion(onFrame,now=()=>performance.now(),reduced=()=>
           else if(!actor.concentration?.teleport) points.push(destination);
           if(!same(points.at(-1),destination)) points.push(destination);
           const route=points.filter((p,i)=>!i || !same(p,points[i-1]));
-          if(moves.length && actor.hp>0 && !actor.dead && !reduced() && route.length>1) {
+          // Dragged corpses also slide so they visibly trail behind the mover.
+          if((moves.length && actor.hp>0 && !actor.dead || actor.draggedBy) && !reduced() && route.length>1) {
             const base=Math.min(old ? 650 : 1800,Math.max(180,(route.length-1)*(actor.side==='party' ? 160 : 190)));
             const duration=Math.round(base*moveScale);
             tracks.set(actor.id,{points:route,started:time,duration});positions.set(actor.id,route[0]);

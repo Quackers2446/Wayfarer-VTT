@@ -33,6 +33,11 @@
   font: 600 1.6rem var(--display);
 }
 
+.sheet-avatar.has-photo,
+.sheet-token-bar .sheet-avatar.has-photo {
+  background: transparent;
+}
+
 .sheet-hero h1 {
   font-size: clamp(1.85rem, 3.4vw, 3.3rem);
   letter-spacing: -.035em;
@@ -340,7 +345,8 @@
   .sheet-vital:nth-last-child(-n + 2) { grid-column: span 3 }
   .vital-label { font-size: .79rem }
   .vital-label .icon { width: 15px; height: 15px }
-  .topbar-sheet .crumb > span, .topbar-sheet .crumb > .icon { display: none }
+  .topbar-sheet .crumb .crumb-part:first-child,
+  .topbar-sheet .crumb > .icon:first-of-type { display: none }
   .sheet-nav { gap: 0; margin-bottom: 11px }
   .sheet-tab {
     display: grid;

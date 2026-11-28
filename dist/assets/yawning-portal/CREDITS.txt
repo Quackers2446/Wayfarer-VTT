@@ -1,0 +1,7 @@
+Yawning Portal battle maps
+--------------------------
+Files in this folder (cellar.webp, 1st-floor.webp, 2nd-floor.webp, 3rd-floor.webp, roof.webp)
+are bundled for Wayfarer hub gameplay. Source PNGs lived under dist/assets/Yawning Portal/.
+
+Confirm redistribution rights before public/commercial deploy. A free download is not
+automatically a redistribution license. Record artist/publisher here when known.

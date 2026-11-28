@@ -5,6 +5,7 @@ import {DEFAULT_PARTY_ID, MAX_PARTY_SIZE, actorPartyId, ensureParties, partyFull
 
 const api = "/api/sessions";
 const recentKey = "wayfarer-last-session-v1";
+const hubKey = "wayfarer-hub-session-v1";
 const usernameKey = "wayfarer-username-v1";
 const sessionPattern = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
 
@@ -22,6 +23,14 @@ export function recentSession(id) {
     if (id) localStorage.setItem(recentKey,id);
     return sessionCode(localStorage.getItem(recentKey));
   } catch {return "";}
+}
+
+/** Last Yawning Portal hub session for this browser (separate from campaign rooms). */
+export function rememberedHubSession(id) {
+  try {
+    if (id) localStorage.setItem(hubKey, id);
+    return sessionCode(localStorage.getItem(hubKey));
+  } catch { return ""; }
 }
 
 export function rememberedUsername(username) {
