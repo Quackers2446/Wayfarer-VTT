@@ -672,7 +672,9 @@ export function drawGrid(canvas, view, map, battle, {room, selected, target, hov
 
   for (const [pair, value] of Object.entries(battle.terrain)) {
     const [x,y] = pair.split(":").map(Number);
-    c.fillStyle = value === "wall" ? "#111713dd" : "#be874a8d";
+    c.fillStyle = value === "wall" ? "#111713dd"
+      : value === "water" ? "#2a6f9ecc"
+      : "#be874a8d";
     c.fillRect(...cellBounds(map,{x,y}));
   }
 

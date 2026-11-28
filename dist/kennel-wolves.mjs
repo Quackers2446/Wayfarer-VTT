@@ -15,8 +15,13 @@ export const ALERT_REGION = "034"; // Goblin den east of the kennel
 /** Stable id kept for saves; visual is the tether rock. */
 export const POLE_ID = "LMoP|1ab|021|chain-pole";
 export const ROCK_ASSET = "assets/kennel/tether-rock.png";
-/** Board layout: rope anchor + pack sit one square left of the old rock art. */
-export const KENNEL_LAYOUT = 2;
+/**
+ * Board layout stamp.
+ * 1 = hitch/pack one square west of the old rock-art cell (intended).
+ * 2 = mistaken second west shift from an earlier version bump — corrected in 3.
+ * 3 = restored intended cell; never west-shift again.
+ */
+export const KENNEL_LAYOUT = 3;
 export const CALM_DC = 15;
 export const MEAT_NAME = "Scrap meat";
 export const MEAT_COST_SP = 2;
@@ -49,17 +54,33 @@ function canSeatKennel(map, battle, x, y, occupied = null) {
   return mapFloor(map, x, y, battle);
 }
 
-/** Shift the tether one square west once, then reseat wolves around it. */
+/** Apply the one-time kennel hitch offset; never stack west shifts on version bumps. */
 function applyKennelLayout(map, battle, rock) {
   if (!rock || !Number.isInteger(rock.x) || !Number.isInteger(rock.y)) return;
   const story = kennelStory(battle);
-  if (story.layout === KENNEL_LAYOUT) return;
-  const next = { x: rock.x - 1, y: rock.y };
-  if (canSeatKennel(map, battle, next.x, next.y)) {
-    rock.x = next.x;
-    rock.y = next.y;
+  const current = Math.max(Number(story.layout) || 0, Number(rock.layout) || 0);
+  if (current >= KENNEL_LAYOUT) {
+    story.layout = KENNEL_LAYOUT;
+    rock.layout = KENNEL_LAYOUT;
+    return;
+  }
+  if (current < 1) {
+    // First correction only: one square west of the adventure rock-art cell.
+    const next = { x: rock.x - 1, y: rock.y };
+    if (canSeatKennel(map, battle, next.x, next.y)) {
+      rock.x = next.x;
+      rock.y = next.y;
+    }
+  } else if (current === 2) {
+    // Undo the accidental second west shift from KENNEL_LAYOUT=2.
+    const next = { x: rock.x + 1, y: rock.y };
+    if (canSeatKennel(map, battle, next.x, next.y)) {
+      rock.x = next.x;
+      rock.y = next.y;
+    }
   }
   story.layout = KENNEL_LAYOUT;
+  rock.layout = KENNEL_LAYOUT;
 }
 
 export function isKennelWolf(actor) {

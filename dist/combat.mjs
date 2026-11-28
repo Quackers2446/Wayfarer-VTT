@@ -511,7 +511,10 @@ function findPath(battle, actor, x, y, board, exploration = false, {goal, score,
         if (dx && dy && (!footprintClear(battle,actor,cell.x+dx,cell.y,board) || !footprintClear(battle,actor,cell.x,cell.y+dy,board))) continue;
         const crossed=others.filter(other=>overlaps({...actor,x:col,y:row},other));
         if (crossed.some(other=>other.side!==actor.side && Math.abs(sizeRank(other)-sizeRank(actor))<2)) continue;
-        const difficult = actorCells({...actor,x:col,y:row}).some(c=>battle.terrain[keyAt(c.x,c.y)]==='difficult'||battle.spellZones?.some(zone=>zone.difficult&&zone.cells.includes(keyAt(c.x,c.y)))) || crossed.length>0;
+        const difficult = actorCells({...actor,x:col,y:row}).some(c=>{
+          const terrain=battle.terrain[keyAt(c.x,c.y)];
+          return terrain==='difficult'||terrain==='water'||battle.spellZones?.some(zone=>zone.difficult&&zone.cells.includes(keyAt(c.x,c.y)));
+        }) || crossed.length>0;
         const cost = cell.cost + (exploration ? 5 : (difficult ? 10 : 5) + (actor.prone ? 5 : 0));
         const step={x:col,y:row,cost,diagonals:cell.diagonals+(dx&&dy?1:0),bends:cell.bends+(cell.previous&&(cell.dx!==dx||cell.dy!==dy)?1:0),dx,dy,previous:cell};
         if (cost > budget || known.has(next)&&compare(step,known.get(next))>=0) continue;

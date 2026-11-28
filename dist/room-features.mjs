@@ -59,6 +59,7 @@ export function normalizeFeature(raw = {}, { regionId, mapKey, moduleId } = {}) 
     ...(raw.detail ? { detail: String(raw.detail) } : {}),
     ...(Number.isInteger(raw.x) ? { x: raw.x } : {}),
     ...(Number.isInteger(raw.y) ? { y: raw.y } : {}),
+    ...(Number.isFinite(raw.layout) ? { layout: Number(raw.layout) } : {}),
     origin: raw.origin ?? region,
     hidden: state === "hidden" || state === "hinted",
     revealed: state === "revealed" || state === "resolved" || state === "triggered",

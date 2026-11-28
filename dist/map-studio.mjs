@@ -9,7 +9,18 @@ import { newBattle, placeToken, canStand, occupies } from "./combat.mjs";
 import { containsCell } from "./actor-space.mjs";
 import { creatureActor, moduleMaps, moduleMapsOrBuiltin } from "./encounters.mjs";
 import { hasArchive, hostedMapImage, mapImage, restoreArchive } from "./rules-library.mjs";
-import { FEATURE_KINDS, normalizeFeature, markerFromFeature } from "./room-features.mjs";
+import {
+  FEATURE_KINDS,
+  FEATURE_STATES,
+  normalizeFeature,
+  markerFromFeature,
+  syncMarkerForFeature,
+  setFeatureState,
+} from "./room-features.mjs";
+
+const OUTCOME_ONS = ["success", "fail", "use", "trigger"];
+const OUTCOME_EFFECTS = ["reveal", "log", "set_state", "loot", "spawn_creature", "unlock"];
+const ACTOR_SIDES = ["hostile", "neutral", "party"];
 import { createSpawnMarker, removeSpawnMarker, spawnMarkers } from "./spawn-points.mjs";
 import { listHomebrew } from "./homebrew-store.mjs";
 import { monsterStatBlock } from "./homebrew-schema.mjs";
@@ -148,6 +159,46 @@ export function mountMapStudio(host) {
     dirty = true;
     paintPanels();
     boardPaint();
+  }
+
+  /** Mark unsaved without remounting the inspector (keeps focus while typing). */
+  function touchDirty(repaintBoard = false) {
+    dirty = true;
+    const save = host.querySelector('[data-studio-action="save"]');
+    const discard = host.querySelector('[data-studio-action="discard"]');
+    if (save) save.disabled = !map;
+    if (discard) discard.disabled = !map;
+    const status = host.querySelector("[data-studio-status]");
+    if (status) status.textContent = (statusText || "") + ((statusText ? " · " : "") + "Unsaved changes");
+    if (repaintBoard) boardPaint();
+  }
+
+  function liveFeature() {
+    if (selected?.kind !== "feature") return null;
+    return (battle.features ?? []).find((entry) => entry.id === selected.id) ?? null;
+  }
+
+  function liveActor() {
+    if (selected?.kind !== "actor") return null;
+    return (battle.actors ?? []).find((entry) => entry.id === selected.id) ?? null;
+  }
+
+  function liveSpawn() {
+    if (selected?.kind !== "spawn") return null;
+    return spawnMarkers(battle).find((entry) => entry.id === selected.id) ?? null;
+  }
+
+  function refreshSelectedRefs() {
+    if (selected?.kind === "feature") {
+      const feature = liveFeature();
+      if (feature) selected = { kind: "feature", id: feature.id, feature };
+    } else if (selected?.kind === "actor") {
+      const actor = liveActor();
+      if (actor) selected = { kind: "actor", id: actor.id, actor };
+    } else if (selected?.kind === "spawn") {
+      const spawn = liveSpawn();
+      if (spawn) selected = { kind: "spawn", id: spawn.id, spawn };
+    }
   }
 
   function serialize() {
@@ -292,26 +343,74 @@ export function mountMapStudio(host) {
     return images;
   }
 
+  function isKennelHitch(marker) {
+    return marker?.id === "LMoP|1ab|021|chain-pole"
+      || marker?.featureId === "LMoP|1ab|021|chain-pole"
+      || marker?.type === "rock" || marker?.visual === "rock"
+      || marker?.type === "pole" || marker?.visual === "pole";
+  }
+
+  /**
+   * Map Studio is DM authoring — show traps, secrets, treasures, and other normally-hidden
+   * features on the board (Select/pan especially). Kennel hitch stays rope-only.
+   */
+  function studioBoardMarkers() {
+    const byId = new Map();
+    for (const marker of battle.markers ?? []) {
+      if (!Number.isInteger(marker.x) || !Number.isInteger(marker.y)) continue;
+      byId.set(marker.id, marker);
+    }
+    for (const feature of battle.features ?? []) {
+      if (!Number.isInteger(feature.x) || !Number.isInteger(feature.y)) continue;
+      if (isKennelHitch(feature)) continue;
+      const board = markerFromFeature(feature);
+      const existing = byId.get(feature.id);
+      // Force visible drawing for hidden/hinted authoring (rooms still hide these from players).
+      byId.set(feature.id, {
+        ...(existing || {}),
+        ...board,
+        x: feature.x,
+        y: feature.y,
+        hidden: false,
+        revealed: true,
+        hinted: feature.state === "hinted",
+        // Draw the full prop, not the faint "noticed" dust, so traps/secrets are editable.
+        state: feature.state === "hidden" || feature.state === "hinted" ? "revealed" : (feature.state || "revealed"),
+        studioHidden: feature.state === "hidden" || feature.state === "hinted",
+        name: feature.name,
+        kind: feature.kind,
+      });
+    }
+    // Keep hitch for rope lines; drawGrid skips painting it.
+    for (const marker of battle.markers ?? []) {
+      if (isKennelHitch(marker) && Number.isInteger(marker.x)) byId.set(marker.id, marker);
+    }
+    return [...byId.values()];
+  }
+
   function boardPaint() {
     if (!map || !camera) return;
     const editor = tool === "walls" ? ensureWallEditor() : null;
+    const markers = studioBoardMarkers();
     // Bust background cache when art/markers change (kennel hitch must not stick in the cache).
-    const markerKey = (battle.markers ?? []).map((m) => [m.id, m.x, m.y, m.type, m.kind || "", m.hidden ? 1 : 0].join(":")).join("|");
+    const markerKey = markers.map((m) => [m.id, m.x, m.y, m.type, m.kind || "", m.state || "", m.studioHidden ? 1 : 0].join(":")).join("|");
     const backgroundKey = [
       map.key || "map",
       art ? "art" : "schematic",
       battle.gridOverlay ?? "printed",
+      tool,
       (battle.actors ?? []).filter((a) => a.chained).map((a) => a.id + "@" + a.x + "," + a.y).join(";"),
       markerKey,
-      "kennel-hitch-v2",
+      "studio-show-hidden-v1",
     ].join(":");
     const tokenImages = collectTokenImages();
     camera.paint((canvas, view) => {
       drawGrid(canvas, view, map, battle, {
-        room: null, selected: selected?.actor || null, target: null, hovered: null, cursor: null,
+        // drawGrid compares against actor.id strings (same as the room UI).
+        room: null, selected: selected?.actor?.id || selected?.id || null, target: null, hovered: null, cursor: null,
         art, path: null, visible: null, fog: false,
         footprint: null, showRegions: true,
-        markers: battle.markers ?? [],
+        markers,
         tokenImages, tokenPositions: null, movementLabels: null,
         overlay: art ? (battle.gridOverlay ?? "printed") : "tactical",
         wallEditor: editor,
@@ -372,8 +471,95 @@ export function mountMapStudio(host) {
     `;
   }
 
+  function featureEditorHtml(feature) {
+    const outcomes = Array.isArray(feature.outcomes) ? feature.outcomes : [];
+    const check = feature.check || {};
+    return `
+      <h2>Edit feature</h2>
+      <p class="map-studio-hint">${escape(feature.kind)} · ${Number.isInteger(feature.x) ? `${feature.x},${feature.y}` : "unplaced"} · click empty square to move</p>
+      <label>Name<input data-edit="feature" data-field="name" value="${escape(feature.name || "")}"></label>
+      <label>Kind<select data-edit="feature" data-field="kind">${FEATURE_KINDS.map((k) =>
+        `<option value="${k}"${feature.kind === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
+      <label>State<select data-edit="feature" data-field="state">${FEATURE_STATES.map((s) =>
+        `<option value="${s}"${feature.state === s ? " selected" : ""}>${s}</option>`).join("")}</select></label>
+      <label>Region id<input data-edit="feature" data-field="regionId" value="${escape(feature.regionId || feature.origin || "")}"></label>
+      <label>What players see (surface)<textarea data-edit="feature" data-field="surfaceText" rows="3">${escape(feature.surfaceText || "")}</textarea></label>
+      <label>DM truth / interaction<textarea data-edit="feature" data-field="truthText" rows="3">${escape(feature.truthText || "")}</textarea></label>
+      <label>Requires item<input data-edit="feature" data-field="requiresItem" value="${escape(feature.requiresItem || "")}" placeholder="optional item name"></label>
+      <div class="map-studio-edit-row">
+        <label>Check skill<input data-edit="feature" data-field="checkSkill" value="${escape(check.skill || "")}" placeholder="perception"></label>
+        <label>DC<input data-edit="feature" data-field="checkDc" type="number" min="1" max="40" value="${check.dc ?? ""}"></label>
+      </div>
+      <label>Passive Perception DC<input data-edit="feature" data-field="passivePerceptionDC" type="number" min="1" max="40" value="${feature.passivePerceptionDC ?? ""}"></label>
+      <h3 class="map-studio-subhead">Events / outcomes</h3>
+      <p class="map-studio-hint">These fire on investigate / use / trigger (step-on traps).</p>
+      ${outcomes.map((outcome, index) => `
+        <div class="map-studio-outcome" data-outcome-index="${index}">
+          <div class="map-studio-edit-row">
+            <label>When<select data-edit="outcome" data-index="${index}" data-field="on">${OUTCOME_ONS.map((v) =>
+              `<option value="${v}"${(outcome.on || "success") === v ? " selected" : ""}>${v}</option>`).join("")}</select></label>
+            <label>Effect<select data-edit="outcome" data-index="${index}" data-field="effect">${OUTCOME_EFFECTS.map((v) =>
+              `<option value="${v}"${(outcome.effect || "reveal") === v ? " selected" : ""}>${v}</option>`).join("")}</select></label>
+          </div>
+          <label>Text / log<textarea data-edit="outcome" data-index="${index}" data-field="text" rows="2">${escape(outcome.text || "")}</textarea></label>
+          <label>Set state<select data-edit="outcome" data-index="${index}" data-field="state">
+            <option value="">(none)</option>
+            ${FEATURE_STATES.map((s) => `<option value="${s}"${outcome.state === s ? " selected" : ""}>${s}</option>`).join("")}
+          </select></label>
+          <div class="map-studio-edit-row">
+            <label>Creature<input data-edit="outcome" data-index="${index}" data-field="creature" value="${escape(outcome.creature || "")}" placeholder="spawn name"></label>
+            <label>Source<input data-edit="outcome" data-index="${index}" data-field="source" value="${escape(outcome.source || "")}" placeholder="MM"></label>
+          </div>
+          <label>Unlock feature id<input data-edit="outcome" data-index="${index}" data-field="targetFeatureId" value="${escape(outcome.targetFeatureId || "")}"></label>
+          <button type="button" class="button outline small" data-studio-action="remove-outcome" data-index="${index}">Remove outcome</button>
+        </div>
+      `).join("") || `<p class="map-studio-hint">No outcomes yet.</p>`}
+      <button type="button" class="button outline" data-studio-action="add-outcome">Add outcome</button>
+      <button type="button" class="button outline" data-studio-action="delete-selected">Remove feature</button>
+      <button type="button" class="button outline" data-studio-action="clear-selection">Deselect</button>
+    `;
+  }
+
+  function actorEditorHtml(actor) {
+    return `
+      <h2>Edit creature</h2>
+      <p class="map-studio-hint">${escape(actor.source || "MM")} · ${Number.isInteger(actor.x) ? `${actor.x},${actor.y}` : "unplaced"} — click empty square to move</p>
+      <label>Name<input data-edit="actor" data-field="name" value="${escape(actor.name || "")}"></label>
+      <label>Stat name<input data-edit="actor" data-field="statName" value="${escape(actor.statName || "")}" placeholder="bestiary name"></label>
+      <label>Source<input data-edit="actor" data-field="source" value="${escape(actor.source || "MM")}"></label>
+      <label>Side<select data-edit="actor" data-field="side">${ACTOR_SIDES.map((s) =>
+        `<option value="${s}"${(actor.side || "hostile") === s ? " selected" : ""}>${s}</option>`).join("")}</select></label>
+      <label>Origin room<input data-edit="actor" data-field="origin" value="${escape(actor.origin || "")}" placeholder="e.g. 021"></label>
+      <div class="map-studio-edit-row">
+        <label>HP<input data-edit="actor" data-field="hp" type="number" min="0" value="${actor.hp ?? ""}"></label>
+        <label>Max HP<input data-edit="actor" data-field="maxHp" type="number" min="1" value="${actor.maxHp ?? ""}"></label>
+      </div>
+      <label>AC<input data-edit="actor" data-field="ac" type="number" min="0" value="${actor.ac ?? ""}"></label>
+      <label>Marker <span class="map-studio-hint">(token when art missing)</span>
+        <input data-edit="actor" data-field="marker" value="${escape(actor.marker || "")}" maxlength="4"></label>
+      <label class="map-studio-check"><input type="checkbox" data-edit="actor" data-field="chained"${actor.chained ? " checked" : ""}> Tethered / chained</label>
+      <label>Notes / interaction<textarea data-edit="actor" data-field="studioNotes" rows="3" placeholder="DM notes, dialogue cues, special behavior">${escape(actor.studioNotes || actor.notes || "")}</textarea></label>
+      <button type="button" class="button outline" data-studio-action="delete-selected">Remove creature</button>
+      <button type="button" class="button outline" data-studio-action="clear-selection">Deselect</button>
+    `;
+  }
+
+  function spawnEditorHtml(spawn) {
+    return `
+      <h2>Edit spawn</h2>
+      <p class="map-studio-hint">${spawn.x},${spawn.y} — click empty square to move</p>
+      <label>Name<input data-edit="spawn" data-field="name" value="${escape(spawn.name || "")}" maxlength="40"></label>
+      <label>Origin<input data-edit="spawn" data-field="origin" value="${escape(spawn.origin || "")}"></label>
+      <button type="button" class="button outline" data-studio-action="delete-selected">Remove spawn</button>
+      <button type="button" class="button outline" data-studio-action="clear-selection">Deselect</button>
+    `;
+  }
+
   function inspectorHtml() {
     if (!map) return `<p class="map-studio-hint">Choose a module and map to begin.</p>`;
+    if (selected?.kind === "feature" && liveFeature()) return featureEditorHtml(liveFeature());
+    if (selected?.kind === "actor" && liveActor()) return actorEditorHtml(liveActor());
+    if (selected?.kind === "spawn" && liveSpawn()) return spawnEditorHtml(liveSpawn());
     if (tool === "monster") {
       const homebrew = listHomebrew("monsters");
       return `
@@ -382,20 +568,18 @@ export function mountMapStudio(host) {
         <label>Source<input name="monster-source" value="${escape(monsterPick.source)}"></label>
         <datalist id="studio-monster-list">${(monsterSuggestions ?? []).slice(0, 40).map((m) =>
           `<option value="${escape(m.name)}">${escape(m.source)}</option>`).join("")}</datalist>
-        <p class="map-studio-hint">Click a cell on the map to place. Homebrew: ${homebrew.length} local monsters available by exact name + source Homebrew.</p>
-        <div class="map-studio-entity-list">${(battle.actors ?? []).filter((a) => a.side !== "party").map((a, i) =>
+        <p class="map-studio-hint">Click empty cells to place. Click a creature to edit name, HP, notes, and more.</p>
+        <div class="map-studio-entity-list">${(battle.actors ?? []).filter((a) => a.side !== "party").map((a) =>
           `<button type="button" data-select-actor="${escape(a.id)}" aria-pressed="${selected?.id === a.id}">${escape(a.name)} · ${a.x},${a.y}</button>`).join("") || "<p class='map-studio-hint'>No monsters placed.</p>"}</div>
-        ${selected?.kind === "actor" ? `<button type="button" class="button outline" data-studio-action="delete-selected">Remove selected</button>` : ""}
       `;
     }
     if (tool === "spawn") {
       return `
         <h2>Spawn points</h2>
         <label>Name<input name="spawn-name" value="${escape(spawnName)}" maxlength="40"></label>
-        <p class="map-studio-hint">Click a cell to place or rename a spawn at that square.</p>
+        <p class="map-studio-hint">Click a cell to place. Click a spawn to edit it.</p>
         <div class="map-studio-entity-list">${spawnMarkers(battle).map((s) =>
           `<button type="button" data-select-spawn="${escape(s.id)}" aria-pressed="${selected?.id === s.id}">${escape(s.name)} · ${s.x},${s.y}</button>`).join("") || "<p class='map-studio-hint'>No spawn points.</p>"}</div>
-        ${selected?.kind === "spawn" ? `<button type="button" class="button outline" data-studio-action="delete-selected">Remove selected</button>` : ""}
       `;
     }
     if (tool === "feature") {
@@ -406,10 +590,9 @@ export function mountMapStudio(host) {
         <label>Name<input name="feature-name" value="${escape(featureDraft.name)}"></label>
         <label>Surface text<textarea name="feature-surface" rows="2">${escape(featureDraft.surfaceText)}</textarea></label>
         <label>Truth text<textarea name="feature-truth" rows="2">${escape(featureDraft.truthText)}</textarea></label>
-        <p class="map-studio-hint">Click a cell to place this feature as the map default.</p>
-        <div class="map-studio-entity-list">${(battle.features ?? []).map((f) =>
-          `<button type="button" data-select-feature="${escape(f.id)}" aria-pressed="${selected?.id === f.id}">${escape(f.kind)} · ${escape(f.name)}${Number.isInteger(f.x) ? ` · ${f.x},${f.y}` : ""}</button>`).join("") || "<p class='map-studio-hint'>No features.</p>"}</div>
-        ${selected?.kind === "feature" ? `<button type="button" class="button outline" data-studio-action="delete-selected">Remove selected</button>` : ""}
+        <p class="map-studio-hint">Place new features here, or click one on the board to edit descriptions, checks, and outcomes.</p>
+        <div class="map-studio-entity-list">${(battle.features ?? []).filter((f) => !isKennelHitch(f)).map((f) =>
+          `<button type="button" data-select-feature="${escape(f.id)}" aria-pressed="${selected?.id === f.id}">${escape(f.kind)} · ${escape(f.name)}${f.state && f.state !== "revealed" ? ` · ${escape(f.state)}` : ""}${Number.isInteger(f.x) ? ` · ${f.x},${f.y}` : ""}</button>`).join("") || "<p class='map-studio-hint'>No features.</p>"}</div>
       `;
     }
     if (tool === "walls") {
@@ -456,6 +639,24 @@ export function mountMapStudio(host) {
         <input type="file" accept="image/png,image/jpeg,image/webp" name="map-upload">
         <button type="button" class="button" data-studio-action="upload-art">Upload &amp; attach</button>
         ${artworkId ? `<p class="map-studio-hint">Artwork attached (${artworkId.slice(0, 12)}…)</p>` : ""}
+      `;
+    }
+    if (tool === "select") {
+      const monsters = (battle.actors ?? []).filter((a) => a.side !== "party");
+      const features = (battle.features ?? []).filter((f) => !isKennelHitch(f));
+      return `
+        <h2>Select / edit</h2>
+        <p class="map-studio-hint">Click anything on the board to edit its descriptions, events, and stats. Empty square moves the selection.</p>
+        <h3 class="map-studio-subhead">Creatures</h3>
+        <div class="map-studio-entity-list">${monsters.map((a) =>
+          `<button type="button" data-select-actor="${escape(a.id)}" aria-pressed="${selected?.id === a.id}">${escape(a.name)} · ${a.x},${a.y}</button>`).join("") || "<p class='map-studio-hint'>No monsters.</p>"}</div>
+        <h3 class="map-studio-subhead">Features / events</h3>
+        <div class="map-studio-entity-list">${features.map((f) =>
+          `<button type="button" data-select-feature="${escape(f.id)}" aria-pressed="${selected?.id === f.id}">${escape(f.kind)} · ${escape(f.name)}${Number.isInteger(f.x) ? ` · ${f.x},${f.y}` : ""}</button>`).join("") || "<p class='map-studio-hint'>No features.</p>"}</div>
+        <h3 class="map-studio-subhead">Spawns</h3>
+        <div class="map-studio-entity-list">${spawnMarkers(battle).map((s) =>
+          `<button type="button" data-select-spawn="${escape(s.id)}" aria-pressed="${selected?.id === s.id}">${escape(s.name)} · ${s.x},${s.y}</button>`).join("") || "<p class='map-studio-hint'>No spawns.</p>"}</div>
+        <label>Template notes<textarea name="template-notes" rows="3">${escape(notes)}</textarea></label>
       `;
     }
     const counts = {
@@ -510,7 +711,8 @@ export function mountMapStudio(host) {
     camera = null;
     if (map && frame && controls) {
       // onView must not call boardPaint — camera.paint → render → onView would recurse forever.
-      camera = createCamera(frame, controls, map, null, null);
+      // onTap runs only for real clicks (camera already filtered out pans).
+      camera = createCamera(frame, controls, map, null, null, (event) => { void handleBoardTap(event); });
       boardPaint();
       fitBoard();
     }
@@ -578,13 +780,55 @@ export function mountMapStudio(host) {
     markDirty();
   }
 
+  function moveSelectedTo(x, y) {
+    if (!selected || !map) return false;
+    if (selected.kind === "actor") {
+      const actor = battle.actors.find((entry) => entry.id === selected.id);
+      if (!actor) return false;
+      if (actor.x === x && actor.y === y) return true;
+      if (!canStand(battle, actor, x, y, map)) throw new Error("That square cannot hold " + actor.name + ".");
+      placeToken(battle, actor, x, y, map);
+      selected = { kind: "actor", id: actor.id, actor };
+      markDirty();
+      setStatus("Moved " + actor.name + " to " + x + "," + y + ".");
+      return true;
+    }
+    if (selected.kind === "spawn") {
+      const spawn = spawnMarkers(battle).find((marker) => marker.id === selected.id);
+      if (!spawn) return false;
+      spawn.x = x;
+      spawn.y = y;
+      selected = { kind: "spawn", id: spawn.id, spawn };
+      markDirty();
+      setStatus("Moved spawn “" + spawn.name + "” to " + x + "," + y + ".");
+      return true;
+    }
+    if (selected.kind === "feature") {
+      const feature = (battle.features ?? []).find((entry) => entry.id === selected.id);
+      if (!feature) return false;
+      feature.x = x;
+      feature.y = y;
+      const marker = (battle.markers ?? []).find((entry) => entry.id === feature.id || entry.featureId === feature.id);
+      if (marker) { marker.x = x; marker.y = y; }
+      selected = { kind: "feature", id: feature.id, feature };
+      markDirty();
+      setStatus("Moved " + (feature.name || feature.kind) + " to " + x + "," + y + ".");
+      return true;
+    }
+    return false;
+  }
+
   function selectAtBoard(px, py, cellX, cellY) {
     const actor = tokenAtPoint(map, battle, px, py)
       ?? (battle.actors ?? []).find((entry) => occupies(entry) && containsCell(entry, cellX, cellY));
     if (actor) {
-      selected = { kind: "actor", id: actor.id, actor };
-      tool = "monster";
-      setStatus("Selected " + actor.name + " at " + actor.x + "," + actor.y + ".");
+      if (selected?.kind === "actor" && selected.id === actor.id) {
+        selected = null;
+        setStatus("Deselected " + actor.name + ".");
+      } else {
+        selected = { kind: "actor", id: actor.id, actor };
+        setStatus("Selected " + actor.name + " — click an empty square to move.");
+      }
       paintPanels();
       boardPaint();
       return true;
@@ -592,8 +836,7 @@ export function mountMapStudio(host) {
     const spawn = spawnMarkers(battle).find((marker) => marker.x === cellX && marker.y === cellY);
     if (spawn) {
       selected = { kind: "spawn", id: spawn.id, spawn };
-      tool = "spawn";
-      setStatus("Selected spawn “" + spawn.name + "”.");
+      setStatus("Selected spawn “" + spawn.name + "” — click an empty square to move.");
       paintPanels();
       boardPaint();
       return true;
@@ -602,22 +845,231 @@ export function mountMapStudio(host) {
       entry.id !== "LMoP|1ab|021|chain-pole" && Number.isInteger(entry.x) && entry.x === cellX && entry.y === cellY);
     if (feature) {
       selected = { kind: "feature", id: feature.id, feature };
-      tool = "feature";
-      setStatus("Selected " + (feature.name || feature.kind) + ".");
+      setStatus("Selected " + (feature.name || feature.kind) + " — click an empty square to move.");
       paintPanels();
       boardPaint();
       return true;
     }
     selected = null;
-    setStatus("Nothing on that square.");
+    setStatus("Nothing on that square (" + cellX + "," + cellY + ").");
     paintPanels();
     boardPaint();
     return false;
   }
 
+  function boardGridSurface() {
+    return host.querySelector(".board-frame #play-grid");
+  }
+
+  function mapCellBounds() {
+    const cellW = map.cellWidth ?? map.size;
+    const cellH = map.cellHeight ?? map.size;
+    return {
+      cols: map.cols ?? Math.max(1, Math.ceil((map.width - (map.offsetX || 0)) / cellW)),
+      rows: map.rows ?? Math.max(1, Math.ceil((map.height - (map.offsetY || 0)) / cellH)),
+    };
+  }
+
+  async function handleBoardTap(event) {
+    if (!map) return;
+    if (tool === "walls" || tool === "fog" || tool === "grid" || tool === "upload") return;
+    if (event.target.closest?.("[data-camera],.map-studio-rail,.map-studio-inspector,.map-studio-top,.map-studio-board-chrome,.wall-editor-host")) return;
+    const surface = boardGridSurface();
+    if (!surface) return;
+    const pos = gridPosition(map, surface, event);
+    const x = Number.isInteger(pos.x) ? pos.x : Math.floor(pos.gx);
+    const y = Number.isInteger(pos.y) ? pos.y : Math.floor(pos.gy);
+    const { cols, rows } = mapCellBounds();
+
+    // Clicking a token selects it; re-clicking the same token deselects.
+    const hit = tokenAtPoint(map, battle, pos.px, pos.py)
+      ?? (battle.actors ?? []).find((entry) => occupies(entry) && containsCell(entry, x, y));
+    if (hit) {
+      if (selected?.kind === "actor" && selected.id === hit.id) {
+        selected = null;
+        setStatus("Deselected " + hit.name + ".");
+      } else {
+        selected = { kind: "actor", id: hit.id, actor: hit };
+        if (tool !== "monster" && tool !== "select") tool = "select";
+        setStatus("Selected " + hit.name + " — click an empty square to move.");
+      }
+      paintPanels();
+      boardPaint();
+      return;
+    }
+
+    if (x < 0 || y < 0 || x >= cols || y >= rows) {
+      setStatus("Outside the grid.");
+      return;
+    }
+    try {
+      // With something selected, an empty square moves it (Select or Place monster).
+      if (selected && (tool === "select" || tool === "monster" || tool === "spawn" || tool === "feature")) {
+        if (tool === "monster" && selected.kind !== "actor") {
+          await placeMonsterAt(x, y);
+        } else if (tool === "spawn" && selected.kind !== "spawn") {
+          placeSpawnAt(x, y);
+        } else if (tool === "feature" && selected.kind !== "feature") {
+          placeFeatureAt(x, y);
+        } else if (moveSelectedTo(x, y)) {
+          paintPanels();
+          boardPaint();
+          return;
+        }
+        paintPanels();
+        boardPaint();
+        return;
+      }
+      if (tool === "select") {
+        selectAtBoard(pos.px, pos.py, x, y);
+        return;
+      }
+      if (tool === "monster") await placeMonsterAt(x, y);
+      else if (tool === "spawn") placeSpawnAt(x, y);
+      else if (tool === "feature") placeFeatureAt(x, y);
+      paintPanels();
+      boardPaint();
+    } catch (error) {
+      setStatus(error.message || "Could not place.");
+    }
+  }
+
+  function applyFeatureField(feature, field, value) {
+    if (field === "name") feature.name = value;
+    else if (field === "kind" && FEATURE_KINDS.includes(value)) feature.kind = value;
+    else if (field === "state" && FEATURE_STATES.includes(value)) setFeatureState(feature, value);
+    else if (field === "regionId") { feature.regionId = value; feature.origin = value; }
+    else if (field === "surfaceText") feature.surfaceText = value;
+    else if (field === "truthText") feature.truthText = value;
+    else if (field === "requiresItem") {
+      if (value) feature.requiresItem = value;
+      else delete feature.requiresItem;
+    } else if (field === "checkSkill" || field === "checkDc") {
+      const skill = field === "checkSkill" ? value : (feature.check?.skill || "investigation");
+      const dcRaw = field === "checkDc" ? value : (feature.check?.dc ?? "");
+      const dc = Number(dcRaw);
+      if (skill && Number.isFinite(dc) && dc > 0) feature.check = { skill: String(skill).toLowerCase(), dc };
+      else if (!skill && !(Number.isFinite(dc) && dc > 0)) delete feature.check;
+      else if (feature.check) {
+        if (field === "checkSkill") feature.check.skill = String(skill || feature.check.skill).toLowerCase();
+        if (field === "checkDc" && Number.isFinite(dc) && dc > 0) feature.check.dc = dc;
+      }
+    } else if (field === "passivePerceptionDC") {
+      const dc = Number(value);
+      if (Number.isFinite(dc) && dc > 0) feature.passivePerceptionDC = dc;
+      else delete feature.passivePerceptionDC;
+    }
+    syncMarkerForFeature(battle, feature);
+    const marker = (battle.markers ?? []).find((entry) => entry.id === feature.id || entry.featureId === feature.id);
+    if (marker) {
+      marker.name = feature.name;
+      marker.detail = feature.truthText || feature.surfaceText;
+      marker.kind = feature.kind;
+      marker.type = feature.kind === "creature_hint" ? "creature"
+        : feature.kind === "secret" || feature.kind === "mechanism" || feature.kind === "lore" ? "object"
+        : FEATURE_KINDS.includes(feature.kind) ? feature.kind : "object";
+    }
+    refreshSelectedRefs();
+    touchDirty(["name", "kind", "state"].includes(field));
+  }
+
+  function applyActorField(actor, field, value, checked) {
+    if (field === "name") actor.name = value;
+    else if (field === "statName") actor.statName = value || undefined;
+    else if (field === "source") actor.source = value || "MM";
+    else if (field === "side" && ACTOR_SIDES.includes(value)) actor.side = value;
+    else if (field === "origin") actor.origin = value || undefined;
+    else if (field === "marker") actor.marker = value || undefined;
+    else if (field === "studioNotes") actor.studioNotes = value;
+    else if (field === "chained") actor.chained = Boolean(checked);
+    else if (field === "hp" || field === "maxHp" || field === "ac") {
+      const n = Number(value);
+      if (Number.isFinite(n) && n >= 0) actor[field] = n;
+    }
+    refreshSelectedRefs();
+    touchDirty(field === "name" || field === "marker" || field === "side" || field === "chained");
+  }
+
+  function applySpawnField(spawn, field, value) {
+    if (field === "name") spawn.name = value.slice(0, 40);
+    else if (field === "origin") spawn.origin = value || undefined;
+    refreshSelectedRefs();
+    touchDirty(true);
+  }
+
+  function applyOutcomeField(feature, index, field, value) {
+    feature.outcomes ??= [];
+    const outcome = feature.outcomes[index];
+    if (!outcome) return;
+    if (field === "on") outcome.on = value || "success";
+    else if (field === "effect") outcome.effect = value || "reveal";
+    else if (field === "text") {
+      if (value) outcome.text = value;
+      else delete outcome.text;
+    } else if (field === "state") {
+      if (value && FEATURE_STATES.includes(value)) outcome.state = value;
+      else delete outcome.state;
+    } else if (field === "creature") {
+      if (value) outcome.creature = value;
+      else delete outcome.creature;
+    } else if (field === "source") {
+      if (value) outcome.source = value;
+      else delete outcome.source;
+    } else if (field === "targetFeatureId") {
+      if (value) outcome.targetFeatureId = value;
+      else delete outcome.targetFeatureId;
+    }
+    refreshSelectedRefs();
+    touchDirty();
+  }
+
+  host.addEventListener("input", (event) => {
+    const t = event.target;
+    if (!(t instanceof HTMLElement)) return;
+    if (t.dataset.edit === "feature") {
+      const feature = liveFeature();
+      if (feature) applyFeatureField(feature, t.dataset.field, t.value);
+      return;
+    }
+    if (t.dataset.edit === "actor") {
+      const actor = liveActor();
+      if (actor) applyActorField(actor, t.dataset.field, t.value, t.checked);
+      return;
+    }
+    if (t.dataset.edit === "spawn") {
+      const spawn = liveSpawn();
+      if (spawn) applySpawnField(spawn, t.dataset.field, t.value);
+      return;
+    }
+    if (t.dataset.edit === "outcome") {
+      const feature = liveFeature();
+      if (feature) applyOutcomeField(feature, Number(t.dataset.index), t.dataset.field, t.value);
+    }
+  });
+
   host.addEventListener("change", (event) => {
     const t = event.target;
     if (!(t instanceof HTMLElement)) return;
+    if (t.dataset.edit === "feature") {
+      const feature = liveFeature();
+      if (feature) applyFeatureField(feature, t.dataset.field, t.value);
+      return;
+    }
+    if (t.dataset.edit === "actor") {
+      const actor = liveActor();
+      if (actor) applyActorField(actor, t.dataset.field, t.value, t.checked);
+      return;
+    }
+    if (t.dataset.edit === "spawn") {
+      const spawn = liveSpawn();
+      if (spawn) applySpawnField(spawn, t.dataset.field, t.value);
+      return;
+    }
+    if (t.dataset.edit === "outcome") {
+      const feature = liveFeature();
+      if (feature) applyOutcomeField(feature, Number(t.dataset.index), t.dataset.field, t.value);
+      return;
+    }
     if (t.name === "module") {
       void loadModuleMaps(t.value);
       return;
@@ -629,7 +1081,7 @@ export function mountMapStudio(host) {
     if (t.name === "feature-name") featureDraft = { ...featureDraft, name: t.value };
     if (t.name === "feature-surface") featureDraft = { ...featureDraft, surfaceText: t.value };
     if (t.name === "feature-truth") featureDraft = { ...featureDraft, truthText: t.value };
-    if (t.name === "template-notes") { notes = t.value; dirty = true; paintChrome(); }
+    if (t.name === "template-notes") { notes = t.value; touchDirty(); }
     if (t.name === "grid-overlay") { battle.gridOverlay = t.value; markDirty(); }
   });
 
@@ -709,6 +1161,27 @@ export function mountMapStudio(host) {
         deleteSelected();
         paintPanels();
         boardPaint();
+      } else if (action === "clear-selection") {
+        selected = null;
+        paintPanels();
+        boardPaint();
+      } else if (action === "add-outcome") {
+        const feature = liveFeature();
+        if (!feature) return;
+        feature.outcomes = Array.isArray(feature.outcomes) ? feature.outcomes : [];
+        feature.outcomes.push({ on: "success", effect: "reveal", text: "" });
+        refreshSelectedRefs();
+        markDirty();
+        paintPanels();
+      } else if (action === "remove-outcome") {
+        const feature = liveFeature();
+        if (!feature) return;
+        const index = Number(button.dataset.index);
+        if (!Number.isInteger(index) || index < 0) return;
+        feature.outcomes = (feature.outcomes ?? []).filter((_, i) => i !== index);
+        refreshSelectedRefs();
+        markDirty();
+        paintPanels();
       } else if (action === "apply-fog") {
         const enabled = host.querySelector('[name="fog-enabled"]')?.checked;
         battle.fogEnabled = Boolean(enabled);
@@ -756,32 +1229,6 @@ export function mountMapStudio(host) {
       }
     } catch (error) {
       setStatus(error.message || "Action failed.");
-    }
-  });
-
-  // Bubble phase so a pan (camera capture stopPropagation) does not also select/place.
-  host.addEventListener("click", async (event) => {
-    if (tool === "walls" || tool === "fog" || tool === "grid" || tool === "upload") return;
-    if (event.target.closest?.("[data-camera],[data-tool],[data-pick-map],[data-studio-action],[data-select-actor],[data-select-spawn],[data-select-feature],[data-wall-editor],.map-studio-rail,.map-studio-inspector,.map-studio-top]")) return;
-    const surface = event.target.closest?.("#play-grid");
-    if (!surface || !map) return;
-    event.preventDefault();
-    const pos = gridPosition(map, surface, event);
-    const x = Math.floor(pos.gx);
-    const y = Math.floor(pos.gy);
-    if (x < 0 || y < 0 || x >= map.cols || y >= map.rows) return;
-    try {
-      if (tool === "select") {
-        selectAtBoard(pos.px, pos.py, x, y);
-        return;
-      }
-      if (tool === "monster") await placeMonsterAt(x, y);
-      else if (tool === "spawn") placeSpawnAt(x, y);
-      else if (tool === "feature") placeFeatureAt(x, y);
-      paintPanels();
-      boardPaint();
-    } catch (error) {
-      setStatus(error.message || "Could not place.");
     }
   });
 

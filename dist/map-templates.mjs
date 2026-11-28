@@ -81,7 +81,13 @@ function validActorPlacement(entry) {
     (entry.source == null || (typeof entry.source === "string" && entry.source.length <= 40)) &&
     (entry.side == null || ["hostile", "neutral", "party"].includes(entry.side)) &&
     (entry.hp == null || (Number.isFinite(entry.hp) && entry.hp >= 0 && entry.hp <= 99999)) &&
-    (entry.origin == null || (typeof entry.origin === "string" && entry.origin.length <= 80));
+    (entry.maxHp == null || (Number.isFinite(entry.maxHp) && entry.maxHp >= 0 && entry.maxHp <= 99999)) &&
+    (entry.ac == null || (Number.isFinite(entry.ac) && entry.ac >= 0 && entry.ac <= 40)) &&
+    (entry.origin == null || (typeof entry.origin === "string" && entry.origin.length <= 80)) &&
+    (entry.statName == null || (typeof entry.statName === "string" && entry.statName.length <= 120)) &&
+    (entry.marker == null || (typeof entry.marker === "string" && entry.marker.length <= 4)) &&
+    (entry.chained == null || typeof entry.chained === "boolean") &&
+    (entry.studioNotes == null || (typeof entry.studioNotes === "string" && entry.studioNotes.length <= 4000));
 }
 
 /** Normalize / clamp a template payload. Returns null when invalid. */
@@ -121,8 +127,13 @@ export function normalizeTemplate(raw) {
       side: a.side || "hostile",
       x: a.x, y: a.y,
       ...(a.hp != null ? { hp: Number(a.hp) } : {}),
+      ...(a.maxHp != null ? { maxHp: Number(a.maxHp) } : {}),
+      ...(a.ac != null ? { ac: Number(a.ac) } : {}),
       ...(a.origin ? { origin: String(a.origin).slice(0, 80) } : {}),
       ...(a.statName ? { statName: String(a.statName).slice(0, 120) } : {}),
+      ...(a.marker ? { marker: String(a.marker).slice(0, 4) } : {}),
+      ...(a.chained ? { chained: true } : {}),
+      ...(a.studioNotes ? { studioNotes: String(a.studioNotes).slice(0, 4000) } : {}),
     })),
     features: raw.features == null ? null : raw.features.map((f) => normalizeFeature(f, {
       moduleId: raw.moduleId, mapKey: raw.mapKey, regionId: f.regionId || f.origin,
@@ -142,15 +153,23 @@ export function captureTemplateFromBattle(battle, { notes = "", artworkId = null
   }));
   const actors = (battle.actors ?? [])
     .filter((a) => a.side !== "party" && Number.isInteger(a.x) && Number.isInteger(a.y))
-    .map((a) => ({
-      name: a.statName || a.name.replace(/\s\d+$/, ""),
-      source: a.source || "MM",
-      side: a.side || "hostile",
-      x: a.x, y: a.y,
-      hp: a.maxHp ?? a.hp,
-      ...(a.origin ? { origin: a.origin } : {}),
-      ...(a.statName ? { statName: a.statName } : {}),
-    }));
+    .map((a) => {
+      const lookup = a.statName || String(a.name || "").replace(/\s\d+$/, "");
+      return {
+        name: a.name || lookup,
+        source: a.source || "MM",
+        side: a.side || "hostile",
+        x: a.x, y: a.y,
+        hp: a.hp ?? a.maxHp,
+        ...(a.maxHp != null ? { maxHp: a.maxHp } : {}),
+        ...(a.ac != null ? { ac: a.ac } : {}),
+        ...(a.origin ? { origin: a.origin } : {}),
+        ...(lookup ? { statName: lookup } : {}),
+        ...(a.marker ? { marker: a.marker } : {}),
+        ...(a.chained ? { chained: true } : {}),
+        ...(a.studioNotes || a.notes ? { studioNotes: a.studioNotes || a.notes } : {}),
+      };
+    });
   const features = Array.isArray(battle.features) ? battle.features.map((f) => structuredClone(f)) : [];
   const markers = (battle.markers ?? []).filter((m) => m.type !== "spawn").map((m) => structuredClone(m));
   const grid = {
@@ -367,21 +386,29 @@ export async function applyMapTemplate(map, battle, template, { loadActors = tru
       );
       for (const [index, placement] of normalized.actors.entries()) {
         try {
+          const lookupName = placement.statName || placement.name;
           const base = await creatureActor({
-            name: placement.name,
+            name: lookupName,
             source: placement.source || "MM",
             side: placement.side,
-            hp: placement.hp,
+            hp: placement.maxHp ?? placement.hp,
           });
           if (!base) continue;
           const actor = structuredClone(base);
           actor.id = "template:" + (map.key || map.id) + ":" + index + ":" + crypto.randomUUID().slice(0, 8);
           actor.side = placement.side || base.side || "hostile";
-          if (placement.hp != null) {
-            actor.maxHp = placement.hp;
-            actor.hp = placement.hp;
-          }
+          actor.name = placement.name || base.name;
+          if (placement.statName) actor.statName = placement.statName;
+          else if (lookupName && lookupName !== actor.name) actor.statName = lookupName;
+          const maxHp = placement.maxHp ?? placement.hp;
+          if (maxHp != null) actor.maxHp = maxHp;
+          if (placement.hp != null) actor.hp = placement.hp;
+          else if (maxHp != null) actor.hp = maxHp;
+          if (placement.ac != null) actor.ac = placement.ac;
           if (placement.origin) actor.origin = placement.origin;
+          if (placement.marker) actor.marker = placement.marker;
+          if (placement.chained) actor.chained = true;
+          if (placement.studioNotes) actor.studioNotes = placement.studioNotes;
           const cell = canStand(battle, actor, placement.x, placement.y, map)
             ? { x: placement.x, y: placement.y }
             : null;

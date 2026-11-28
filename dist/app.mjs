@@ -8,7 +8,7 @@ import './custom-select.mjs';
 import {registerSuggestions} from './search-suggestions.mjs';
 import {mountSpellRuleEditor} from './spell-rule-editor.mjs?v=spell-lib-layout';
 import {mountHomebrewDesk} from './homebrew-desk.mjs';
-import {mountMapStudio} from './map-studio.mjs';
+import {mountMapStudio} from './map-studio.mjs?v=kennel-layout-3';
 import {listHomebrew} from './homebrew-store.mjs';
 import {itemToSheetEntry, itemToAttack, featureToSheetEntry} from './homebrew-schema.mjs';
 import {mountCharacterBuilder} from './character-builder.mjs';

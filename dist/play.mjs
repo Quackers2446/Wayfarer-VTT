@@ -14,6 +14,7 @@ import { HUB_TABLES, tickHubAmbience } from "./hub-ambience.mjs";
 import {
   betrayKennelPack, checkKennelApproach, followKennelAllies, kennelActions, pullAlertedDen, runKennelAction, seedKennelWolves,
 } from "./kennel-wolves.mjs";
+import { checkLookoutFlood } from "./cragmaw-flood.mjs";
 import { prepareMonsterRewards } from "./encounter-rewards.mjs";
 import { withinReach, takeLoot, lootContents, carryBody, dragBody, dropBody, placeBody, syncRewardSheets, bodyWeight, initializeTreasure, releaseRevivedBodies, searchRegion, investigateFeature, useFeature, featureCardModel, applyPassiveFeatureHints, triggerFeaturesAt, recordFeatureDiscovery } from "./world-interactions.mjs";
 import { featuresInRegion, visibleFeaturePips, setFeatureState, syncMarkerForFeature } from "./room-features.mjs";
@@ -1337,6 +1338,14 @@ function presentKennelResult(result) {
   if (result.toast) storyToasts.show(result.toast, { force: true, duration: 10000 });
   if (result.engage) pullAlertedDen(battle, map);
 }
+function presentFloodResult(result) {
+  if (!result) return;
+  if (result.status) status = result.status;
+  if (result.toast) storyToasts.show(result.toast, { force: true, duration: 11000 });
+  if (result.lookout && result.spotted) {
+    beginCombat(result.spotted, result.lookout, true);
+  }
+}
 function onlinePlayerIds(players) {
   const online = new Set((players ?? []).filter((player) => player.online).map((player) => player.id));
   // Never drop our own claims on a brief heartbeat glitch.
@@ -2349,6 +2358,11 @@ function checkGameCell(x, y, region, token) {
       status = kennel;
       log(battle, kennel);
       pullAlertedDen(battle, map);
+      return true;
+    }
+    const floodWatch = checkLookoutFlood(battle, map, moving);
+    if (floodWatch) {
+      presentFloodResult(floodWatch);
       return true;
     }
     return detectNearby(moving);

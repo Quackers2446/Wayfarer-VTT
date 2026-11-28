@@ -42,12 +42,10 @@ const LMoP_HIDEOUT = [
     name: "Flood signal",
     state: "hinted",
     surfaceText: "The lookout has a clear view of the twin pools passage and fidgets near a marked rock.",
-    truthText: "The lookout can signal goblins at the twin pools to release a flood through the passage.",
+    truthText: "If the lookout spots intruders, he signals goblins at the twin pools to open the dam. The stream passage floods (Str DC 10 or be swept 40 ft and take 1d6 bludgeoning).",
     check: { skill: "insight", dc: 12 },
     outcomes: [
       { on: "success", effect: "reveal" },
-      { on: "use", effect: "log", text: "A signal goes out toward the twin pools. Water may soon roar through the passage." },
-      { on: "use", effect: "set_state", state: "triggered" },
     ],
   },
   {

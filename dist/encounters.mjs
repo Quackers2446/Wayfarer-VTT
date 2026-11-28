@@ -119,7 +119,7 @@ const pilotRooms = {
   "01e":[["Goblin",2]],
   "021":[["Wolf",3,null,null,"MM","neutral"]],
   "025":[],
-  "029":[["Goblin",1]],
+  "029":[["Goblin",1,"Lookout"]],
   "02f":[["Goblin",5],["Goblin",1,"Yeemik",12],["Sildar Hallwinter",1,null,null,"LMoP","neutral",1,true]],
   "034":[["Goblin",3]],
   "037":[["Bugbear",1,"Klarg"],["Wolf",1,"Ripper"],["Goblin",2]],
@@ -127,8 +127,8 @@ const pilotRooms = {
 
 export const roomNotes = {
   "021":"Wolves start chained to the pole. Calm (Animal Handling), free, or befriend them. Failure alerts the eastern den.",
-  "025":"The passage’s hazards are resolved manually.",
-  "029":"The lookout can raise the alarm. Flood triggers are resolved manually.",
+  "025":"Stream passage. If the lookout spots the party, water rushes through here (Str DC 10 or be swept).",
+  "029":"Goblin lookout. If he sees the party, he signals the twin pools and floods the passage.",
   "02f":"Sildar starts bound, unarmed, and at 1 hit point.",
 };
 

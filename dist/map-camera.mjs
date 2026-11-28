@@ -5,7 +5,7 @@ import {icon} from "./icons.mjs";
 const minZoom = .75;
 const maxZoom = 8;
 const step = 1.25;
-const dragThreshold = 5;
+const dragThreshold = 8;
 const panBuffer = 64;
 const mapCenter = {x:.5,y:.5};
 
@@ -34,7 +34,7 @@ export function mapHint() {
     <span class="map-hint-touch">One finger pans · Pinch zooms</span></span>`;
 }
 
-export function createCamera(frame, controls, map, saved, onView) {
+export function createCamera(frame, controls, map, saved, onView, onTap) {
   const content = frame.querySelector(".board-content");
   const surface = content.firstElementChild;
   const canvas = surface.firstElementChild;
@@ -247,9 +247,15 @@ export function createCamera(frame, controls, map, saved, onView) {
     window.addEventListener(type,release,{capture:true,signal});
   }
   frame.addEventListener("click", (event) => {
-    if (!blockClick) return;
-    event.preventDefault();
-    event.stopPropagation();
+    if (blockClick) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    // Real tap (not a pan) — Map Studio and other hosts can select tokens here.
+    if (typeof onTap === "function" && !event.target.closest?.("[data-camera],.wall-editor-host,.map-controls")) {
+      onTap(event);
+    }
   },{capture:true,signal});
   // Swallow the synthetic mouse click some browsers fire after a touch pan.
   frame.addEventListener("pointerup", (event) => {
@@ -265,7 +271,7 @@ export function createCamera(frame, controls, map, saved, onView) {
 
   return {
     state:() => ({zoom,center:frame.isConnected ? position() : lastCenter}),
-    gesturing:() => pointers.size > 0,
+    gesturing:() => pointers.size > 0 || Boolean(blockClick),
     destroy() {
       listeners.abort();
       observer.disconnect();
